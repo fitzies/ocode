@@ -1,0 +1,158 @@
+.workspace {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.008) 1px, transparent 1px),
+    var(--bg);
+  background-size: 100% 42px, 42px 100%, auto;
+}
+
+.session-header {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  min-height: 63px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px 0 23px;
+  gap: 20px;
+  background: rgba(14, 15, 13, 0.86);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(16px);
+}
+
+.header-title-group,
+.session-heading-row,
+.session-context,
+.header-actions {
+  display: flex;
+  align-items: center;
+}
+
+.header-title-group {
+  min-width: 0;
+  gap: 10px;
+}
+
+.menu-trigger {
+  display: none;
+}
+
+.session-heading {
+  min-width: 0;
+}
+
+.session-heading-row {
+  gap: 9px;
+}
+
+.session-heading h1 {
+  max-width: min(42vw, 580px);
+  margin: 0;
+  overflow: hidden;
+  color: #e0ded6;
+  font-size: 13px;
+  font-weight: 580;
+  letter-spacing: -0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-run-state {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #74756d;
+  font-size: 9.5px;
+}
+
+.header-run-state::before {
+  width: 5px;
+  height: 5px;
+  content: "";
+  background: #676860;
+  border-radius: 50%;
+}
+
+.header-run-state--running {
+  color: #c3985f;
+}
+
+.header-run-state--running::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px rgba(215, 150, 66, 0.1);
+}
+
+.header-run-state--waiting::before {
+  background: var(--amber);
+}
+
+.header-run-state--failed::before {
+  background: var(--red);
+}
+
+.session-context {
+  margin-top: 4px;
+  gap: 5px;
+  color: #686961;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 9px;
+}
+
+.context-separator {
+  color: #44453f;
+}
+
+.header-actions {
+  flex-shrink: 0;
+  gap: 7px;
+}
+
+.connection-chip,
+.trust-chip {
+  display: inline-flex;
+  height: 27px;
+  align-items: center;
+  gap: 6px;
+  color: #8e8f87;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.027);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.connection-chip {
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.connection-chip:hover {
+  color: #c0bfb6;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.connection-chip svg {
+  color: var(--green);
+}
+
+.connection-chip--reconnecting svg {
+  color: var(--amber);
+}
+
+.connection-chip--offline svg {
+  color: var(--red);
+}
+
+.trust-chip {
+  padding: 0 9px;
+}
+
+.trust-chip svg {
+  color: #96876e;
+}
+

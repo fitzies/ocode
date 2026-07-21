@@ -1,0 +1,217 @@
+.composer-wrap {
+  position: relative;
+  z-index: 4;
+  flex: 0 0 auto;
+  padding: 10px 24px 12px;
+  background: linear-gradient(180deg, rgba(14, 15, 13, 0), var(--bg) 26%);
+}
+
+.composer,
+.attention-banner,
+.composer-note {
+  width: min(100%, 790px);
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.attention-banner {
+  display: flex;
+  min-height: 31px;
+  align-items: center;
+  margin-bottom: 7px;
+  padding: 0 10px;
+  gap: 8px;
+  color: #b09a73;
+  font-size: 10px;
+  background: rgba(213, 162, 77, 0.06);
+  border: 1px solid rgba(213, 162, 77, 0.13);
+  border-radius: 7px;
+}
+
+.attention-banner > span {
+  width: 5px;
+  height: 5px;
+  background: var(--amber);
+  border-radius: 50%;
+}
+
+.composer {
+  position: relative;
+  padding: 12px 12px 9px;
+  background: #1a1b17;
+  border: 1px solid rgba(235, 233, 225, 0.13);
+  border-radius: 12px;
+  box-shadow: 0 17px 44px rgba(0, 0, 0, 0.22), inset 0 1px rgba(255, 255, 255, 0.025);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.composer:focus-within {
+  border-color: rgba(215, 150, 66, 0.32);
+  box-shadow: 0 17px 44px rgba(0, 0, 0, 0.25), 0 0 0 2px rgba(215, 150, 66, 0.035);
+}
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 33px;
+  max-height: 180px;
+  padding: 1px 3px 8px;
+  resize: none;
+  overflow-y: auto;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.composer textarea::placeholder {
+  color: #6a6b63;
+}
+
+.composer-toolbar,
+.composer-tools,
+.composer-actions {
+  display: flex;
+  align-items: center;
+}
+
+.composer-toolbar {
+  min-height: 28px;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.composer-tools {
+  min-width: 0;
+  gap: 3px;
+}
+
+.composer-icon {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  place-items: center;
+  color: #74756d;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.composer-icon:hover {
+  color: #b3b2aa;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 15px;
+  margin: 0 5px;
+  background: var(--border);
+}
+
+.model-select,
+.thinking-level {
+  position: relative;
+  display: flex;
+  height: 27px;
+  align-items: center;
+  gap: 3px;
+  color: #999990;
+  font-size: 10.5px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.model-select:hover,
+.thinking-level:hover {
+  color: #c1c0b7;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.model-select select {
+  height: 100%;
+  padding: 0 3px 0 7px;
+  appearance: none;
+  color: inherit;
+  font-size: inherit;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  cursor: pointer;
+}
+
+.model-select option {
+  color: #22231f;
+}
+
+.model-select > svg {
+  margin-right: 5px;
+  pointer-events: none;
+}
+
+.thinking-level {
+  padding: 0 7px;
+  cursor: pointer;
+}
+
+.composer-actions {
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.send-hint {
+  color: #565750;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 8.5px;
+}
+
+.send-button,
+.stop-button {
+  display: grid;
+  width: 29px;
+  height: 29px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.send-button {
+  color: #1b1208;
+  background: var(--accent);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.23);
+}
+
+.send-button:hover:not(:disabled) {
+  background: #e2a14d;
+}
+
+.send-button:disabled {
+  color: #67675f;
+  background: #2b2c26;
+  box-shadow: none;
+}
+
+.stop-button {
+  color: #d8d6cd;
+  background: rgba(208, 111, 98, 0.16);
+  border: 1px solid rgba(208, 111, 98, 0.18);
+}
+
+.stop-button:hover {
+  background: rgba(208, 111, 98, 0.22);
+}
+
+.composer-note {
+  margin-top: 7px;
+  color: #4f504a;
+  font-size: 8.5px;
+  text-align: center;
+}
+

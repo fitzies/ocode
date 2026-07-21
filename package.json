@@ -1,0 +1,11 @@
+{
+  "name": "anvil",
+  "private": true,
+  "packageManager": "pnpm@11.15.1",
+  "scripts": {
+    "dev": "corepack pnpm --filter @anvil/web dev",
+    "build": "corepack pnpm --filter @anvil/web build",
+    "typecheck": "corepack pnpm --recursive typecheck",
+    "test": "corepack pnpm --recursive test"
+  }
+}

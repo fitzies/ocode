@@ -1,1 +1,0 @@
-{"root":["./src/main.tsx","./src/router.tsx","./src/components/AppShell.tsx","./src/components/Composer.tsx","./src/components/Sidebar.tsx","./src/components/Timeline.tsx","./src/lib/anvilClient.test.ts","./src/lib/anvilClient.ts"],"version":"5.9.3"}

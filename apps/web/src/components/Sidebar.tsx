@@ -1,22 +1,16 @@
 import type { SessionStatus } from "@anvil/protocol";
 import type { AnvilSnapshot } from "../lib/anvilClient";
-import {
-  ChevronDown,
-  Hammer,
-  MessageSquare,
-  MoreHorizontal,
-  Plus,
-  Server,
-  Settings,
-  X,
-} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Icon } from "@iconify/react";
+import altArrowDownIcon from "@iconify-icons/solar/alt-arrow-down-linear";
+import closeCircleIcon from "@iconify-icons/solar/close-circle-linear";
+import searchIcon from "@iconify-icons/solar/magnifer-linear";
 
 interface SidebarProps {
   snapshot: AnvilSnapshot;
   open: boolean;
   mobile: boolean;
   onClose: () => void;
-  onCreateSession: () => void;
   onSelectSession: (sessionId: string) => void;
 }
 
@@ -37,9 +31,40 @@ export function Sidebar({
   open,
   mobile,
   onClose,
-  onCreateSession,
   onSelectSession,
 }: SidebarProps) {
+  const [query, setQuery] = useState("");
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+  const searchRef = useRef<HTMLInputElement>(null);
+  const normalizedQuery = query.trim().toLowerCase();
+  const hasSearchResults = snapshot.sessions.some((session) => {
+    const project = snapshot.projects.find((candidate) => candidate.id === session.projectId);
+    return (
+      session.title.toLowerCase().includes(normalizedQuery) ||
+      project?.name.toLowerCase().includes(normalizedQuery)
+    );
+  });
+
+  useEffect(() => {
+    const focusSearch = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        searchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", focusSearch);
+    return () => window.removeEventListener("keydown", focusSearch);
+  }, []);
+
+  const toggleProject = (projectId: string) => {
+    setCollapsedProjects((current) => {
+      const next = new Set(current);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
+
   return (
     <aside
       className={`sidebar ${open ? "sidebar--open" : ""}`}
@@ -49,12 +74,10 @@ export function Sidebar({
       inert={mobile && !open ? true : undefined}
     >
       <div className="sidebar-brand">
-        <div className="brand-mark" aria-hidden="true">
-          <Hammer size={17} strokeWidth={2.2} />
-        </div>
-        <div>
-          <div className="brand-name">Anvil</div>
-          <div className="brand-environment">Personal workspace</div>
+        <div className="brand-lockup">
+          <span className="brand-name">Anvil</span>
+          <span className="brand-divider">/</span>
+          <span className="brand-environment">Pi</span>
         </div>
         <button
           className="icon-button sidebar-close"
@@ -62,31 +85,53 @@ export function Sidebar({
           aria-label="Close sidebar"
           autoFocus={mobile && open}
         >
-          <X size={17} />
+          <Icon icon={closeCircleIcon} width={18} />
         </button>
       </div>
 
-      <button className="new-session-button" onClick={onCreateSession}>
-        <Plus size={16} />
-        New session
-        <kbd>⌘N</kbd>
-      </button>
+      <label className="thread-search">
+        <Icon icon={searchIcon} width={15} />
+        <input
+          ref={searchRef}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search threads"
+          aria-label="Search all threads"
+        />
+        <kbd>⌘K</kbd>
+      </label>
 
       <div className="sidebar-scroll">
         <div className="sidebar-section-label">Workspace</div>
+        {normalizedQuery && !hasSearchResults && (
+          <div className="search-empty">No threads found</div>
+        )}
         {snapshot.projects.map((project) => {
-          const sessions = snapshot.sessions.filter((session) => session.projectId === project.id);
+          const projectMatches = project.name.toLowerCase().includes(normalizedQuery);
+          const sessions = snapshot.sessions.filter(
+            (session) =>
+              session.projectId === project.id &&
+              (!normalizedQuery || projectMatches || session.title.toLowerCase().includes(normalizedQuery)),
+          );
+          if (normalizedQuery && sessions.length === 0) return null;
+          const collapsed = collapsedProjects.has(project.id) && !normalizedQuery;
+
           return (
             <section className="project-group" key={project.id}>
-              <div className="project-heading">
-                <ChevronDown size={13} />
-                <span className="project-glyph">{project.name.slice(0, 1).toUpperCase()}</span>
+              <button
+                className="project-heading"
+                onClick={() => toggleProject(project.id)}
+                aria-expanded={!collapsed}
+              >
+                <Icon
+                  icon={altArrowDownIcon}
+                  width={13}
+                  className={`project-chevron ${collapsed ? "project-chevron--collapsed" : ""}`}
+                />
                 <span>{project.name}</span>
-                <button className="project-menu" aria-label={`More options for ${project.name}`} disabled title="Coming soon">
-                  <MoreHorizontal size={15} />
-                </button>
-              </div>
-              <div className="session-list">
+                <span className="project-thread-count">{sessions.length}</span>
+              </button>
+              {!collapsed && <div className="session-list">
                 {sessions.map((session) => (
                   <button
                     className={`session-row ${
@@ -98,7 +143,6 @@ export function Sidebar({
                       onClose();
                     }}
                   >
-                    <MessageSquare size={14} className="session-icon" />
                     <span className="session-copy">
                       <span className="session-title">{session.title}</span>
                       <span className="session-meta">
@@ -108,29 +152,23 @@ export function Sidebar({
                     </span>
                   </button>
                 ))}
-              </div>
+              </div>}
             </section>
           );
         })}
       </div>
 
       <div className="sidebar-footer">
-        <div className="forge-card">
-          <span className="forge-icon"><Server size={15} /></span>
-          <span className="forge-copy">
-            <strong>Forge</strong>
-            <span>
-              <i className={`online-dot online-dot--${snapshot.connection}`} />
-              {snapshot.connection === "connected"
-                ? "Connected via Tailscale"
-                : snapshot.connection === "reconnecting"
-                  ? "Reconnecting…"
-                  : "Offline · showing cached state"}
-            </span>
+        <div className="forge-status">
+          <span className="forge-status-name">Forge</span>
+          <i className={`online-dot online-dot--${snapshot.connection}`} />
+          <span>
+            {snapshot.connection === "connected"
+              ? "Tailscale"
+              : snapshot.connection === "reconnecting"
+                ? "Reconnecting"
+                : "Offline"}
           </span>
-          <button className="icon-button" aria-label="Forge settings" disabled title="Coming soon">
-            <Settings size={16} />
-          </button>
         </div>
       </div>
     </aside>

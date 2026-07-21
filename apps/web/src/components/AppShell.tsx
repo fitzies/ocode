@@ -1,4 +1,9 @@
-import { GitBranch, Menu, MoreHorizontal, ShieldCheck, Wifi } from "lucide-react";
+import { Icon } from "@iconify/react";
+import branchingPathsIcon from "@iconify-icons/solar/branching-paths-down-linear";
+import hamburgerMenuIcon from "@iconify-icons/solar/hamburger-menu-linear";
+import menuDotsIcon from "@iconify-icons/solar/menu-dots-linear";
+import shieldCheckIcon from "@iconify-icons/solar/shield-check-bold-duotone";
+import forgeServerIcon from "@iconify-icons/solar/server-square-cloud-bold-duotone";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { anvilClient } from "../lib/anvilClient";
@@ -68,10 +73,6 @@ export function AppShell() {
           setSidebarOpen(false);
           menuButtonRef.current?.focus();
         }}
-        onCreateSession={() => {
-          anvilClient.createSession();
-          setSidebarOpen(false);
-        }}
         onSelectSession={(sessionId) => anvilClient.selectSession(sessionId)}
       />
 
@@ -84,7 +85,7 @@ export function AppShell() {
               onClick={() => setSidebarOpen(true)}
               aria-label="Open sidebar"
             >
-              <Menu size={18} />
+              <Icon icon={hamburgerMenuIcon} width={18} />
             </button>
             <div className="session-heading">
               <div className="session-heading-row">
@@ -102,7 +103,7 @@ export function AppShell() {
               <div className="session-context">
                 <span>{activeProject?.name}</span>
                 <span className="context-separator">/</span>
-                <GitBranch size={12} />
+                <Icon icon={branchingPathsIcon} width={12} />
                 <span>main</span>
               </div>
             </div>
@@ -114,15 +115,15 @@ export function AppShell() {
               title="Cycle mock connection state"
               onClick={() => anvilClient.cycleConnectionState()}
             >
-              <Wifi size={13} />
+              <Icon icon={forgeServerIcon} width={15} />
               <span>{connectionLabel}</span>
             </button>
             <div className="trust-chip" title="Pi runtime access level">
-              <ShieldCheck size={14} />
+              <Icon icon={shieldCheckIcon} width={15} />
               Full access
             </div>
             <button className="icon-button" aria-label="Session options" disabled title="Coming soon">
-              <MoreHorizontal size={18} />
+              <Icon icon={menuDotsIcon} width={18} />
             </button>
           </div>
         </header>

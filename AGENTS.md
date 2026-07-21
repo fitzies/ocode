@@ -37,6 +37,46 @@ The final client strategy is intentionally undecided. Options include a responsi
 - Do not expose Anvil publicly by default.
 - Prioritize reliability across disconnects before advanced UI features.
 
+## Delivery Phases
+
+### Phase 1 — Define the Real Client Contract
+
+Turn the current mock UI into a protocol-complete frontend foundation.
+
+- Expand `@anvil/protocol` for raw messages, streaming, reasoning, parallel tools, arbitrary details, images, errors, and extension interactions.
+- Add generic tool rendering with optional specialized cards.
+- Add native select, multi-select, confirm, input, and editor dialogs.
+- Make models, thinking levels, commands, and skills dynamic.
+- Drive the client with recorded Pi RPC fixtures before connecting it to Forge.
+
+This phase is complete when the client can replay realistic Pi sessions, including unknown extensions, without Forge running.
+
+### Phase 2 — Build the Forge Runtime
+
+Implement the persistent backend and connect the client to real Pi RPC processes.
+
+- Start, monitor, resume, and cancel isolated Pi subprocesses.
+- Load each user's normal Pi configuration, extensions, packages, and skills.
+- Normalize Pi RPC into the Anvil protocol.
+- Journal events with sequence numbers and retain pending dialogs.
+- Support prompts, steering, follow-ups, models, thinking levels, commands, session switching, and reconnection.
+- Expose the backend through a secure Tailscale-only API and streaming transport.
+
+This phase is complete when a task continues on Forge with every client disconnected and restores correctly on another device.
+
+### Phase 3 — Compatibility and Production Hardening
+
+Make the complete workflow dependable across personalized Pi installations.
+
+- Add an Anvil compatibility extension or upstream Pi RPC support for multi-select and other structured interactions.
+- Add native cards for Firecrawl, Agent Browser, images, subagents, diffs, and approvals.
+- Preserve a robust generic fallback for every unknown tool or extension.
+- Handle process crashes, backend restarts, stale clients, backpressure, large outputs, and artifacts.
+- Add service installation, access controls, audit logging, and cross-device end-to-end tests.
+- Polish responsive behavior and accessibility after the full workflow is reliable.
+
+This phase is complete when Anvil runs as a persistent Forge service and supports ordinary personalized Pi setups without requiring client changes for every new tool.
+
 ## Out of Scope for the First Version
 
 - Multiple users or public accounts

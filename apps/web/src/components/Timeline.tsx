@@ -1,14 +1,13 @@
 import type { SessionSummary, TimelineEntry } from "@anvil/protocol";
 import { useLayoutEffect, useRef } from "react";
-import {
-  Check,
-  ChevronRight,
-  CircleAlert,
-  Hammer,
-  LoaderCircle,
-  Sparkles,
-  TerminalSquare,
-} from "lucide-react";
+import { Icon } from "@iconify/react";
+import altArrowRightIcon from "@iconify-icons/solar/alt-arrow-right-linear";
+import checkCircleIcon from "@iconify-icons/solar/check-circle-bold-duotone";
+import commandIcon from "@iconify-icons/solar/command-bold-duotone";
+import dangerCircleIcon from "@iconify-icons/solar/danger-circle-bold-duotone";
+import refreshIcon from "@iconify-icons/solar/refresh-linear";
+import sledgehammerIcon from "@iconify-icons/solar/sledgehammer-bold-duotone";
+import starsIcon from "@iconify-icons/solar/stars-minimalistic-bold-duotone";
 
 interface TimelineProps {
   session: SessionSummary;
@@ -17,9 +16,11 @@ interface TimelineProps {
 }
 
 function ToolStatus({ entry }: { entry: Extract<TimelineEntry, { kind: "tool" }> }) {
-  if (entry.status === "running") return <LoaderCircle className="spin" size={14} />;
-  if (entry.status === "failed") return <CircleAlert size={14} />;
-  return <Check size={14} />;
+  if (entry.status === "running") {
+    return <Icon icon={refreshIcon} className="spin" width={15} />;
+  }
+  if (entry.status === "failed") return <Icon icon={dangerCircleIcon} width={15} />;
+  return <Icon icon={checkCircleIcon} width={15} />;
 }
 
 export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
@@ -43,7 +44,7 @@ export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
   if (entries.length === 0) {
     return (
       <div ref={scrollRef} className="timeline timeline--empty" onScroll={trackScrollPosition}>
-        <div className="empty-mark"><Hammer size={23} /></div>
+        <div className="empty-mark"><Icon icon={sledgehammerIcon} width={25} /></div>
         <h2>What should Pi work on?</h2>
         <p>
           This session is attached to Forge. Ask a question, request a change, or continue work from
@@ -79,10 +80,10 @@ export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
             return (
               <details className="thinking-event" key={entry.id} open={entry.active}>
                 <summary>
-                  <Sparkles size={14} />
+                  <Icon icon={starsIcon} width={15} />
                   <span>{entry.active ? "Thinking" : "Thought process"}</span>
                   {entry.active && <span className="thinking-pulse" />}
-                  <ChevronRight className="disclosure-icon" size={14} />
+                  <Icon icon={altArrowRightIcon} className="disclosure-icon" width={14} />
                 </summary>
                 <p>{entry.content}</p>
               </details>
@@ -93,13 +94,13 @@ export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
             return (
               <details className={`tool-event tool-event--${entry.status}`} key={entry.id}>
                 <summary>
-                  <span className="tool-icon"><TerminalSquare size={14} /></span>
+                  <span className="tool-icon"><Icon icon={commandIcon} width={15} /></span>
                   <span className="tool-main">
                     <strong>{entry.summary}</strong>
                     <span>{entry.name}</span>
                   </span>
                   <span className="tool-status"><ToolStatus entry={entry} /></span>
-                  <ChevronRight className="disclosure-icon" size={14} />
+                  <Icon icon={altArrowRightIcon} className="disclosure-icon" width={14} />
                 </summary>
                 {entry.detail && <div className="tool-detail">{entry.detail}</div>}
               </details>
@@ -108,11 +109,7 @@ export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
 
           return (
             <article className="assistant-message" key={entry.id}>
-              <div className="assistant-avatar"><Hammer size={14} /></div>
-              <div>
-                <div className="assistant-label">Pi</div>
-                <div className="message-content">{entry.content}</div>
-              </div>
+              <div className="message-content">{entry.content}</div>
             </article>
           );
         })}

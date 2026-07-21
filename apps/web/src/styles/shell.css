@@ -5,10 +5,8 @@
   flex: 1;
   flex-direction: column;
   background:
-    linear-gradient(rgba(255, 255, 255, 0.012) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.008) 1px, transparent 1px),
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.018), transparent 28rem),
     var(--bg);
-  background-size: 100% 42px, 42px 100%, auto;
 }
 
 .session-header {
@@ -20,7 +18,7 @@
   justify-content: space-between;
   padding: 0 18px 0 23px;
   gap: 20px;
-  background: rgba(14, 15, 13, 0.86);
+  background: rgba(10, 10, 10, 0.88);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(16px);
 }
@@ -54,7 +52,7 @@
   max-width: min(42vw, 580px);
   margin: 0;
   overflow: hidden;
-  color: #e0ded6;
+  color: #ededed;
   font-size: 13px;
   font-weight: 580;
   letter-spacing: -0.005em;
@@ -80,12 +78,12 @@
 }
 
 .header-run-state--running {
-  color: #c3985f;
+  color: #7acb88;
 }
 
 .header-run-state--running::before {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(215, 150, 66, 0.1);
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(70, 167, 88, 0.1);
 }
 
 .header-run-state--waiting::before {
@@ -100,7 +98,7 @@
   margin-top: 4px;
   gap: 5px;
   color: #686961;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9px;
 }
 
@@ -153,6 +151,6 @@
 }
 
 .trust-chip svg {
-  color: #96876e;
+  color: #7d7d7d;
 }
 

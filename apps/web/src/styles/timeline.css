@@ -36,7 +36,7 @@
 }
 
 .message-content {
-  color: #c8c7bf;
+  color: #c7c7c7;
   font-size: 13px;
   line-height: 1.7;
   white-space: pre-wrap;
@@ -51,38 +51,15 @@
 .user-message .message-content {
   max-width: 600px;
   padding: 11px 14px;
-  color: #dddcd4;
-  background: #20211c;
-  border: 1px solid rgba(235, 233, 225, 0.085);
+  color: #e6e6e6;
+  background: #171717;
+  border: 1px solid rgba(255, 255, 255, 0.085);
   border-radius: 12px 12px 4px 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
 .assistant-message {
-  display: grid;
-  grid-template-columns: 27px minmax(0, 1fr);
   margin: 26px 8% 30px 0;
-  gap: 10px;
-}
-
-.assistant-avatar {
-  display: grid;
-  width: 26px;
-  height: 26px;
-  margin-top: 1px;
-  place-items: center;
-  color: #d1a160;
-  background: var(--accent-soft);
-  border: 1px solid rgba(215, 150, 66, 0.13);
-  border-radius: 7px;
-}
-
-.assistant-label {
-  margin-bottom: 6px;
-  color: #8c8c83;
-  font-size: 10px;
-  font-weight: 610;
-  letter-spacing: 0.02em;
 }
 
 .thinking-event,
@@ -112,7 +89,7 @@
 }
 
 .thinking-event summary > svg:first-child {
-  color: #a48762;
+  color: #9b9b9b;
 }
 
 .thinking-event p {
@@ -121,13 +98,13 @@
   color: #6e6f67;
   font-size: 11px;
   line-height: 1.55;
-  border-left: 1px solid rgba(215, 150, 66, 0.16);
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .thinking-pulse {
   width: 4px;
   height: 4px;
-  background: var(--accent);
+  background: #a1a1a1;
   border-radius: 50%;
   animation: pulse 1.4s ease-in-out infinite;
 }
@@ -156,7 +133,7 @@ details[open] > summary .disclosure-icon {
 }
 
 .tool-event:hover {
-  border-color: rgba(235, 233, 225, 0.13);
+  border-color: rgba(255, 255, 255, 0.13);
 }
 
 .tool-icon {
@@ -189,7 +166,7 @@ details[open] > summary .disclosure-icon {
 
 .tool-main > span {
   color: #5e5f58;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 8.5px;
 }
 
@@ -201,7 +178,7 @@ details[open] > summary .disclosure-icon {
 }
 
 .tool-event--running .tool-status {
-  color: var(--accent);
+  color: #b4b4b4;
 }
 
 .tool-event--failed .tool-status {
@@ -211,7 +188,7 @@ details[open] > summary .disclosure-icon {
 .tool-detail {
   padding: 9px 12px;
   color: #74756d;
-  font-family: "IBM Plex Mono", monospace;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9.5px;
   line-height: 1.55;
   background: rgba(0, 0, 0, 0.12);
@@ -251,20 +228,20 @@ details[open] > summary .disclosure-icon {
 
 .empty-mark {
   display: grid;
-  width: 49px;
-  height: 49px;
+  width: 48px;
+  height: 48px;
   margin-bottom: 17px;
   place-items: center;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border: 1px solid rgba(215, 150, 66, 0.13);
-  border-radius: 14px 14px 17px 10px;
-  transform: rotate(-2deg);
+  color: #d4d4d4;
+  background: #151515;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
 }
 
 .timeline--empty h2 {
   margin: 0;
-  color: #dedcd4;
+  color: #ededed;
   font-size: 19px;
   font-weight: 590;
   letter-spacing: -0.025em;

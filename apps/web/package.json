@@ -11,10 +11,11 @@
   },
   "dependencies": {
     "@anvil/protocol": "workspace:*",
-    "@fontsource-variable/ibm-plex-sans": "^5.2.8",
-    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource-variable/geist": "^5.3.0",
+    "@fontsource-variable/geist-mono": "^5.3.0",
+    "@iconify-icons/solar": "^1.2.3",
+    "@iconify/react": "^6.0.2",
     "@tanstack/react-router": "^1.160.2",
-    "lucide-react": "^0.564.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

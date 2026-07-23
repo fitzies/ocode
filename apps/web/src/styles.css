@@ -3,4 +3,6 @@
 @import "./styles/shell.css";
 @import "./styles/timeline.css";
 @import "./styles/composer.css";
+@import "./styles/dialog.css";
+@import "./styles/replay.css";
 @import "./styles/responsive.css";

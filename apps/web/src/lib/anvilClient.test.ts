@@ -1,64 +1,70 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { MockAnvilClient } from "./anvilClient";
+import { FixtureAnvilClient } from "./anvilClient";
 
-describe("MockAnvilClient", () => {
+describe("FixtureAnvilClient", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
 
-  it("streams a mock run through thinking, tool activity, and completion", () => {
-    const client = new MockAnvilClient();
-    const sessionId = client.getSnapshot().activeSessionId;
-    const initialLength = client.getSnapshot().timelines[sessionId].length;
+  it("restores protocol-complete fixture snapshots without Forge", () => {
+    const client = new FixtureAnvilClient();
+    const snapshot = client.getSnapshot();
 
-    client.sendPrompt("Inspect the workspace");
+    expect(snapshot.catalog.models.length).toBeGreaterThan(1);
+    expect(snapshot.catalog.commands.some((command) => command.name === "handoff")).toBe(true);
+    expect(snapshot.timelines["parallel-tools"].filter((entry) => entry.kind === "tool")).toHaveLength(2);
+    expect(snapshot.pendingInteractions.filter((request) => request.sessionId === "dialog-queue")).toHaveLength(6);
+    expect(snapshot.timelines["failure-unknown"].some((entry) => entry.kind === "event" && entry.category === "unknown")).toBe(true);
+  });
 
-    expect(client.getSnapshot().sessions.find((session) => session.id === sessionId)?.status).toBe(
-      "running",
-    );
-    expect(client.getSnapshot().timelines[sessionId]).toHaveLength(initialLength + 2);
+  it("replays raw RPC records over time and can restore the final state instantly", () => {
+    const client = new FixtureAnvilClient();
+    client.restartReplay();
 
-    vi.advanceTimersByTime(750);
-    expect(client.getSnapshot().timelines[sessionId].at(-1)).toMatchObject({
-      kind: "tool",
-      status: "running",
-    });
+    expect(client.getSnapshot().replay.playing).toBe(true);
+    expect(client.getSnapshot().timelines["ordinary-run"]).toHaveLength(0);
 
-    vi.advanceTimersByTime(900);
-    expect(client.getSnapshot().sessions.find((session) => session.id === sessionId)?.status).toBe(
-      "idle",
-    );
-    expect(client.getSnapshot().timelines[sessionId].at(-1)).toMatchObject({
-      kind: "message",
-      role: "assistant",
-    });
+    vi.runAllTimers();
+
+    expect(client.getSnapshot().replay.cursor).toBe(client.getSnapshot().replay.total);
+    expect(client.getSnapshot().sessions.find((session) => session.id === "ordinary-run")?.status).toBe("idle");
+    expect(client.getSnapshot().timelines["ordinary-run"].at(-1)).toMatchObject({ kind: "message", role: "assistant", status: "complete" });
+
+    client.restartReplay();
+    client.instantReplay();
+    expect(client.getSnapshot().replay.playing).toBe(false);
+    expect(client.getSnapshot().replay.cursor).toBe(client.getSnapshot().replay.total);
   });
 
   it("cancels only the active session while another session continues", () => {
-    const client = new MockAnvilClient();
-    const firstSessionId = client.getSnapshot().activeSessionId;
-    const secondSessionId = "reconnect-flow";
+    const client = new FixtureAnvilClient();
+    const firstSessionId = "ordinary-run";
+    const secondSessionId = "parallel-tools";
 
     client.sendPrompt("Run in the first session");
     client.selectSession(secondSessionId);
     client.sendPrompt("Run in the second session");
     client.cancelActiveRun();
 
-    expect(
-      client.getSnapshot().sessions.find((session) => session.id === secondSessionId)?.status,
-    ).toBe("idle");
-    expect(
-      client.getSnapshot().sessions.find((session) => session.id === firstSessionId)?.status,
-    ).toBe("running");
+    expect(client.getSnapshot().sessions.find((session) => session.id === secondSessionId)?.status).toBe("idle");
+    expect(client.getSnapshot().sessions.find((session) => session.id === firstSessionId)?.status).toBe("running");
 
-    vi.advanceTimersByTime(1_650);
+    vi.runAllTimers();
 
-    expect(
-      client.getSnapshot().sessions.find((session) => session.id === firstSessionId)?.status,
-    ).toBe("idle");
-    expect(client.getSnapshot().timelines[firstSessionId].at(-1)).toMatchObject({
-      kind: "message",
-      role: "assistant",
-    });
+    expect(client.getSnapshot().sessions.find((session) => session.id === firstSessionId)?.status).toBe("idle");
+    expect(client.getSnapshot().timelines[firstSessionId].at(-1)).toMatchObject({ kind: "message", role: "assistant", status: "complete" });
+  });
+
+  it("keeps restored interaction requests pending until the client responds", () => {
+    const client = new FixtureAnvilClient();
+    client.selectSession("dialog-queue");
+    const request = client.getSnapshot().pendingInteractions.find((item) => item.id === "dialog-select");
+    expect(request).toBeDefined();
+
+    client.respondToInteraction({ requestId: "dialog-select", value: "WebSocket" });
+
+    expect(client.getSnapshot().pendingInteractions.some((item) => item.id === "dialog-select")).toBe(false);
+    expect(client.getSnapshot().timelines["dialog-queue"].find((entry) => entry.kind === "interaction" && entry.requestId === "dialog-select")).toMatchObject({ status: "answered" });
+    expect(client.getSnapshot().sessions.find((session) => session.id === "dialog-queue")?.status).toBe("waiting");
   });
 });

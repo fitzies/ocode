@@ -65,7 +65,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #74756d;
+  color: #85867e;
   font-size: 9.5px;
 }
 
@@ -97,7 +97,7 @@
 .session-context {
   margin-top: 4px;
   gap: 5px;
-  color: #686961;
+  color: #85867e;
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9px;
 }
@@ -152,5 +152,50 @@
 
 .trust-chip svg {
   color: #7d7d7d;
+}
+
+.extension-status-bar {
+  display: flex;
+  min-height: 30px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: 4px 23px;
+  gap: 14px;
+  overflow-x: auto;
+  color: #8a8b82;
+  background: rgba(255, 255, 255, 0.015);
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+
+.extension-status-bar span {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+  font-size: 9.5px;
+}
+
+.extension-status-bar i {
+  width: 4px;
+  height: 4px;
+  background: var(--amber);
+  border-radius: 50%;
+}
+
+.extension-status-bar small {
+  color: #85867e;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 8px;
+}
+
+.reconciliation-banner {
+  min-height: 30px;
+  padding: 7px 23px;
+  color: #c3a66e;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 9px;
+  background: rgba(197, 157, 84, 0.055);
+  border-bottom: 1px solid rgba(197, 157, 84, 0.12);
 }
 

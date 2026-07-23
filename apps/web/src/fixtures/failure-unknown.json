@@ -1,0 +1,141 @@
+{
+  "id": "failure-unknown",
+  "name": "Failures and unknown extensions",
+  "description": "Tool errors, retry lifecycle, cancellation, unknown events, and an unsupported custom dialog.",
+  "baseTimestamp": "2026-07-21T08:30:00.000Z",
+  "project": { "id": "pi", "name": "pi-agent", "path": "~/code/pi-agent" },
+  "session": {
+    "id": "failure-unknown",
+    "projectId": "pi",
+    "title": "Recover from extension failures",
+    "updatedAt": "2026-07-21T08:30:08.000Z",
+    "status": "failed",
+    "modelId": "openai/gpt-5.3-codex",
+    "thinkingLevel": "medium",
+    "branch": "main"
+  },
+  "records": [
+    {
+      "at": 0,
+      "record": {
+        "type": "message_start",
+        "message": { "role": "user", "content": "Exercise failure and forward-compatibility rendering.", "timestamp": 1784622600000 }
+      }
+    },
+    {
+      "at": 20,
+      "record": {
+        "type": "message_end",
+        "message": { "role": "user", "content": "Exercise failure and forward-compatibility rendering.", "timestamp": 1784622600000 }
+      }
+    },
+    { "at": 100, "record": { "type": "agent_start" } },
+    {
+      "at": 240,
+      "record": {
+        "type": "tool_execution_start",
+        "toolCallId": "call-bash-failure",
+        "toolName": "bash",
+        "args": { "command": "pnpm test" }
+      }
+    },
+    {
+      "at": 720,
+      "record": {
+        "type": "tool_execution_update",
+        "toolCallId": "call-bash-failure",
+        "toolName": "bash",
+        "partialResult": {
+          "content": [{ "type": "text", "text": "FAIL src/reconnect.test.ts\nExpected sequence 12, received 10" }],
+          "details": { "exitCode": null, "truncation": null }
+        }
+      }
+    },
+    {
+      "at": 980,
+      "record": {
+        "type": "tool_execution_end",
+        "toolCallId": "call-bash-failure",
+        "toolName": "bash",
+        "result": {
+          "content": [{ "type": "text", "text": "Test run failed with exit code 1" }],
+          "details": { "exitCode": 1, "cancelled": false, "fullOutputPath": "/tmp/pi-test-output.log" }
+        },
+        "isError": true
+      }
+    },
+    {
+      "at": 1120,
+      "record": {
+        "type": "extension_error",
+        "extensionPath": "/home/user/.pi/agent/extensions/status-sync.ts",
+        "event": "tool_result",
+        "error": "Connection closed while publishing status"
+      }
+    },
+    {
+      "at": 1280,
+      "record": {
+        "type": "auto_retry_start",
+        "attempt": 1,
+        "maxAttempts": 3,
+        "delayMs": 2000,
+        "errorMessage": "529 overloaded_error: provider overloaded"
+      }
+    },
+    {
+      "at": 1540,
+      "record": {
+        "type": "auto_retry_end",
+        "success": false,
+        "attempt": 3,
+        "finalError": "529 overloaded_error: retries exhausted"
+      }
+    },
+    {
+      "at": 1700,
+      "record": {
+        "type": "whimsical_sparkle",
+        "extension": "whimsical.ts",
+        "palette": ["amber", "steel"],
+        "intensity": 0.7,
+        "details": { "terminalRenderer": true }
+      }
+    },
+    {
+      "at": 1880,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "unsupported-canvas",
+        "method": "customCanvas",
+        "title": "Arrange workflow nodes",
+        "message": "This terminal-only custom component needs an Anvil adapter.",
+        "canvas": { "nodes": 4, "edges": 3 }
+      }
+    },
+    {
+      "at": 2150,
+      "record": {
+        "type": "message_start",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.3-codex", "timestamp": 1784622602150 }
+      }
+    },
+    {
+      "at": 2380,
+      "record": {
+        "type": "message_update",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.3-codex", "timestamp": 1784622602150 },
+        "assistantMessageEvent": { "type": "text_delta", "contentIndex": 0, "delta": "The run was cancelled after the retry failed." }
+      }
+    },
+    {
+      "at": 2520,
+      "record": {
+        "type": "message_update",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.3-codex", "timestamp": 1784622602150 },
+        "assistantMessageEvent": { "type": "error", "reason": "aborted", "error": "Stopped by user" }
+      }
+    },
+    { "at": 2600, "record": { "type": "agent_settled" } }
+  ]
+}

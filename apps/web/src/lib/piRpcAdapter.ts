@@ -1,0 +1,711 @@
+import {
+  ANVIL_PROTOCOL_VERSION,
+  type AnvilEvent,
+  type CapabilityCatalog,
+  type ContentBlock,
+  type GenericInteractionField,
+  type InteractionOption,
+  type InteractionRequest,
+  type JsonValue,
+  type MessageEntry,
+} from "@anvil/protocol";
+
+export interface PiRpcAdapterState {
+  fixtureId: string;
+  sessionId: string;
+  nextSequence: number;
+  baseTimestamp: number;
+  activeAssistantMessageId?: string;
+  lastAssistantMessageId?: string;
+  reasoningIds: Record<number, string>;
+  catalog: CapabilityCatalog;
+  knownToolCallIds: Set<string>;
+}
+
+export interface RecordedRpcItem {
+  at: number;
+  record: Record<string, unknown>;
+}
+
+export function createPiRpcAdapterState(input: {
+  fixtureId: string;
+  sessionId: string;
+  baseTimestamp: string;
+}): PiRpcAdapterState {
+  return {
+    fixtureId: input.fixtureId,
+    sessionId: input.sessionId,
+    nextSequence: 1,
+    baseTimestamp: new Date(input.baseTimestamp).getTime(),
+    reasoningIds: {},
+    catalog: { models: [], commands: [], skills: [] },
+    knownToolCallIds: new Set(),
+  };
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringOf(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+function numberOf(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function json(value: unknown): JsonValue {
+  if (value === undefined) return null;
+  return JSON.parse(JSON.stringify(value)) as JsonValue;
+}
+
+function messageId(message: Record<string, unknown>, state: PiRpcAdapterState): string {
+  const direct = stringOf(message.id);
+  if (direct) return direct;
+  const timestamp = numberOf(message.timestamp);
+  return timestamp ? `message-${timestamp}` : `message-${state.fixtureId}-${state.nextSequence}`;
+}
+
+function contentBlocks(value: unknown, prefix: string): ContentBlock[] {
+  if (typeof value === "string") return [{ id: `${prefix}-text-0`, type: "text", text: value }];
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item, index): ContentBlock[] => {
+    const block = recordOf(item);
+    const type = stringOf(block.type, "unknown");
+    const id = `${prefix}-${type}-${index}`;
+    if (type === "text") return [{ id, type: "text", text: stringOf(block.text) }];
+    if (type === "image") {
+      const source = recordOf(block.source);
+      return [
+        {
+          id,
+          type: "image",
+          mimeType: stringOf(block.mimeType, stringOf(source.mediaType, "image/png")),
+          data: stringOf(block.data, stringOf(source.data)) || undefined,
+          url: stringOf(source.url) || undefined,
+          alt: stringOf(block.alt) || undefined,
+          name: stringOf(block.name) || undefined,
+        },
+      ];
+    }
+    if (type === "toolCall") {
+      return [
+        {
+          id,
+          type: "toolCall",
+          toolCallId: stringOf(block.id, `${prefix}-tool-${index}`),
+          name: stringOf(block.name, "unknown_tool"),
+          arguments: json(block.arguments ?? {}),
+        },
+      ];
+    }
+    if (type === "thinking") return [];
+    return [{ id, type: "unknown", contentType: type, raw: json(block) }];
+  });
+}
+
+function toolSummary(name: string, args: Record<string, unknown>): string {
+  if (name === "read") return `Read ${stringOf(args.path, "file")}`;
+  if (name === "bash") return stringOf(args.command, "Run shell command");
+  if (name.includes("search")) return stringOf(args.query, `Run ${name}`);
+  if (name === "agent_browser") return stringOf(args.action, "Use browser");
+  return `Run ${name}`;
+}
+
+function optionsOf(value: unknown): InteractionOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item, index) => {
+    if (typeof item === "string") return { id: `option-${index}`, label: item, value: item };
+    const option = recordOf(item);
+    const value = stringOf(option.value, stringOf(option.label, `option-${index}`));
+    return {
+      id: stringOf(option.id, `option-${index}`),
+      label: stringOf(option.label, value),
+      value,
+      description: stringOf(option.description) || undefined,
+    };
+  });
+}
+
+function fieldsOf(value: unknown): GenericInteractionField[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const fields = value.flatMap((item, index): GenericInteractionField[] => {
+    const field = recordOf(item);
+    const type = stringOf(field.type);
+    const base = {
+      id: stringOf(field.id, `field-${index}`),
+      label: stringOf(field.label, `Field ${index + 1}`),
+      required: field.required === true,
+    };
+    if (type === "text" || type === "textarea") {
+      return [
+        {
+          ...base,
+          type,
+          placeholder: stringOf(field.placeholder) || undefined,
+          defaultValue: stringOf(field.defaultValue) || undefined,
+        },
+      ];
+    }
+    if (type === "boolean") {
+      return [{ ...base, type, defaultValue: field.defaultValue === true }];
+    }
+    if (type === "select" || type === "multiSelect") {
+      return [{ ...base, type, options: optionsOf(field.options) }];
+    }
+    return [];
+  });
+  return fields.length ? fields : undefined;
+}
+
+function interactionFromRecord(
+  record: Record<string, unknown>,
+  state: PiRpcAdapterState,
+  timestamp: string,
+): InteractionRequest {
+  const id = stringOf(record.id, `interaction-${state.nextSequence}`);
+  const method = stringOf(record.method, "unknown");
+  const common = {
+    id,
+    sessionId: state.sessionId,
+    title: stringOf(record.title, "Extension request"),
+    message: stringOf(record.message) || undefined,
+    requestedAt: timestamp,
+    timeoutMs: numberOf(record.timeout),
+    raw: json(record),
+  };
+  if (method === "select") return { ...common, method, options: optionsOf(record.options) };
+  if (method === "multiSelect") {
+    return {
+      ...common,
+      method,
+      options: optionsOf(record.options),
+      minSelections: numberOf(record.minSelections),
+      maxSelections: numberOf(record.maxSelections),
+    };
+  }
+  if (method === "confirm") return { ...common, method };
+  if (method === "input") {
+    return {
+      ...common,
+      method,
+      placeholder: stringOf(record.placeholder) || undefined,
+      defaultValue: stringOf(record.defaultValue) || undefined,
+    };
+  }
+  if (method === "editor") {
+    return {
+      ...common,
+      method,
+      value: stringOf(record.prefill, stringOf(record.value)) || undefined,
+      language: stringOf(record.language) || undefined,
+    };
+  }
+  return {
+    ...common,
+    method: "unknown",
+    originalMethod: method,
+    fields: fieldsOf(record.fields),
+  };
+}
+
+export function normalizePiRpcRecord(
+  state: PiRpcAdapterState,
+  record: Record<string, unknown>,
+  at = 0,
+): AnvilEvent[] {
+  const timestamp = new Date(state.baseTimestamp + at).toISOString();
+  const raw = json(record);
+  const events: AnvilEvent[] = [];
+  const emit = <T extends AnvilEvent["type"]>(
+    type: T,
+    payload: Extract<AnvilEvent, { type: T }>["payload"],
+  ) => {
+    const sequence = state.nextSequence++;
+    events.push({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: `${state.fixtureId}-${sequence}`,
+      sequence,
+      sessionId: state.sessionId,
+      timestamp,
+      type,
+      payload,
+      raw,
+    } as AnvilEvent);
+  };
+
+  const type = stringOf(record.type, "unknown");
+  if (type === "response") {
+    const command = stringOf(record.command);
+    if (record.success === false) {
+      emit("timeline.event", {
+        entry: {
+          id: `command-error-${state.nextSequence}`,
+          kind: "event",
+          category: "error",
+          tone: "error",
+          title: `Pi command failed: ${command || "unknown"}`,
+          message: stringOf(record.error, "The command was rejected."),
+          details: raw,
+          createdAt: timestamp,
+          raw,
+        },
+      });
+      return events;
+    }
+    const data = recordOf(record.data);
+    if (command === "get_available_models") {
+      const models = Array.isArray(data.models)
+        ? data.models.map((item) => {
+            const model = recordOf(item);
+            const provider = stringOf(model.provider, "unknown");
+            const id = stringOf(model.id, "unknown");
+            const reasoning = model.reasoning === true;
+            return {
+              id: `${provider}/${id}`,
+              provider,
+              name: stringOf(model.name, id),
+              reasoning,
+              input: Array.isArray(model.input)
+                ? model.input.filter((value): value is "text" | "image" => value === "text" || value === "image")
+                : ["text" as const],
+              contextWindow: numberOf(model.contextWindow),
+              maxTokens: numberOf(model.maxTokens),
+              supportedThinkingLevels: reasoning
+                ? (["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const)
+                : (["off"] as const),
+            };
+          })
+        : [];
+      state.catalog = { ...state.catalog, models: models.map((model) => ({ ...model, supportedThinkingLevels: [...model.supportedThinkingLevels] })) };
+      emit("catalog.updated", { catalog: state.catalog });
+      return events;
+    }
+    if (command === "get_commands") {
+      const commands = Array.isArray(data.commands) ? data.commands.map(recordOf) : [];
+      state.catalog = {
+        ...state.catalog,
+        commands: commands
+          .filter((item) => item.source !== "skill")
+          .map((item) => ({
+            name: stringOf(item.name),
+            description: stringOf(item.description) || undefined,
+            source: item.source === "extension" ? "extension" as const : "prompt" as const,
+            location: item.location === "user" || item.location === "project" || item.location === "path" ? item.location : undefined,
+            path: stringOf(item.path) || undefined,
+          })),
+        skills: commands
+          .filter((item) => item.source === "skill")
+          .map((item) => {
+            const commandName = stringOf(item.name);
+            return {
+              name: commandName.replace(/^skill:/, ""),
+              command: commandName,
+              description: stringOf(item.description) || undefined,
+              location: item.location === "user" || item.location === "project" || item.location === "path" ? item.location : undefined,
+              path: stringOf(item.path) || undefined,
+            };
+          }),
+      };
+      emit("catalog.updated", { catalog: state.catalog });
+      return events;
+    }
+    if (command === "get_state") {
+      const model = recordOf(data.model);
+      const provider = stringOf(model.provider);
+      const modelId = stringOf(model.id);
+      const configured: {
+        modelId?: string;
+        thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+        title?: string;
+      } = {};
+      if (provider && modelId) configured.modelId = `${provider}/${modelId}`;
+      const thinkingLevel = stringOf(data.thinkingLevel);
+      if (["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(thinkingLevel)) {
+        configured.thinkingLevel = thinkingLevel as typeof configured.thinkingLevel;
+      }
+      if (stringOf(data.sessionName)) configured.title = stringOf(data.sessionName);
+      emit("session.configured", configured);
+      emit("run.status", { status: data.isStreaming === true ? "running" : "idle" });
+      return events;
+    }
+    if (command === "get_messages" && Array.isArray(data.messages)) {
+      return data.messages.flatMap((message, index) => {
+        const itemAt = at + index;
+        return [
+          ...normalizePiRpcRecord(state, { type: "message_start", message }, itemAt),
+          ...normalizePiRpcRecord(state, { type: "message_end", message }, itemAt),
+        ];
+      });
+    }
+    emit("stream.marker", {
+      messageId: `response-${stringOf(record.id, command || "unknown")}`,
+      markerType: `response:${command || "unknown"}`,
+      data: raw,
+    });
+    return events;
+  }
+  if (type === "agent_start") {
+    emit("run.status", { status: "running" });
+    return events;
+  }
+  if (type === "agent_settled") {
+    emit("run.status", { status: "idle" });
+    return events;
+  }
+  if (type === "message_start") {
+    const message = recordOf(record.message);
+    const role = stringOf(message.role, "system");
+    if (role === "toolResult") {
+      emit("stream.marker", {
+        messageId: stringOf(message.toolCallId, "unknown-tool-result"),
+        markerType: "toolResult:start",
+        data: json(message),
+      });
+      return events;
+    }
+    const id = messageId(message, state);
+    if (role === "assistant") {
+      state.activeAssistantMessageId = id;
+      state.lastAssistantMessageId = id;
+      state.reasoningIds = {};
+    }
+    const normalized: MessageEntry = {
+      id,
+      kind: "message",
+      role:
+        role === "user" || role === "assistant" || role === "system"
+          ? role
+          : "extension",
+      content: contentBlocks(role === "bashExecution" ? message.output : message.content, id),
+      status: "streaming",
+      modelId: stringOf(message.model) || undefined,
+      createdAt: timestamp,
+      raw: json(message),
+    };
+    emit("message.started", { message: normalized });
+    return events;
+  }
+  if (type === "message_update") {
+    const update = recordOf(record.assistantMessageEvent);
+    const updateType = stringOf(update.type);
+    const message = recordOf(record.message);
+    const id = state.activeAssistantMessageId ?? messageId(message, state);
+    const contentIndex = numberOf(update.contentIndex) ?? 0;
+    if (updateType === "text_delta") {
+      emit("message.delta", {
+        messageId: id,
+        blockId: `${id}-text-${contentIndex}`,
+        delta: stringOf(update.delta),
+        modelId: stringOf(message.model) || undefined,
+      });
+    } else if (updateType === "thinking_start") {
+      const reasoningId = `${id}-reasoning-${contentIndex}`;
+      state.reasoningIds[contentIndex] = reasoningId;
+      emit("reasoning.started", {
+        reasoning: {
+          id: reasoningId,
+          kind: "reasoning",
+          messageId: id,
+          content: "",
+          status: "streaming",
+          createdAt: timestamp,
+          raw,
+        },
+      });
+    } else if (updateType === "thinking_delta") {
+      let reasoningId = state.reasoningIds[contentIndex];
+      if (!reasoningId) {
+        reasoningId = `${id}-reasoning-${contentIndex}`;
+        state.reasoningIds[contentIndex] = reasoningId;
+        emit("reasoning.started", {
+          reasoning: {
+            id: reasoningId,
+            kind: "reasoning",
+            messageId: id,
+            content: "",
+            status: "streaming",
+            createdAt: timestamp,
+            raw,
+          },
+        });
+      }
+      emit("reasoning.delta", { reasoningId, delta: stringOf(update.delta) });
+    } else if (updateType === "thinking_end") {
+      const reasoningId =
+        state.reasoningIds[contentIndex] ?? `${id}-reasoning-${contentIndex}`;
+      emit("reasoning.completed", {
+        reasoningId,
+        content: stringOf(update.content) || undefined,
+      });
+    } else if (updateType === "error") {
+      const reason = stringOf(update.reason, "error");
+      emit("message.completed", {
+        messageId: id,
+        status: reason === "aborted" ? "cancelled" : "failed",
+        error: stringOf(update.error, reason),
+      });
+      emit("run.status", { status: reason === "aborted" ? "idle" : "failed" });
+    } else {
+      emit("stream.marker", {
+        messageId: id,
+        markerType: updateType || "unknown_update",
+        contentIndex: numberOf(update.contentIndex),
+        data: json(update),
+      });
+    }
+    return events;
+  }
+  if (type === "message_end") {
+    const message = recordOf(record.message);
+    const role = stringOf(message.role);
+    if (role === "toolResult") {
+      const toolCallId = stringOf(message.toolCallId, `restored-tool-${state.nextSequence}`);
+      if (!state.knownToolCallIds.has(toolCallId)) {
+        state.knownToolCallIds.add(toolCallId);
+        emit("tool.started", {
+          tool: {
+            id: `tool-${toolCallId}`,
+            kind: "tool",
+            toolCallId,
+            name: stringOf(message.toolName, "unknown_tool"),
+            summary: `Restored ${stringOf(message.toolName, "tool")} result`,
+            status: "running",
+            arguments: {},
+            output: [],
+            createdAt: timestamp,
+            startedAt: timestamp,
+            raw,
+          },
+        });
+      }
+      emit("tool.completed", {
+        toolCallId,
+        output: contentBlocks(message.content, `tool-${toolCallId}-result`),
+        details: message.details === undefined ? undefined : json(message.details),
+        status: message.isError === true ? "failed" : "completed",
+      });
+      return events;
+    }
+    const id =
+      role === "assistant"
+        ? state.activeAssistantMessageId ?? messageId(message, state)
+        : messageId(message, state);
+    emit("message.completed", {
+      messageId: id,
+      content: contentBlocks(role === "bashExecution" ? message.output : message.content, id),
+      status:
+        message.stopReason === "aborted"
+          ? "cancelled"
+          : message.stopReason === "error"
+            ? "failed"
+            : "complete",
+      error: stringOf(message.errorMessage) || undefined,
+    });
+    if (role === "assistant" && Array.isArray(message.content)) {
+      message.content.forEach((item, index) => {
+        const block = recordOf(item);
+        if (block.type !== "thinking") return;
+        const reasoningId = state.reasoningIds[index] ?? `${id}-reasoning-${index}`;
+        if (!state.reasoningIds[index]) {
+          state.reasoningIds[index] = reasoningId;
+          emit("reasoning.started", {
+            reasoning: {
+              id: reasoningId,
+              kind: "reasoning",
+              messageId: id,
+              content: "",
+              status: "streaming",
+              createdAt: timestamp,
+              raw,
+            },
+          });
+        }
+        emit("reasoning.completed", {
+          reasoningId,
+          content: stringOf(block.thinking),
+        });
+      });
+      state.activeAssistantMessageId = undefined;
+    }
+    return events;
+  }
+  if (type === "tool_execution_start") {
+    const name = stringOf(record.toolName, "unknown_tool");
+    const args = recordOf(record.args);
+    const toolCallId = stringOf(record.toolCallId, `tool-${state.nextSequence}`);
+    state.knownToolCallIds.add(toolCallId);
+    emit("tool.started", {
+      tool: {
+        id: `tool-${toolCallId}`,
+        kind: "tool",
+        toolCallId,
+        name,
+        summary: toolSummary(name, args),
+        status: "running",
+        arguments: json(args),
+        output: [],
+        createdAt: timestamp,
+        startedAt: timestamp,
+        batchId: state.lastAssistantMessageId,
+        raw,
+      },
+    });
+    return events;
+  }
+  if (type === "tool_execution_update") {
+    const partial = recordOf(record.partialResult);
+    emit("tool.updated", {
+      toolCallId: stringOf(record.toolCallId),
+      output: contentBlocks(partial.content, `tool-${stringOf(record.toolCallId)}-partial`),
+      details: partial.details === undefined ? undefined : json(partial.details),
+    });
+    return events;
+  }
+  if (type === "tool_execution_end") {
+    const result = recordOf(record.result);
+    emit("tool.completed", {
+      toolCallId: stringOf(record.toolCallId),
+      output: contentBlocks(result.content, `tool-${stringOf(record.toolCallId)}-result`),
+      details: result.details === undefined ? undefined : json(result.details),
+      status: record.isError === true ? "failed" : "completed",
+    });
+    return events;
+  }
+  if (type === "queue_update") {
+    emit("queue.updated", {
+      steering: Array.isArray(record.steering) ? record.steering.map(String) : [],
+      followUp: Array.isArray(record.followUp) ? record.followUp.map(String) : [],
+    });
+    return events;
+  }
+  if (type === "extension_error") {
+    emit("timeline.event", {
+      entry: {
+        id: `extension-error-${state.nextSequence}`,
+        kind: "event",
+        category: "error",
+        tone: "error",
+        title: "Extension error",
+        message: stringOf(record.error, "An extension failed."),
+        source: stringOf(record.extensionPath) || undefined,
+        details: json({ event: record.event ?? null }),
+        createdAt: timestamp,
+        raw,
+      },
+    });
+    return events;
+  }
+  if (type === "extension_ui_request") {
+    const method = stringOf(record.method, "unknown");
+    if (["select", "multiSelect", "confirm", "input", "editor"].includes(method)) {
+      emit("interaction.requested", {
+        request: interactionFromRecord(record, state, timestamp),
+      });
+    } else if (method === "notify") {
+      const notifyType = stringOf(record.notifyType, "info");
+      emit("timeline.event", {
+        entry: {
+          id: `notification-${stringOf(record.id, String(state.nextSequence))}`,
+          kind: "event",
+          category: "notification",
+          tone:
+            notifyType === "error" ? "error" : notifyType === "warning" ? "warning" : "info",
+          title: "Extension notification",
+          message: stringOf(record.message),
+          createdAt: timestamp,
+          raw,
+        },
+      });
+    } else if (method === "setStatus") {
+      emit("extension.status", {
+        key: stringOf(record.statusKey, "extension"),
+        text: stringOf(record.statusText) || undefined,
+      });
+    } else if (method === "setWidget") {
+      emit("extension.widget", {
+        key: stringOf(record.widgetKey, "extension"),
+        lines: Array.isArray(record.widgetLines) ? record.widgetLines.map(String) : undefined,
+        placement: record.widgetPlacement === "belowEditor" ? "belowEditor" : "aboveEditor",
+      });
+    } else if (method === "set_editor_text") {
+      emit("composer.prefill", { text: stringOf(record.text) });
+    } else if (method === "setTitle") {
+      emit("timeline.event", {
+        entry: {
+          id: `title-${stringOf(record.id, String(state.nextSequence))}`,
+          kind: "event",
+          category: "status",
+          tone: "neutral",
+          title: "Extension changed the session title",
+          message: stringOf(record.title),
+          createdAt: timestamp,
+          raw,
+        },
+      });
+    } else {
+      emit("interaction.requested", {
+        request: interactionFromRecord(record, state, timestamp),
+      });
+    }
+    return events;
+  }
+  if (type === "compaction_start") {
+    emit("timeline.event", {
+      entry: {
+        id: `compaction-${state.nextSequence}`,
+        kind: "event",
+        category: "lifecycle",
+        tone: "info",
+        title: "Compacting context",
+        message: `Reason: ${stringOf(record.reason, "manual")}`,
+        createdAt: timestamp,
+        raw,
+      },
+    });
+    return events;
+  }
+  if (type === "auto_retry_start" || type === "auto_retry_end") {
+    emit("timeline.event", {
+      entry: {
+        id: `retry-${state.nextSequence}`,
+        kind: "event",
+        category: type === "auto_retry_end" && record.success === false ? "error" : "lifecycle",
+        tone: type === "auto_retry_end" && record.success === false ? "error" : "warning",
+        title: type === "auto_retry_start" ? "Retrying request" : "Retry finished",
+        message:
+          type === "auto_retry_start"
+            ? stringOf(record.errorMessage)
+            : record.success === false
+              ? stringOf(record.finalError)
+              : `Succeeded on attempt ${numberOf(record.attempt) ?? 1}`,
+        details: raw,
+        createdAt: timestamp,
+        raw,
+      },
+    });
+    return events;
+  }
+  if (type === "agent_end" || type === "turn_start" || type === "turn_end") {
+    emit("stream.marker", {
+      messageId: state.lastAssistantMessageId ?? "agent-run",
+      markerType: type,
+      data: raw,
+    });
+    return events;
+  }
+
+  emit("unknown", { eventType: type, payload: raw });
+  return events;
+}
+
+export function normalizeRecordedRpcItems(
+  state: PiRpcAdapterState,
+  items: RecordedRpcItem[],
+): AnvilEvent[] {
+  return items.flatMap((item) => normalizePiRpcRecord(state, item.record, item.at));
+}

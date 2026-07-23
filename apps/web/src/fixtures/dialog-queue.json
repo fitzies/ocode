@@ -1,0 +1,136 @@
+{
+  "id": "dialog-queue",
+  "name": "Extension dialog queue",
+  "description": "Native select, multi-select, confirm, input, editor, and schema-driven interactions.",
+  "baseTimestamp": "2026-07-21T08:20:00.000Z",
+  "project": { "id": "anvil", "name": "anvil", "path": "~/code/anvil" },
+  "session": {
+    "id": "dialog-queue",
+    "projectId": "anvil",
+    "title": "Extension interaction contract",
+    "updatedAt": "2026-07-21T08:20:07.000Z",
+    "status": "waiting",
+    "modelId": "anthropic/claude-opus-4.6",
+    "thinkingLevel": "high",
+    "branch": "dialog-protocol"
+  },
+  "records": [
+    {
+      "at": 0,
+      "record": {
+        "type": "message_start",
+        "message": { "role": "user", "content": "Run the extension interaction compatibility fixture.", "timestamp": 1784622000000 }
+      }
+    },
+    {
+      "at": 20,
+      "record": {
+        "type": "message_end",
+        "message": { "role": "user", "content": "Run the extension interaction compatibility fixture.", "timestamp": 1784622000000 }
+      }
+    },
+    { "at": 80, "record": { "type": "agent_start" } },
+    {
+      "at": 180,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "notify-dialog-demo",
+        "method": "notify",
+        "message": "The extension needs a few structured answers.",
+        "notifyType": "info"
+      }
+    },
+    {
+      "at": 230,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "status-dialog-demo",
+        "method": "setStatus",
+        "statusKey": "questionnaire",
+        "statusText": "Waiting for fixture responses"
+      }
+    },
+    {
+      "at": 280,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "widget-dialog-demo",
+        "method": "setWidget",
+        "widgetKey": "fixture-progress",
+        "widgetLines": ["Interaction fixture", "Answer each queued request to continue"],
+        "widgetPlacement": "aboveEditor"
+      }
+    },
+    {
+      "at": 500,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "dialog-select",
+        "method": "select",
+        "title": "Choose a transport",
+        "options": ["WebSocket", "Server-sent events", "Long polling"]
+      }
+    },
+    {
+      "at": 850,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "dialog-multi",
+        "method": "multiSelect",
+        "title": "Select fixture coverage",
+        "message": "Choose at least two scenarios.",
+        "options": [
+          { "id": "streaming", "label": "Streaming", "value": "streaming", "description": "Text and reasoning deltas" },
+          { "id": "tools", "label": "Parallel tools", "value": "tools", "description": "Interleaved progress and completion" },
+          { "id": "reconnect", "label": "Reconnection", "value": "reconnect", "description": "Snapshot plus event reconciliation" }
+        ],
+        "minSelections": 2
+      }
+    },
+    {
+      "at": 1200,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "dialog-confirm",
+        "method": "confirm",
+        "title": "Continue fixture replay?",
+        "message": "This is a normal extension confirmation, not an Anvil approval gate."
+      }
+    },
+    {
+      "at": 1550,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "dialog-input",
+        "method": "input",
+        "title": "Name this replay",
+        "placeholder": "e.g. mobile reconnect"
+      }
+    },
+    {
+      "at": 1900,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "dialog-editor",
+        "method": "editor",
+        "title": "Edit the handoff note",
+        "prefill": "Preserve pending interactions across reconnects.\nRender unknown requests safely."
+      }
+    },
+    {
+      "at": 2250,
+      "record": {
+        "type": "extension_ui_request",
+        "id": "dialog-schema",
+        "method": "deploymentWizard",
+        "title": "Configure a preview",
+        "message": "This future interaction is rendered from its field schema.",
+        "fields": [
+          { "id": "environment", "label": "Environment", "type": "select", "required": true, "options": ["Preview", "Staging"] },
+          { "id": "notes", "label": "Notes", "type": "textarea", "placeholder": "Optional context" },
+          { "id": "notify", "label": "Notify when complete", "type": "boolean", "defaultValue": true }
+        ]
+      }
+    }
+  ]
+}

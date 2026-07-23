@@ -13,7 +13,7 @@
   --border-strong: rgba(255, 255, 255, 0.14);
   --text: #ededed;
   --text-secondary: #a1a1a1;
-  --muted: #707070;
+  --muted: #85867e;
   --accent: #f2f2f2;
   --accent-soft: rgba(255, 255, 255, 0.065);
   --green: #46a758;
@@ -41,6 +41,7 @@ body {
 }
 
 button,
+input,
 textarea,
 select {
   font: inherit;
@@ -57,6 +58,7 @@ button {
 }
 
 button:focus-visible,
+input:focus-visible,
 textarea:focus-visible,
 select:focus-visible,
 summary:focus-visible {
@@ -85,6 +87,15 @@ button:disabled {
   width: 100%;
   height: 100%;
   min-width: 0;
+}
+
+.app-loading {
+  display: grid;
+  width: 100%;
+  min-height: 100%;
+  place-items: center;
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 .icon-button {
@@ -155,7 +166,7 @@ button:disabled {
 }
 
 .brand-environment {
-  color: #737373;
+  color: #898a82;
   font-size: 12px;
   font-weight: 450;
 }
@@ -172,7 +183,7 @@ button:disabled {
   margin: 0 11px 17px;
   padding: 0 9px;
   gap: 7px;
-  color: #656565;
+  color: #898a82;
   background: rgba(255, 255, 255, 0.025);
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -195,11 +206,11 @@ button:disabled {
 }
 
 .thread-search input::placeholder {
-  color: #5f5f5f;
+  color: #898a82;
 }
 
 .thread-search kbd {
-  color: #4f4f4f;
+  color: #898a82;
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9px;
 }
@@ -214,7 +225,7 @@ button:disabled {
 
 .sidebar-section-label {
   margin: 0 9px 9px;
-  color: #606060;
+  color: #898a82;
   font-size: 9.5px;
   font-weight: 620;
   letter-spacing: 0.1em;
@@ -223,7 +234,7 @@ button:disabled {
 
 .search-empty {
   padding: 18px 9px;
-  color: #555555;
+  color: #85867e;
   font-size: 10.5px;
 }
 
@@ -263,7 +274,7 @@ button:disabled {
 
 .project-thread-count {
   margin-left: auto;
-  color: #4f4f4f;
+  color: #85867e;
   font-size: 9.5px;
   font-weight: 450;
 }
@@ -342,7 +353,7 @@ button:disabled {
   align-items: center;
   margin-top: 5px;
   gap: 5px;
-  color: #5f5f5f;
+  color: #85867e;
   font-size: 9.5px;
 }
 
@@ -376,7 +387,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #5f5f5f;
+  color: #85867e;
   font-size: 9.5px;
 }
 

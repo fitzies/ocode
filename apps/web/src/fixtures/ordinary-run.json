@@ -1,0 +1,258 @@
+{
+  "id": "ordinary-run",
+  "name": "Ordinary tool run",
+  "description": "Reasoning, streaming text, a tool call, and completion.",
+  "baseTimestamp": "2026-07-21T08:00:00.000Z",
+  "project": { "id": "anvil", "name": "anvil", "path": "~/code/anvil" },
+  "session": {
+    "id": "ordinary-run",
+    "projectId": "anvil",
+    "title": "Build the protocol foundation",
+    "updatedAt": "2026-07-21T08:00:08.000Z",
+    "status": "idle",
+    "modelId": "openai/gpt-5.4",
+    "thinkingLevel": "high",
+    "branch": "main"
+  },
+  "records": [
+    {
+      "at": 0,
+      "record": {
+        "id": "models-1",
+        "type": "response",
+        "command": "get_available_models",
+        "success": true,
+        "data": {
+          "models": [
+            { "id": "gpt-5.4", "name": "GPT-5.4", "provider": "openai", "reasoning": true, "input": ["text", "image"], "contextWindow": 1050000, "maxTokens": 128000 },
+            { "id": "gpt-5.3-codex", "name": "GPT-5.3 Codex", "provider": "openai", "reasoning": true, "input": ["text", "image"], "contextWindow": 400000, "maxTokens": 64000 },
+            { "id": "claude-opus-4.6", "name": "Claude Opus 4.6", "provider": "anthropic", "reasoning": true, "input": ["text", "image"], "contextWindow": 200000, "maxTokens": 32000 }
+          ]
+        }
+      }
+    },
+    {
+      "at": 1,
+      "record": {
+        "id": "commands-1",
+        "type": "response",
+        "command": "get_commands",
+        "success": true,
+        "data": {
+          "commands": [
+            { "name": "session-name", "description": "Set or clear the session display name", "source": "extension", "path": "~/.pi/agent/extensions/session-name.ts" },
+            { "name": "handoff", "description": "Create a concise handoff for another Pi session", "source": "prompt", "location": "user", "path": "~/.pi/agent/prompts/handoff.md" },
+            { "name": "review", "description": "Review the current implementation for regressions", "source": "prompt", "location": "project", "path": ".pi/prompts/review.md" },
+            { "name": "skill:frontend-design", "description": "Create and review production-grade frontend interfaces", "source": "skill", "location": "user", "path": "~/.pi/agent/skills/frontend-design/SKILL.md" },
+            { "name": "skill:github-investigation", "description": "Investigate GitHub repositories, issues, and pull requests", "source": "skill", "location": "user", "path": "~/.pi/agent/skills/github-investigation/SKILL.md" }
+          ]
+        }
+      }
+    },
+    {
+      "at": 2,
+      "record": {
+        "id": "state-1",
+        "type": "response",
+        "command": "get_state",
+        "success": true,
+        "data": {
+          "model": { "id": "gpt-5.4", "provider": "openai" },
+          "thinkingLevel": "high",
+          "isStreaming": false,
+          "sessionName": "Build the protocol foundation"
+        }
+      }
+    },
+    {
+      "at": 10,
+      "record": {
+        "type": "message_start",
+        "message": {
+          "role": "user",
+          "content": "Inspect the protocol package and propose the smallest durable event contract.",
+          "timestamp": 1784620800000
+        }
+      }
+    },
+    {
+      "at": 40,
+      "record": {
+        "type": "message_end",
+        "message": {
+          "role": "user",
+          "content": "Inspect the protocol package and propose the smallest durable event contract.",
+          "timestamp": 1784620800000
+        }
+      }
+    },
+    { "at": 180, "record": { "type": "agent_start" } },
+    {
+      "at": 240,
+      "record": {
+        "type": "message_start",
+        "message": {
+          "role": "assistant",
+          "content": [],
+          "model": "gpt-5.4",
+          "provider": "openai",
+          "timestamp": 1784620800240
+        }
+      }
+    },
+    {
+      "at": 330,
+      "record": {
+        "type": "message_update",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.4", "timestamp": 1784620800240 },
+        "assistantMessageEvent": { "type": "thinking_start", "contentIndex": 0 }
+      }
+    },
+    {
+      "at": 520,
+      "record": {
+        "type": "message_update",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.4", "timestamp": 1784620800240 },
+        "assistantMessageEvent": {
+          "type": "thinking_delta",
+          "contentIndex": 0,
+          "delta": "I need to preserve raw data while giving clients stable, typed events."
+        }
+      }
+    },
+    {
+      "at": 720,
+      "record": {
+        "type": "message_update",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.4", "timestamp": 1784620800240 },
+        "assistantMessageEvent": {
+          "type": "thinking_end",
+          "contentIndex": 0,
+          "content": "I need to preserve raw data while giving clients stable, typed events."
+        }
+      }
+    },
+    {
+      "at": 790,
+      "record": {
+        "type": "message_update",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.4", "timestamp": 1784620800240 },
+        "assistantMessageEvent": {
+          "type": "toolcall_end",
+          "contentIndex": 1,
+          "toolCall": { "type": "toolCall", "id": "call-read-protocol", "name": "read", "arguments": { "path": "packages/protocol/src/index.ts" } }
+        }
+      }
+    },
+    {
+      "at": 850,
+      "record": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            { "type": "thinking", "thinking": "I need to preserve raw data while giving clients stable, typed events." },
+            { "type": "toolCall", "id": "call-read-protocol", "name": "read", "arguments": { "path": "packages/protocol/src/index.ts" } }
+          ],
+          "model": "gpt-5.4",
+          "stopReason": "toolUse",
+          "timestamp": 1784620800240
+        }
+      }
+    },
+    {
+      "at": 930,
+      "record": {
+        "type": "tool_execution_start",
+        "toolCallId": "call-read-protocol",
+        "toolName": "read",
+        "args": { "path": "packages/protocol/src/index.ts" }
+      }
+    },
+    {
+      "at": 1210,
+      "record": {
+        "type": "tool_execution_update",
+        "toolCallId": "call-read-protocol",
+        "toolName": "read",
+        "args": { "path": "packages/protocol/src/index.ts" },
+        "partialResult": {
+          "content": [{ "type": "text", "text": "export type ConnectionState = ..." }],
+          "details": { "lines": 45, "truncation": null }
+        }
+      }
+    },
+    {
+      "at": 1540,
+      "record": {
+        "type": "tool_execution_end",
+        "toolCallId": "call-read-protocol",
+        "toolName": "read",
+        "result": {
+          "content": [{ "type": "text", "text": "Read 45 lines from packages/protocol/src/index.ts" }],
+          "details": { "lines": 45, "fullOutputPath": null }
+        },
+        "isError": false
+      }
+    },
+    {
+      "at": 1700,
+      "record": {
+        "type": "message_start",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.4", "provider": "openai", "timestamp": 1784620801700 }
+      }
+    },
+    {
+      "at": 1810,
+      "record": {
+        "type": "message_update",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.4", "timestamp": 1784620801700 },
+        "assistantMessageEvent": { "type": "text_start", "contentIndex": 0 }
+      }
+    },
+    {
+      "at": 2040,
+      "record": {
+        "type": "message_update",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.4", "timestamp": 1784620801700 },
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 0,
+          "delta": "The contract should use versioned envelopes with stable IDs and per-session sequence numbers. "
+        }
+      }
+    },
+    {
+      "at": 2320,
+      "record": {
+        "type": "message_update",
+        "message": { "role": "assistant", "content": [], "model": "gpt-5.4", "timestamp": 1784620801700 },
+        "assistantMessageEvent": {
+          "type": "text_delta",
+          "contentIndex": 0,
+          "delta": "Typed payloads can drive native UI while every envelope retains the original RPC record for forward compatibility."
+        }
+      }
+    },
+    {
+      "at": 2500,
+      "record": {
+        "type": "message_end",
+        "message": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "The contract should use versioned envelopes with stable IDs and per-session sequence numbers. Typed payloads can drive native UI while every envelope retains the original RPC record for forward compatibility."
+            }
+          ],
+          "model": "gpt-5.4",
+          "stopReason": "stop",
+          "timestamp": 1784620801700
+        }
+      }
+    },
+    { "at": 2580, "record": { "type": "agent_end", "messages": [], "willRetry": false } },
+    { "at": 2630, "record": { "type": "agent_settled" } }
+  ]
+}

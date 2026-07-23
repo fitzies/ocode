@@ -8,6 +8,8 @@
 
 .composer,
 .attention-banner,
+.queue-banner,
+.extension-widget,
 .composer-note {
   width: min(100%, 790px);
   margin-right: auto;
@@ -67,7 +69,7 @@
 }
 
 .composer textarea::placeholder {
-  color: #6a6b63;
+  color: #85867e;
 }
 
 .composer-toolbar,
@@ -172,7 +174,7 @@
 
 .model-menu-label {
   padding: 5px 8px 6px;
-  color: #5f5f5f;
+  color: #85867e;
   font-size: 9px;
   font-weight: 560;
   letter-spacing: 0.08em;
@@ -201,9 +203,22 @@
   background: rgba(255, 255, 255, 0.055);
 }
 
+.model-option > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.model-option small {
+  color: #85867e;
+  font-size: 8px;
+}
+
 .model-option i {
   width: 5px;
   height: 5px;
+  flex: 0 0 auto;
   background: #ededed;
   border-radius: 50%;
 }
@@ -218,7 +233,7 @@
 }
 
 .send-hint {
-  color: #565750;
+  color: #85867e;
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 8.5px;
 }
@@ -263,8 +278,103 @@
 
 .composer-note {
   margin-top: 7px;
-  color: #4f504a;
+  color: #85867e;
   font-size: 8.5px;
   text-align: center;
 }
+
+.queue-banner {
+  margin-bottom: 7px;
+  color: #8da5bd;
+  font-size: 9.5px;
+  text-align: right;
+}
+
+.extension-widget {
+  display: grid;
+  margin-bottom: 7px;
+  padding: 8px 10px;
+  gap: 2px;
+  color: #9a9b92;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 9px;
+  line-height: 1.45;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.composer + .extension-widget { margin-top: 7px; margin-bottom: 0; }
+.extension-widget-key { margin-bottom: 2px; color: #85867e; font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
+
+.delivery-select {
+  height: 27px;
+  padding: 0 22px 0 7px;
+  color: #aaa9a1;
+  font-size: 9.5px;
+  background: #171717;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.slash-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 24;
+  max-height: min(390px, 55vh);
+  padding: 5px;
+  overflow-y: auto;
+  background: #151515;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  box-shadow: 0 22px 54px rgba(0, 0, 0, 0.52);
+}
+
+.slash-menu-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px;
+  color: #898a82;
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+
+.slash-menu-heading kbd {
+  color: #85867e;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 8px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.slash-option {
+  display: grid;
+  width: 100%;
+  min-height: 46px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  padding: 6px 8px;
+  gap: 8px;
+  color: #85867e;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.slash-option--active,
+.slash-option:hover { color: #d1d0c8; background: rgba(255, 255, 255, 0.055); }
+.slash-option > svg { color: #797a72; }
+.slash-option-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.slash-option-copy strong { color: #c1c1b8; font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 10px; font-weight: 520; }
+.slash-option-copy small { overflow: hidden; color: #8b8c84; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.slash-source { padding: 3px 5px; color: #898a82; font-size: 7.5px; letter-spacing: .05em; text-transform: uppercase; background: rgba(255,255,255,.03); border-radius: 4px; }
+.slash-source--skill { color: #a29372; }
 

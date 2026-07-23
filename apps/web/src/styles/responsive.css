@@ -102,8 +102,70 @@
     display: none;
   }
 
-  .model-select select {
-    max-width: 108px;
+  .model-select > span {
+    display: block;
+    max-width: 104px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .replay-chip > span:not(.replay-dot),
+  .replay-chip > svg {
+    display: none;
+  }
+
+  .replay-panel {
+    position: fixed;
+    top: 52px;
+    right: 8px;
+    width: min(300px, calc(100vw - 16px));
+  }
+
+  .extension-status-bar {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+
+  .dialog-backdrop {
+    align-items: end;
+    padding: 0;
+  }
+
+  .interaction-dialog {
+    width: 100%;
+    max-height: min(86dvh, 760px);
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 13px 13px 0 0;
+  }
+
+  .slash-menu-heading kbd {
+    display: none;
+  }
+
+  .delivery-select {
+    width: 74px;
+    padding-left: 5px;
+  }
+}
+
+@media (max-width: 420px) {
+  .thinking-event,
+  .tool-event,
+  .tool-batch,
+  .system-event,
+  .interaction-event {
+    margin-left: 12px;
+  }
+
+  .composer-tools .model-picker:nth-of-type(2) {
+    display: none;
+  }
+
+  .model-select > span {
+    max-width: 82px;
   }
 }
 

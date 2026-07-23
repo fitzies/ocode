@@ -49,11 +49,24 @@ export function createEmptySnapshot(input?: {
   };
 }
 
+function replaceProject(snapshot: AnvilSnapshot, project: ProjectSummary): ProjectSummary[] {
+  const exists = snapshot.projects.some((candidate) => candidate.id === project.id);
+  return exists
+    ? snapshot.projects.map((candidate) => (candidate.id === project.id ? project : candidate))
+    : [...snapshot.projects, project];
+}
+
 function replaceSession(snapshot: AnvilSnapshot, session: SessionSummary): SessionSummary[] {
   const exists = snapshot.sessions.some((candidate) => candidate.id === session.id);
   return exists
     ? snapshot.sessions.map((candidate) => (candidate.id === session.id ? session : candidate))
     : [session, ...snapshot.sessions];
+}
+
+function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const next = { ...record };
+  delete next[key];
+  return next;
 }
 
 function updateSession(
@@ -64,6 +77,19 @@ function updateSession(
   return snapshot.sessions.map((session) =>
     session.id === sessionId ? { ...session, ...patch } : session,
   );
+}
+
+function promoteSession(
+  snapshot: AnvilSnapshot,
+  sessionId: string,
+  patch: Partial<SessionSummary>,
+): SessionSummary[] {
+  const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+  if (!session) return snapshot.sessions;
+  return [
+    { ...session, ...patch },
+    ...snapshot.sessions.filter((candidate) => candidate.id !== sessionId),
+  ];
 }
 
 function updateTimeline(
@@ -139,6 +165,8 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
         ...next,
         catalogs: { ...snapshot.catalogs, [event.sessionId]: event.payload.catalog },
       };
+    case "project.upserted":
+      return { ...next, projects: replaceProject(snapshot, event.payload.project) };
     case "session.upserted": {
       const session = event.payload.session;
       const runState =
@@ -160,6 +188,29 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
           [session.id]: snapshot.catalogs[session.id] ?? EMPTY_CATALOG,
         },
         runStates: { ...snapshot.runStates, [session.id]: runState },
+      };
+    }
+    case "session.deleted": {
+      const sessionId = event.payload.sessionId;
+      const sessions = snapshot.sessions.filter((session) => session.id !== sessionId);
+      return {
+        ...next,
+        sessions,
+        activeSessionId: snapshot.activeSessionId === sessionId
+          ? sessions[0]?.id ?? null
+          : snapshot.activeSessionId,
+        timelines: withoutKey(snapshot.timelines, sessionId),
+        catalogs: withoutKey(snapshot.catalogs, sessionId),
+        pendingInteractions: snapshot.pendingInteractions.filter(
+          (request) => request.sessionId !== sessionId,
+        ),
+        extensionStatuses: snapshot.extensionStatuses.filter(
+          (status) => status.sessionId !== sessionId,
+        ),
+        widgets: snapshot.widgets.filter((widget) => widget.sessionId !== sessionId),
+        queues: withoutKey(snapshot.queues, sessionId),
+        composerDrafts: withoutKey(snapshot.composerDrafts, sessionId),
+        runStates: withoutKey(snapshot.runStates, sessionId),
       };
     }
     case "session.selected":
@@ -193,6 +244,9 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
       if (!event.sessionId) return next;
       return {
         ...next,
+        sessions: event.payload.message.role === "user"
+          ? promoteSession(snapshot, event.sessionId, { updatedAt: event.timestamp })
+          : snapshot.sessions,
         timelines: updateTimeline(snapshot, event.sessionId, (entries) =>
           upsertEntry(entries, event.payload.message),
         ),

@@ -5,6 +5,7 @@ import { Icon } from "@iconify/react";
 import altArrowDownIcon from "@iconify-icons/solar/alt-arrow-down-linear";
 import closeCircleIcon from "@iconify-icons/solar/close-circle-linear";
 import searchIcon from "@iconify-icons/solar/magnifer-linear";
+import trashIcon from "@iconify-icons/solar/trash-bin-minimalistic-linear";
 
 interface SidebarProps {
   snapshot: AnvilSnapshot;
@@ -13,6 +14,8 @@ interface SidebarProps {
   onClose: () => void;
   onSelectSession: (sessionId: string) => void;
   onCreateSession: (projectId: string) => void;
+  onAddWorkspace: () => void;
+  onRequestDeleteSession: (sessionId: string) => void;
 }
 
 function StatusMark({ status }: { status: SessionStatus }) {
@@ -34,10 +37,15 @@ export function Sidebar({
   onClose,
   onSelectSession,
   onCreateSession,
+  onAddWorkspace,
+  onRequestDeleteSession,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
+  const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const contextTriggerRef = useRef<HTMLButtonElement>(null);
   const normalizedQuery = query.trim().toLowerCase();
   const hasSearchResults = snapshot.sessions.some((session) => {
     const project = snapshot.projects.find((candidate) => candidate.id === session.projectId);
@@ -57,6 +65,35 @@ export function Sidebar({
     window.addEventListener("keydown", focusSearch);
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    requestAnimationFrame(() => contextMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus());
+    const close = (event: Event) => {
+      if (event.type === "keydown" && (event as KeyboardEvent).key !== "Escape") return;
+      setContextMenu(null);
+      if (event.type === "keydown") requestAnimationFrame(() => contextTriggerRef.current?.focus());
+    };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [contextMenu]);
+
+  const openSessionMenu = (sessionId: string, x: number, y: number, trigger: HTMLButtonElement) => {
+    contextTriggerRef.current = trigger;
+    setContextMenu({
+      sessionId,
+      x: Math.max(8, Math.min(x, window.innerWidth - 168)),
+      y: Math.max(8, Math.min(y, window.innerHeight - 58)),
+    });
+  };
 
   const toggleProject = (projectId: string) => {
     setCollapsedProjects((current) => {
@@ -104,7 +141,21 @@ export function Sidebar({
       </label>
 
       <div className="sidebar-scroll">
-        <div className="sidebar-section-label">Workspace</div>
+        <div className="sidebar-section-heading">
+          <span className="sidebar-section-label">Workspaces</span>
+          <button
+            type="button"
+            className="workspace-add"
+            aria-label="Add workspace"
+            title="Add workspace"
+            onClick={onAddWorkspace}
+          >
+            <span aria-hidden="true">+</span>
+          </button>
+        </div>
+        {snapshot.projects.length === 0 && !normalizedQuery && (
+          <div className="workspace-empty-note">Add a Forge directory to begin.</div>
+        )}
         {normalizedQuery && !hasSearchResults && (
           <div className="search-empty">No threads found</div>
         )}
@@ -132,7 +183,6 @@ export function Sidebar({
                     className={`project-chevron ${collapsed ? "project-chevron--collapsed" : ""}`}
                   />
                   <span>{project.name}</span>
-                  <span className="project-thread-count">{sessions.length}</span>
                 </button>
                 <button
                   type="button"
@@ -149,30 +199,77 @@ export function Sidebar({
               </div>
               {!collapsed && <div className="session-list">
                 {sessions.map((session) => (
-                  <button
-                    className={`session-row ${
-                      session.id === snapshot.activeSessionId ? "session-row--active" : ""
-                    }`}
-                    key={session.id}
-                    onClick={() => {
-                      onSelectSession(session.id);
-                      onClose();
-                    }}
-                  >
-                    <span className="session-copy">
-                      <span className="session-title">{session.title}</span>
-                      <span className="session-meta">
-                        <StatusMark status={session.status} />
-                        {session.status === "waiting" ? "Needs input" : formatUpdatedAt(session.updatedAt)}
+                  <div className="session-item" key={session.id}>
+                    <button
+                      className={`session-row ${
+                        session.id === snapshot.activeSessionId ? "session-row--active" : ""
+                      }`}
+                      data-session-id={session.id}
+                      onClick={() => {
+                        setContextMenu(null);
+                        onSelectSession(session.id);
+                        onClose();
+                      }}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        openSessionMenu(session.id, event.clientX, event.clientY, event.currentTarget);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+                          event.preventDefault();
+                          const bounds = event.currentTarget.getBoundingClientRect();
+                          openSessionMenu(session.id, bounds.right - 8, bounds.top + 8, event.currentTarget);
+                        }
+                      }}
+                    >
+                      <span className="session-copy">
+                        <span className="session-title">{session.title}</span>
+                        <span className="session-meta">
+                          <StatusMark status={session.status} />
+                          {session.status === "waiting" ? "Needs input" : formatUpdatedAt(session.updatedAt)}
+                        </span>
                       </span>
-                    </span>
-                  </button>
+                    </button>
+                    <button
+                      type="button"
+                      className="session-delete"
+                      aria-label={`Delete ${session.title}`}
+                      title="Delete thread"
+                      onClick={() => onRequestDeleteSession(session.id)}
+                    >
+                      <Icon icon={trashIcon} width={14} />
+                    </button>
+                  </div>
                 ))}
               </div>}
             </section>
           );
         })}
       </div>
+
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="thread-context-menu"
+          role="menu"
+          aria-label="Thread actions"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="thread-context-delete"
+            onClick={() => {
+              const sessionId = contextMenu.sessionId;
+              setContextMenu(null);
+              onRequestDeleteSession(sessionId);
+            }}
+          >
+            Delete thread
+          </button>
+        </div>
+      )}
 
       <div className="sidebar-footer">
         <div className="forge-status">

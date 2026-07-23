@@ -79,6 +79,38 @@ export class ForgeDatabase {
     }
   }
 
+  listProjects(): ProjectSummary[] {
+    const rows = this.database.prepare(`
+      SELECT id, name, path FROM projects ORDER BY created_at ASC, name ASC
+    `).all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      path: String(row.path),
+    }));
+  }
+
+  createProjectWithEvent(
+    project: ProjectSummary,
+    event: UnsequencedAnvilEvent,
+  ): AnvilEvent {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const timestamp = new Date().toISOString();
+      this.database.prepare(`
+        INSERT INTO projects (id, name, path, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(project.id, project.name, project.path, timestamp, timestamp);
+      const [committed] = this.insertEvents([event]);
+      if (!committed) throw new Error("Project creation did not produce an event");
+      this.database.exec("COMMIT");
+      return committed;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   createSession(session: SessionSummary): void {
     this.insertSession(session);
   }
@@ -117,6 +149,29 @@ export class ForgeDatabase {
       session.updatedAt,
       session.id,
     );
+  }
+
+  deleteSessionWithEvent(sessionId: string, event: UnsequencedAnvilEvent): AnvilEvent {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare("DELETE FROM pending_interactions WHERE session_id = ?").run(sessionId);
+      this.database.prepare("DELETE FROM commands WHERE session_id = ?").run(sessionId);
+      this.database.prepare(`
+        UPDATE events
+        SET type = 'unknown', payload_json = ?, raw_json = NULL
+        WHERE session_id = ?
+      `).run(JSON.stringify({ eventType: "session.redacted", payload: null }), sessionId);
+      const deleted = this.database.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+      if (Number(deleted.changes) !== 1) throw new Error("Session not found");
+      this.database.prepare("DELETE FROM snapshots").run();
+      const [committed] = this.insertEvents([event]);
+      if (!committed) throw new Error("Session deletion did not produce an event");
+      this.database.exec("COMMIT");
+      return committed;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   getSession(id: string): RuntimeSessionRecord | undefined {

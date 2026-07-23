@@ -24,7 +24,7 @@ export const fixtureCatalog: CapabilityCatalog = {
     {
       id: "openai/gpt-5.4",
       provider: "openai",
-      name: "GPT-5.4",
+      name: "Sol",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 1_050_000,
@@ -34,7 +34,7 @@ export const fixtureCatalog: CapabilityCatalog = {
     {
       id: "openai/gpt-5.3-codex",
       provider: "openai",
-      name: "GPT-5.3 Codex",
+      name: "Luna",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 400_000,
@@ -44,7 +44,7 @@ export const fixtureCatalog: CapabilityCatalog = {
     {
       id: "anthropic/claude-opus-4.6",
       provider: "anthropic",
-      name: "Claude Opus 4.6",
+      name: "Terra",
       reasoning: true,
       input: ["text", "image"],
       contextWindow: 200_000,

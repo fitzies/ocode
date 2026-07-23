@@ -15,12 +15,45 @@ import questionCircleIcon from "@iconify-icons/solar/question-circle-bold-duoton
 import refreshIcon from "@iconify-icons/solar/refresh-linear";
 import sledgehammerIcon from "@iconify-icons/solar/sledgehammer-bold-duotone";
 import starsIcon from "@iconify-icons/solar/stars-minimalistic-bold-duotone";
-import { type ReactNode, useLayoutEffect, useRef } from "react";
+import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
+import Markdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface TimelineProps {
   session: SessionSummary;
   entries: TimelineEntry[];
   onSuggestion: (prompt: string) => void;
+}
+
+const WORKING_MESSAGES = [
+  "Locking in…",
+  "Dialing in…",
+  "Cooking…",
+  "Bug hunting…",
+  "Reading stack…",
+  "Parsing vibes…",
+  "Tracing bugs…",
+  "Pushing pixels…",
+  "Moving bytes…",
+  "Diffmaxxing…",
+  "Contextmaxxing…",
+  "Refactormaxxing…",
+  "Testmaxxing…",
+  "Finding alpha…",
+  "Token farming…",
+  "Optimizing…",
+] as const;
+
+function workingMessage(key: string): string {
+  let hash = 0;
+  for (const character of key) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
+  return WORKING_MESSAGES[Math.abs(hash) % WORKING_MESSAGES.length]!;
+}
+
+function hasVisibleContent(blocks: ContentBlock[]): boolean {
+  return blocks.some((block) => (
+    block.type !== "toolCall" && (block.type !== "text" || block.text.length > 0)
+  ));
 }
 
 function JsonDetails({ label, value }: { label: string; value?: JsonValue }) {
@@ -33,12 +66,34 @@ function JsonDetails({ label, value }: { label: string; value?: JsonValue }) {
   );
 }
 
+const MARKDOWN_COMPONENTS: Components = {
+  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+};
+
+const MarkdownText = memo(function MarkdownText({
+  children,
+  className = "text-block markdown-body",
+}: {
+  children: string;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{children}</Markdown>
+    </div>
+  );
+});
+
 function ContentBlocks({ blocks, compact = false }: { blocks: ContentBlock[]; compact?: boolean }) {
   if (!blocks.length) return null;
   return (
     <div className={compact ? "content-blocks content-blocks--compact" : "content-blocks"}>
       {blocks.map((block) => {
-        if (block.type === "text") return <div className="text-block" key={block.id}>{block.text}</div>;
+        if (block.type === "text") {
+          return compact
+            ? <div className="text-block" key={block.id}>{block.text}</div>
+            : <MarkdownText key={block.id}>{block.text}</MarkdownText>;
+        }
         if (block.type === "image") {
           const source = block.url ?? (block.data ? `data:${block.mimeType};base64,${block.data}` : undefined);
           return (
@@ -73,7 +128,7 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
     return (
       <article className={`${messageClass} message-status--${entry.status}`}>
         <ContentBlocks blocks={visibleContent} />
-        {entry.status === "streaming" && <span className="stream-caret" aria-label="Streaming" />}
+        {entry.status === "streaming" && hasVisibleContent(visibleContent) && <span className="stream-caret" aria-label="Streaming" />}
         {entry.error && <div className="message-error">{entry.error}</div>}
         {(entry.role === "extension" || entry.status === "failed") && <JsonDetails label="Raw message" value={entry.raw} />}
       </article>
@@ -86,11 +141,12 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
         <summary>
           <Icon icon={starsIcon} width={15} />
           <span>{entry.status === "streaming" ? "Reasoning" : "Reasoning trace"}</span>
-          {entry.status === "streaming" && <span className="thinking-pulse" aria-label="Streaming reasoning" />}
           {entry.status === "cancelled" && <span className="event-state-label">cancelled</span>}
           <Icon icon={altArrowRightIcon} className="disclosure-icon" width={14} />
         </summary>
-        <p>{entry.content || "Reasoning stream started…"}</p>
+        <MarkdownText className="thinking-markdown markdown-body">
+          {entry.content || "Reasoning stream started…"}
+        </MarkdownText>
       </details>
     );
   }
@@ -179,6 +235,16 @@ function renderEntries(entries: TimelineEntry[]): ReactNode[] {
 export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottom = useRef(true);
+  const activeTool = entries.some((entry) => entry.kind === "tool" && (entry.status === "running" || entry.status === "queued"));
+  const streamingResponse = entries.some((entry) => (
+    entry.kind === "message" &&
+    entry.role === "assistant" &&
+    entry.status === "streaming" &&
+    hasVisibleContent(entry.content)
+  ));
+  const lastUserMessage = [...entries].reverse().find((entry) => entry.kind === "message" && entry.role === "user");
+  const showWorkingStatus = session.status === "running" && !activeTool && !streamingResponse;
+  const statusMessage = workingMessage(`${session.id}:${lastUserMessage?.id ?? "start"}`);
 
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
@@ -214,7 +280,12 @@ export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
         <div className="timeline-events" aria-live="polite" aria-relevant="additions text">
           {renderEntries(entries)}
         </div>
-        {session.status === "running" && <div className="run-tail" aria-label="Pi is working"><span /><span /><span /></div>}
+        {showWorkingStatus && (
+          <div className="working-status" role="status" aria-live="polite">
+            <span className="thinking-ellipsis" aria-hidden="true"><i /><i /><i /></span>
+            <span>{statusMessage}</span>
+          </div>
+        )}
       </div>
     </div>
   );

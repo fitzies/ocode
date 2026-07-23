@@ -44,18 +44,33 @@ export interface AnvilClientSnapshot extends AnvilSnapshot {
   clientError?: string;
 }
 
+interface PendingSessionCreate {
+  session: SessionSummary;
+  command: Extract<AnvilClientCommand, { type: "session.create" }>;
+  previousActiveSessionId: string | null;
+  state: "creating" | "acknowledged" | "failed";
+  requestInFlight: boolean;
+  error?: string;
+  settled: Promise<boolean>;
+  resolveSettled(created: boolean): void;
+}
+
 export interface AnvilClient {
   getSnapshot(): AnvilClientSnapshot;
   subscribe(listener: () => void): () => void;
   dispatch(command: AnvilClientCommand): void;
   selectSession(sessionId: string): void;
+  createProject(name: string, path: string): Promise<void>;
   createSession(projectId: string): void;
+  deleteSession(sessionId: string): Promise<void>;
   sendPrompt(content: string, mode?: DeliveryMode): void;
   cancelActiveRun(): void;
   setModel(modelId: string): void;
   setThinkingLevel(level: ThinkingLevel): void;
   respondToInteraction(response: InteractionResponse): void;
-  clearComposerDraft(): void;
+  clearComposerDraft(sessionId: string): void;
+  isSessionPending(sessionId: string): boolean;
+  getSessionCreationError(sessionId: string): string | undefined;
   cycleConnectionState(): void;
   selectReplayFixture(fixtureId: string): void;
   toggleReplay(): void;
@@ -72,6 +87,72 @@ const initialSessions = fixtures.map((fixture) => fixture.session);
 
 function timestamp() {
   return new Date().toISOString();
+}
+
+function promoteSession(
+  snapshot: AnvilClientSnapshot,
+  sessionId: string,
+): AnvilClientSnapshot {
+  const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+  if (!session) return snapshot;
+  return {
+    ...snapshot,
+    sessions: [
+      { ...session, updatedAt: timestamp() },
+      ...snapshot.sessions.filter((candidate) => candidate.id !== sessionId),
+    ],
+  };
+}
+
+function addOptimisticSession<TSnapshot extends AnvilSnapshot>(
+  snapshot: TSnapshot,
+  session: SessionSummary,
+): TSnapshot {
+  return {
+    ...snapshot,
+    activeSessionId: session.id,
+    sessions: [session, ...snapshot.sessions.filter((candidate) => candidate.id !== session.id)],
+    timelines: { ...snapshot.timelines, [session.id]: snapshot.timelines[session.id] ?? [] },
+    catalogs: {
+      ...snapshot.catalogs,
+      [session.id]: snapshot.catalogs[session.id] ?? { models: [], commands: [], skills: [] },
+    },
+    queues: {
+      ...snapshot.queues,
+      [session.id]: snapshot.queues[session.id] ?? { steering: [], followUp: [] },
+    },
+    runStates: { ...snapshot.runStates, [session.id]: snapshot.runStates[session.id] ?? "idle" },
+  } as TSnapshot;
+}
+
+function withoutSessionKey<T>(record: Record<string, T>, sessionId: string): Record<string, T> {
+  const next = { ...record };
+  delete next[sessionId];
+  return next;
+}
+
+function removeOptimisticSession(
+  snapshot: AnvilClientSnapshot,
+  sessionId: string,
+  fallbackSessionId: string | null,
+): AnvilClientSnapshot {
+  const sessions = snapshot.sessions.filter((session) => session.id !== sessionId);
+  const fallback = fallbackSessionId && sessions.some((session) => session.id === fallbackSessionId)
+    ? fallbackSessionId
+    : sessions[0]?.id ?? null;
+  return {
+    ...snapshot,
+    sessions,
+    activeSessionId: snapshot.activeSessionId === sessionId ? fallback : snapshot.activeSessionId,
+    timelines: withoutSessionKey(snapshot.timelines, sessionId),
+    catalogs: withoutSessionKey(snapshot.catalogs, sessionId),
+    pendingInteractions: snapshot.pendingInteractions.filter((request) => request.sessionId !== sessionId),
+    extensionStatuses: snapshot.extensionStatuses.filter((status) => status.sessionId !== sessionId),
+    widgets: snapshot.widgets.filter((widget) => widget.sessionId !== sessionId),
+    queues: withoutSessionKey(snapshot.queues, sessionId),
+    composerDrafts: withoutSessionKey(snapshot.composerDrafts, sessionId),
+    runStates: withoutSessionKey(snapshot.runStates, sessionId),
+  };
 }
 
 function textBlock(id: string, text: string) {
@@ -148,11 +229,17 @@ export class FixtureAnvilClient implements AnvilClient {
 
   dispatch = (command: AnvilClientCommand) => {
     switch (command.type) {
+      case "project.create":
+        this.createProject(command.payload.name, command.payload.path);
+        break;
       case "session.select":
         this.selectSession(command.payload.sessionId);
         break;
       case "session.create":
         this.createSession(command.payload.projectId);
+        break;
+      case "session.delete":
+        this.deleteSession(command.payload.sessionId);
         break;
       case "prompt.send":
         this.sendPrompt(command.payload.content, command.payload.delivery);
@@ -191,6 +278,18 @@ export class FixtureAnvilClient implements AnvilClient {
     this.emit();
   };
 
+  createProject = async (name: string, path: string) => {
+    const cleanName = name.trim();
+    const cleanPath = path.trim();
+    if (!cleanName || !cleanPath) return;
+    const project = {
+      id: `workspace-${Date.now()}`,
+      name: cleanName,
+      path: cleanPath,
+    };
+    this.applyLocal("project.upserted", { project }, null);
+  };
+
   createSession = (projectId: string) => {
     if (!this.snapshot.projects.some((project) => project.id === projectId)) return;
     this.pauseReplay();
@@ -218,10 +317,20 @@ export class FixtureAnvilClient implements AnvilClient {
     this.emit();
   };
 
+  deleteSession = async (sessionId: string) => {
+    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
+    for (const timer of this.simulationTimers.get(sessionId) ?? []) clearTimeout(timer);
+    this.simulationTimers.delete(sessionId);
+    this.applyLocal("session.deleted", { sessionId }, sessionId);
+  };
+
   sendPrompt = (content: string, mode: DeliveryMode = "prompt") => {
     const prompt = content.trim();
     const session = this.activeSession();
     if (!prompt || !session) return;
+
+    this.snapshot = promoteSession(this.snapshot, session.id);
+    this.emit();
 
     if (this.snapshot.runStates[session.id] === "running" && mode !== "prompt") {
       const current = this.snapshot.queues[session.id] ?? { steering: [], followUp: [] };
@@ -474,9 +583,11 @@ export class FixtureAnvilClient implements AnvilClient {
     );
   };
 
-  clearComposerDraft = () => {
-    const sessionId = this.snapshot.activeSessionId;
-    if (!sessionId || !this.snapshot.composerDrafts[sessionId]) return;
+  isSessionPending = () => false;
+  getSessionCreationError = () => undefined;
+
+  clearComposerDraft = (sessionId: string) => {
+    if (!this.snapshot.composerDrafts[sessionId]) return;
     this.snapshot = {
       ...this.snapshot,
       composerDrafts: { ...this.snapshot.composerDrafts, [sessionId]: "" },
@@ -723,7 +834,7 @@ export class ForgeAnvilClient implements AnvilClient {
   private retryTimer?: ReturnType<typeof setTimeout>;
   private retryDelay = 1_000;
   private bootstrapPromise?: Promise<void>;
-  private pendingSelectedSessionId?: string;
+  private readonly pendingCreates = new Map<string, PendingSessionCreate>();
 
   constructor(options: ForgeAnvilClientOptions = {}) {
     this.fetcher = options.fetch ?? fetch.bind(globalThis);
@@ -756,15 +867,94 @@ export class ForgeAnvilClient implements AnvilClient {
     this.emit();
   };
 
+  createProject = async (name: string, path: string) => {
+    const cleanName = name.trim();
+    const cleanPath = path.trim();
+    if (!cleanName || !cleanPath) return;
+    await this.sendCommand(
+      this.command("project.create", null, { name: cleanName, path: cleanPath }),
+      true,
+    );
+  };
+
   createSession = (projectId: string) => {
     if (!this.snapshot.projects.some((project) => project.id === projectId)) return;
-    void this.sendCommand(this.command("session.create", null, { projectId }));
+    const sessionId = crypto.randomUUID();
+    let resolveSettled!: (created: boolean) => void;
+    const settled = new Promise<boolean>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const command = this.command("session.create", null, { projectId, sessionId }) as Extract<
+      AnvilClientCommand,
+      { type: "session.create" }
+    >;
+    const pending: PendingSessionCreate = {
+      session: {
+        id: sessionId,
+        projectId,
+        title: "New session",
+        updatedAt: timestamp(),
+        status: "idle" as const,
+        modelId: "unknown",
+        thinkingLevel: "off" as const,
+      },
+      command,
+      previousActiveSessionId: this.snapshot.activeSessionId,
+      state: "creating",
+      requestInFlight: false,
+      settled,
+      resolveSettled,
+    };
+    this.pendingCreates.set(sessionId, pending);
+    this.snapshot = addOptimisticSession(this.snapshot, pending.session);
+    this.emit();
+    void this.sendCommand(command, false, pending);
+  };
+
+  deleteSession = async (sessionId: string) => {
+    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
+    const pending = this.pendingCreates.get(sessionId);
+    if (pending?.state === "creating") {
+      const created = await pending.settled;
+      if (!created) {
+        this.pendingCreates.delete(sessionId);
+        this.snapshot = removeOptimisticSession(
+          this.snapshot,
+          sessionId,
+          pending.previousActiveSessionId,
+        );
+        this.emit();
+        return;
+      }
+    } else if (pending?.state === "failed") {
+      this.pendingCreates.delete(sessionId);
+      this.snapshot = removeOptimisticSession(
+        this.snapshot,
+        sessionId,
+        pending.previousActiveSessionId,
+      );
+      this.emit();
+      return;
+    }
+    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
+    await this.sendCommand(this.command("session.delete", null, { sessionId }), true);
+    if (this.pendingCreates.delete(sessionId)) {
+      this.snapshot = { ...this.snapshot };
+      this.emit();
+    }
   };
 
   sendPrompt = (content: string, delivery: DeliveryMode = "prompt") => {
     const prompt = content.trim();
-    if (!prompt || !this.snapshot.activeSessionId) return;
-    void this.sendCommand(this.command("prompt.send", this.snapshot.activeSessionId, {
+    const sessionId = this.snapshot.activeSessionId;
+    if (
+      !prompt ||
+      !sessionId ||
+      (this.pendingCreates.get(sessionId)?.state ?? "acknowledged") !== "acknowledged"
+    ) return;
+    this.snapshot = promoteSession(this.snapshot, sessionId);
+    this.emit();
+    void this.sendCommand(this.command("prompt.send", sessionId, {
       content: prompt,
       delivery,
     }));
@@ -791,14 +981,20 @@ export class ForgeAnvilClient implements AnvilClient {
     void this.sendCommand(this.command("interaction.respond", request.sessionId, response));
   };
 
-  clearComposerDraft = () => {
-    const sessionId = this.snapshot.activeSessionId;
-    if (!sessionId) return;
+  clearComposerDraft = (sessionId: string) => {
+    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
     this.snapshot = {
       ...this.snapshot,
       composerDrafts: { ...this.snapshot.composerDrafts, [sessionId]: "" },
     };
     this.emit();
+  };
+
+  isSessionPending = (sessionId: string) => this.pendingCreates.get(sessionId)?.state === "creating";
+
+  getSessionCreationError = (sessionId: string) => {
+    const pending = this.pendingCreates.get(sessionId);
+    return pending?.state === "failed" ? pending.error : undefined;
   };
 
   cycleConnectionState = () => undefined;
@@ -827,16 +1023,26 @@ export class ForgeAnvilClient implements AnvilClient {
       const value: unknown = await response.json();
       if (!isAnvilBootstrap(value)) throw new Error("Forge returned an invalid bootstrap payload");
       const previousActiveSessionId = this.snapshot.activeSessionId;
-      const restored = reconcileSnapshotAndTail(this.snapshot, value.snapshot, value.events);
+      const createsToRetry: PendingSessionCreate[] = [];
+      let restored = reconcileSnapshotAndTail(this.snapshot, value.snapshot, value.events);
+      for (const [sessionId, pending] of this.pendingCreates) {
+        if (restored.sessions.some((session) => session.id === sessionId)) {
+          pending.state = "acknowledged";
+          pending.requestInFlight = false;
+          pending.resolveSettled(true);
+          this.pendingCreates.delete(sessionId);
+        } else {
+          restored = addOptimisticSession(restored, pending.session);
+          if (pending.state === "creating" && !pending.requestInFlight) {
+            createsToRetry.push(pending);
+          }
+        }
+      }
       const preferredSessionId = [
-        this.pendingSelectedSessionId,
         previousActiveSessionId,
         restored.activeSessionId,
       ].find((sessionId) => sessionId && restored.sessions.some((session) => session.id === sessionId)) ??
         restored.sessions[0]?.id ?? null;
-      if (preferredSessionId === this.pendingSelectedSessionId) {
-        this.pendingSelectedSessionId = undefined;
-      }
       this.snapshot = {
         ...restored,
         activeSessionId: preferredSessionId,
@@ -847,6 +1053,9 @@ export class ForgeAnvilClient implements AnvilClient {
       this.retryDelay = 1_000;
       this.emit();
       this.startStream(value.cursor);
+      for (const pending of createsToRetry) {
+        void this.sendCommand(pending.command, false, pending);
+      }
     } catch (error) {
       console.error(error);
       this.setConnection(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
@@ -869,10 +1078,20 @@ export class ForgeAnvilClient implements AnvilClient {
         if (!event) throw new Error("Forge streamed an invalid event");
         const replay = this.snapshot.replay;
         const next = applyAnvilEvent(this.snapshot, event);
+        const eventApplied = next.lastSequence === event.sequence;
         this.snapshot = { ...next, connection: "connected", replay };
-        if (event.type === "session.upserted" && event.payload.session.id === this.pendingSelectedSessionId) {
-          this.snapshot = { ...this.snapshot, activeSessionId: this.pendingSelectedSessionId };
-          this.pendingSelectedSessionId = undefined;
+        if (eventApplied && event.type === "session.upserted") {
+          const pending = this.pendingCreates.get(event.payload.session.id);
+          if (pending) {
+            pending.state = "acknowledged";
+            pending.requestInFlight = false;
+            pending.resolveSettled(true);
+            this.pendingCreates.delete(event.payload.session.id);
+          }
+        } else if (eventApplied && event.type === "session.deleted") {
+          const pending = this.pendingCreates.get(event.payload.sessionId);
+          pending?.resolveSettled(false);
+          this.pendingCreates.delete(event.payload.sessionId);
         }
         this.emit();
         if (this.snapshot.sequenceGap) void this.bootstrap();
@@ -888,7 +1107,13 @@ export class ForgeAnvilClient implements AnvilClient {
     });
   }
 
-  private async sendCommand(command: AnvilClientCommand): Promise<void> {
+  private async sendCommand(
+    command: AnvilClientCommand,
+    throwOnError = false,
+    pendingCreate?: PendingSessionCreate,
+  ): Promise<AnvilCommandResponse | undefined> {
+    let definitiveFailure = false;
+    if (pendingCreate) pendingCreate.requestInFlight = true;
     try {
       const response = await this.fetcher("/api/v1/commands", {
         method: "POST",
@@ -896,29 +1121,58 @@ export class ForgeAnvilClient implements AnvilClient {
         body: JSON.stringify(command),
       });
       const value = await response.json() as AnvilCommandResponse;
-      if (!response.ok || !value.success) throw new Error(value.error ?? `Forge command failed with HTTP ${response.status}`);
+      if (!response.ok || !value.success) {
+        definitiveFailure = value.outcome === "completed";
+        throw new Error(value.error ?? `Forge command failed with HTTP ${response.status}`);
+      }
       if (this.snapshot.clientError) {
         this.snapshot = { ...this.snapshot, clientError: undefined };
         this.emit();
       }
-      if (command.type === "session.create" && value.data && typeof value.data === "object" && !Array.isArray(value.data)) {
-        const sessionId = (value.data as Record<string, JsonValue>).sessionId;
-        if (typeof sessionId === "string") {
-          if (this.snapshot.sessions.some((session) => session.id === sessionId)) {
-            this.pendingSelectedSessionId = undefined;
-            this.selectSession(sessionId);
-          } else {
-            this.pendingSelectedSessionId = sessionId;
-          }
+      if (command.type === "session.create" && pendingCreate) {
+        const sessionId = value.data && typeof value.data === "object" && !Array.isArray(value.data)
+          ? (value.data as Record<string, JsonValue>).sessionId
+          : undefined;
+        if (sessionId !== pendingCreate.session.id) {
+          definitiveFailure = true;
+          throw new Error("Forge returned an unexpected session id");
+        }
+        const tracked = this.pendingCreates.get(pendingCreate.session.id);
+        if (tracked) {
+          tracked.state = "acknowledged";
+          tracked.requestInFlight = false;
+          tracked.resolveSettled(true);
+          this.snapshot = { ...this.snapshot };
+          this.emit();
         }
       }
+      return value;
     } catch (error) {
       console.error(error);
-      this.snapshot = {
-        ...this.snapshot,
-        clientError: error instanceof Error ? error.message : String(error),
-      };
+      const failure = error instanceof Error ? error : new Error(String(error));
+      const tracked = pendingCreate
+        ? this.pendingCreates.get(pendingCreate.session.id)
+        : undefined;
+      if (tracked) {
+        tracked.requestInFlight = false;
+        if (definitiveFailure) {
+          tracked.state = "failed";
+          tracked.error = failure.message;
+          tracked.resolveSettled(false);
+          this.snapshot = {
+            ...this.snapshot,
+            sessions: this.snapshot.sessions.map((session) => session.id === tracked.session.id
+              ? { ...session, status: "failed", updatedAt: timestamp() }
+              : session),
+          };
+        } else {
+          void this.bootstrap();
+        }
+      }
+      this.snapshot = { ...this.snapshot, clientError: failure.message };
       this.emit();
+      if (throwOnError) throw failure;
+      return undefined;
     }
   }
 

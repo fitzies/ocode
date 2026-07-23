@@ -98,6 +98,28 @@ button:disabled {
   font-size: 13px;
 }
 
+.app-loading--workspace {
+  min-height: 0;
+  flex: 1;
+}
+
+.forge-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid rgba(255, 255, 255, 0.14);
+  border-top-color: rgba(255, 255, 255, 0.82);
+  border-radius: 50%;
+  animation: forge-spinner 700ms linear infinite;
+}
+
+@keyframes forge-spinner {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-spinner { animation: none; }
+}
+
 .empty-workspace {
   display: grid;
   max-width: 320px;
@@ -289,13 +311,57 @@ button:disabled {
   scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
 }
 
+.sidebar-section-heading {
+  display: flex;
+  min-height: 27px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 3px 5px 9px;
+}
+
 .sidebar-section-label {
-  margin: 0 9px 9px;
   color: #898a82;
   font-size: 9.5px;
   font-weight: 620;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.workspace-add {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  padding: 0;
+  color: #85867e;
+  font-size: 16px;
+  line-height: 1;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: color 110ms ease, background 110ms ease, opacity 110ms ease;
+}
+
+.sidebar-section-heading:hover .workspace-add,
+.sidebar-section-heading:focus-within .workspace-add {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.workspace-add:hover,
+.workspace-add:focus-visible {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.workspace-empty-note {
+  margin: 1px 9px 16px;
+  color: #73746d;
+  font-size: 10px;
+  line-height: 1.5;
 }
 
 .search-empty {
@@ -350,6 +416,15 @@ button:disabled {
   border: 0;
   border-radius: 6px;
   cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: color 110ms ease, background 110ms ease, opacity 110ms ease;
+}
+
+.project-heading-row:hover .project-new-session,
+.project-heading-row:focus-within .project-new-session {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .project-new-session:hover,
@@ -367,13 +442,6 @@ button:disabled {
   transform: rotate(-90deg);
 }
 
-.project-thread-count {
-  margin-left: auto;
-  color: #85867e;
-  font-size: 9.5px;
-  font-weight: 450;
-}
-
 .session-list {
   display: grid;
   gap: 2px;
@@ -382,11 +450,16 @@ button:disabled {
   border-left: 1px solid #252525;
 }
 
+.session-item {
+  position: relative;
+}
+
 .session-row {
   position: relative;
   display: block;
+  width: 100%;
   min-height: 46px;
-  padding: 7px 9px;
+  padding: 7px 31px 7px 9px;
   text-align: left;
   background: transparent;
   border: 1px solid transparent;
@@ -421,6 +494,37 @@ button:disabled {
 
 .session-row--active:hover {
   background: #1b1b1b;
+}
+
+.session-delete {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  color: #75766f;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: color 110ms ease, background 110ms ease, opacity 110ms ease;
+}
+
+.session-item:hover .session-delete,
+.session-item:focus-within .session-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.session-delete:hover,
+.session-delete:focus-visible {
+  color: #d39496;
+  background: rgba(180, 73, 78, 0.1);
 }
 
 .session-copy {
@@ -470,6 +574,37 @@ button:disabled {
 
 .session-status--failed {
   background: var(--red);
+}
+
+.thread-context-menu {
+  position: fixed;
+  z-index: 90;
+  width: 160px;
+  padding: 4px;
+  background: #141414;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 7px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+}
+
+.thread-context-menu button {
+  width: 100%;
+  min-height: 31px;
+  padding: 0 9px;
+  color: #c88f91;
+  font-size: 10.5px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.thread-context-menu button:hover,
+.thread-context-menu button:focus-visible {
+  color: #efb1b3;
+  background: rgba(180, 73, 78, 0.11);
+  outline: 0;
 }
 
 .sidebar-footer {

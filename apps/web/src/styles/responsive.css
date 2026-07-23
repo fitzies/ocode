@@ -15,9 +15,13 @@
   50% { opacity: 1; transform: scale(1.15); }
 }
 
-@keyframes loading-dot {
-  0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
-  30% { opacity: 1; transform: translateY(-2px); }
+@media (hover: none) {
+  .workspace-add,
+  .project-new-session,
+  .session-delete {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 @media (max-width: 900px) {
@@ -132,13 +136,18 @@
     padding: 0;
   }
 
-  .interaction-dialog {
+  .interaction-dialog,
+  .action-dialog {
     width: 100%;
     max-height: min(86dvh, 760px);
     border-right: 0;
     border-bottom: 0;
     border-left: 0;
     border-radius: 13px 13px 0 0;
+  }
+
+  .action-backdrop {
+    padding: 0;
   }
 
   .slash-menu-heading kbd {

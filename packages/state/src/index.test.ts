@@ -104,6 +104,34 @@ describe("Anvil event reducer", () => {
     expect(snapshot.catalogs[otherSession.id].commands.map((command) => command.name)).toEqual(["project-two"]);
   });
 
+  it("promotes a session when its user sends a message", () => {
+    const otherSession = { ...session, id: "session-2", title: "Older session" };
+    let snapshot = createEmptySnapshot({ sessions: [otherSession, session] });
+
+    snapshot = applyAnvilEvent(snapshot, event(1, "message.started", {
+      message: {
+        id: "user-1",
+        kind: "message",
+        role: "user",
+        content: [],
+        status: "complete",
+        createdAt: "2026-07-21T09:00:01.000Z",
+      },
+    }));
+
+    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([session.id, otherSession.id]);
+    expect(snapshot.sessions[0]?.updatedAt).toBe("2026-07-21T09:00:01.000Z");
+  });
+
+  it("does not promote a background session when its run status changes", () => {
+    const otherSession = { ...session, id: "session-2", title: "Recent session" };
+    let snapshot = createEmptySnapshot({ sessions: [otherSession, session] });
+
+    snapshot = applyAnvilEvent(snapshot, event(1, "run.status", { status: "idle" }));
+
+    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([otherSession.id, session.id]);
+  });
+
   it("restores the underlying run state after the last pending dialog resolves", () => {
     let incoming = createEmptySnapshot({ sessions: [session] });
     incoming = applyAnvilEvent(incoming, event(1, "run.status", { status: "running" }));
@@ -117,6 +145,40 @@ describe("Anvil event reducer", () => {
     expect(restored.pendingInteractions).toHaveLength(0);
     expect(restored.runStates[session.id]).toBe("running");
     expect(restored.sessions[0]?.status).toBe("running");
+  });
+
+  it("adds workspaces and fully removes deleted session state", () => {
+    const otherSession = { ...session, id: "session-2" };
+    let snapshot = createEmptySnapshot({ sessions: [session, otherSession], activeSessionId: session.id });
+    snapshot = applyAnvilEvent(snapshot, event(1, "project.upserted", {
+      project: { id: "project-1", name: "Project", path: "/repo/project" },
+    }));
+    snapshot = {
+      ...snapshot,
+      pendingInteractions: [{
+        id: "request-1",
+        sessionId: session.id,
+        method: "confirm",
+        title: "Continue?",
+        requestedAt: "2026-07-21T09:00:01.000Z",
+      }],
+      extensionStatuses: [{ sessionId: session.id, key: "status", text: "Busy", updatedAt: session.updatedAt }],
+      widgets: [{ sessionId: session.id, key: "widget", lines: ["Busy"], placement: "aboveEditor", updatedAt: session.updatedAt }],
+      composerDrafts: { [session.id]: "draft" },
+    };
+    snapshot = applyAnvilEvent(snapshot, event(2, "session.deleted", { sessionId: session.id }));
+
+    expect(snapshot.projects).toEqual([{ id: "project-1", name: "Project", path: "/repo/project" }]);
+    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([otherSession.id]);
+    expect(snapshot.activeSessionId).toBe(otherSession.id);
+    expect(snapshot.timelines[session.id]).toBeUndefined();
+    expect(snapshot.catalogs[session.id]).toBeUndefined();
+    expect(snapshot.queues[session.id]).toBeUndefined();
+    expect(snapshot.runStates[session.id]).toBeUndefined();
+    expect(snapshot.pendingInteractions).toHaveLength(0);
+    expect(snapshot.extensionStatuses).toHaveLength(0);
+    expect(snapshot.widgets).toHaveLength(0);
+    expect(snapshot.composerDrafts[session.id]).toBeUndefined();
   });
 
   it("correlates parallel tool updates by tool call id", () => {

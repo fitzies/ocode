@@ -50,6 +50,23 @@ describe("FixtureAnvilClient", () => {
     expect(client.getSnapshot().replay.cursor).toBe(client.getSnapshot().replay.total);
   });
 
+  it("promotes a running session immediately when it receives steering", () => {
+    const client = new FixtureAnvilClient();
+    const firstSessionId = "ordinary-run";
+    const secondSessionId = "parallel-tools";
+
+    client.selectSession(firstSessionId);
+    client.sendPrompt("Start the first run");
+    client.selectSession(secondSessionId);
+    client.sendPrompt("Start the second run");
+    expect(client.getSnapshot().sessions[0]?.id).toBe(secondSessionId);
+
+    client.selectSession(firstSessionId);
+    client.sendPrompt("Steer the first run", "steer");
+
+    expect(client.getSnapshot().sessions[0]?.id).toBe(firstSessionId);
+  });
+
   it("cancels only the active session while another session continues", () => {
     const client = new FixtureAnvilClient();
     const firstSessionId = "ordinary-run";

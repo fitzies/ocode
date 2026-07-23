@@ -9,7 +9,9 @@
 
 ## Configuration
 
-Copy `deploy/config.example.json` to `/home/forge/.config/anvil/config.json` and update `ownerLogin`, the Pi executable, and project paths. `ownerLogin` must exactly match the login forwarded by Tailscale Serve in `Tailscale-User-Login`; Forge rejects non-owner API requests when it is configured. Forge canonicalizes every project path at startup and rejects duplicate or missing directories.
+Copy `deploy/config.example.json` to `/home/forge/.config/anvil/config.json` and update `ownerLogin`, the Pi executable, and initial project paths. `ownerLogin` must exactly match the login forwarded by Tailscale Serve in `Tailscale-User-Login`; Forge rejects non-owner API requests when it is configured. Forge canonicalizes every configured project path at startup and rejects duplicate or missing directories.
+
+Configured projects seed the trusted workspace registry. The authenticated owner can add another Forge-local directory from the Workspaces `+` control; Forge validates and canonicalizes the path, then persists it in SQLite across restarts. This is a privileged action because Pi receives full access inside that directory.
 
 Environment overrides are documented in `.env.example`. Persistent data defaults to `/home/forge/.local/state/anvil`; keep that directory private and include the SQLite database and Pi session directory in backups.
 

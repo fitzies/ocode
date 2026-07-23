@@ -24,9 +24,9 @@
         "success": true,
         "data": {
           "models": [
-            { "id": "gpt-5.4", "name": "GPT-5.4", "provider": "openai", "reasoning": true, "input": ["text", "image"], "contextWindow": 1050000, "maxTokens": 128000 },
-            { "id": "gpt-5.3-codex", "name": "GPT-5.3 Codex", "provider": "openai", "reasoning": true, "input": ["text", "image"], "contextWindow": 400000, "maxTokens": 64000 },
-            { "id": "claude-opus-4.6", "name": "Claude Opus 4.6", "provider": "anthropic", "reasoning": true, "input": ["text", "image"], "contextWindow": 200000, "maxTokens": 32000 }
+            { "id": "gpt-5.4", "name": "Sol", "provider": "openai", "reasoning": true, "input": ["text", "image"], "contextWindow": 1050000, "maxTokens": 128000 },
+            { "id": "gpt-5.3-codex", "name": "Luna", "provider": "openai", "reasoning": true, "input": ["text", "image"], "contextWindow": 400000, "maxTokens": 64000 },
+            { "id": "claude-opus-4.6", "name": "Terra", "provider": "anthropic", "reasoning": true, "input": ["text", "image"], "contextWindow": 200000, "maxTokens": 32000 }
           ]
         }
       }

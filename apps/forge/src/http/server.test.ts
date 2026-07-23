@@ -100,7 +100,7 @@ describe("ForgeHttpServer", () => {
       sessionId: null,
       timestamp: "2026-07-23T01:00:00.000Z",
       type: "session.create",
-      payload: { projectId: "anvil" },
+      payload: { projectId: "anvil", sessionId: "01959f7e-7d64-7000-8000-000000000001" },
     };
     const response = await fetch(`${baseUrl}/api/v1/commands`, {
       method: "POST",

@@ -35,9 +35,13 @@ interface ComposerProps {
   skills: SkillDescriptor[];
   queue: SessionQueue;
   draft?: string;
+  prompt: string;
+  pending?: boolean;
+  creationError?: string;
   widgets: ExtensionWidget[];
   onCancel: () => void;
-  onDraftConsumed: () => void;
+  onDraftConsumed: (sessionId: string) => void;
+  onPromptChange: (sessionId: string, prompt: string) => void;
   onModelChange: (modelId: string) => void;
   onThinkingLevelChange: (level: ThinkingLevel) => void;
   onSend: (prompt: string, mode: DeliveryMode) => void;
@@ -50,6 +54,44 @@ type SlashItem = {
   description?: string;
   source: "extension" | "prompt" | "skill";
 };
+
+const MODEL_ORDER = new Map([
+  ["sol", 0],
+  ["luna", 1],
+  ["terra", 2],
+]);
+
+function modelAlias(model: ModelDescriptor): string | undefined {
+  const name = model.name.trim().toLowerCase();
+  const key = MODEL_ORDER.has(name)
+    ? name
+    : model.id.toLowerCase().match(/(?:^|[-_])(sol|luna|terra)$/)?.[1];
+  return key ? `${key[0]?.toUpperCase()}${key.slice(1)}` : undefined;
+}
+
+export function updateComposerDraft(
+  drafts: Record<string, string>,
+  sessionId: string,
+  prompt: string,
+): Record<string, string> {
+  if (drafts[sessionId] === prompt) return drafts;
+  if (prompt) return { ...drafts, [sessionId]: prompt };
+  const next = { ...drafts };
+  delete next[sessionId];
+  return next;
+}
+
+export function selectAnvilModels(models: ModelDescriptor[]): ModelDescriptor[] {
+  return models
+    .flatMap((candidate) => {
+      const alias = modelAlias(candidate);
+      return alias ? [{ ...candidate, name: alias }] : [];
+    })
+    .sort((a, b) => (
+      (MODEL_ORDER.get(a.name.toLowerCase()) ?? 99) -
+      (MODEL_ORDER.get(b.name.toLowerCase()) ?? 99)
+    ));
+}
 
 function handleListboxKeyDown(
   event: KeyboardEvent<HTMLDivElement>,
@@ -111,17 +153,19 @@ export function Composer({
   skills,
   queue,
   draft,
+  prompt,
+  pending = false,
+  creationError,
   widgets,
   onCancel,
   onDraftConsumed,
+  onPromptChange,
   onModelChange,
   onThinkingLevelChange,
   onSend,
 }: ComposerProps) {
-  const [prompt, setPrompt] = useState("");
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [reasoningPickerOpen, setReasoningPickerOpen] = useState(false);
-  const [deliveryMode, setDeliveryMode] = useState<Exclude<DeliveryMode, "prompt">>("steer");
   const [slashIndex, setSlashIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
@@ -129,7 +173,9 @@ export function Composer({
   const modelButtonRef = useRef<HTMLButtonElement>(null);
   const reasoningButtonRef = useRef<HTMLButtonElement>(null);
   const running = status === "running";
-  const model = models.find((candidate) => candidate.id === modelId) ?? models[0];
+  const hasPrompt = Boolean(prompt.trim());
+  const visibleModels = useMemo(() => selectAnvilModels(models), [models]);
+  const model = visibleModels.find((candidate) => candidate.id === modelId);
   const queueCount = queue.steering.length + queue.followUp.length;
   const aboveWidgets = widgets.filter((widget) => widget.placement === "aboveEditor");
   const belowWidgets = widgets.filter((widget) => widget.placement === "belowEditor");
@@ -161,16 +207,17 @@ export function Composer({
   }, [commands, skills, slashQuery]);
 
   useEffect(() => {
-    setPrompt("");
+    setModelPickerOpen(false);
+    setReasoningPickerOpen(false);
     setSlashIndex(0);
   }, [sessionId]);
 
   useEffect(() => {
     if (!draft) return;
-    setPrompt(draft);
-    onDraftConsumed();
+    if (!prompt) onPromptChange(sessionId, draft);
+    onDraftConsumed(sessionId);
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [draft, onDraftConsumed]);
+  }, [draft, onDraftConsumed, onPromptChange, prompt, sessionId]);
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -211,16 +258,16 @@ export function Composer({
   }, [modelPickerOpen, reasoningPickerOpen]);
 
   const chooseSlashItem = (item: SlashItem) => {
-    setPrompt(`/${item.command} `);
+    onPromptChange(sessionId, `/${item.command} `);
     setSlashIndex(0);
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
-    if (!prompt.trim()) return;
-    onSend(prompt, running ? deliveryMode : "prompt");
-    setPrompt("");
+    if (!prompt.trim() || pending || creationError) return;
+    onSend(prompt, running ? "steer" : "prompt");
+    onPromptChange(sessionId, "");
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -242,7 +289,7 @@ export function Composer({
         return;
       }
       if (event.key === "Escape") {
-        setPrompt("");
+        onPromptChange(sessionId, "");
         return;
       }
     }
@@ -307,9 +354,9 @@ export function Composer({
           ref={textareaRef}
           rows={1}
           value={prompt}
-          onChange={(event) => setPrompt(event.target.value)}
+          onChange={(event) => onPromptChange(sessionId, event.target.value)}
           onKeyDown={onKeyDown}
-          placeholder={running ? "Steer Pi or queue a follow-up…" : "Message Pi…"}
+          placeholder={running ? "Steer Pi…" : "Message Pi…"}
           aria-label="Message Pi"
           role="combobox"
           aria-autocomplete="list"
@@ -334,14 +381,15 @@ export function Composer({
                 onClick={() => setModelPickerOpen((open) => !open)}
                 aria-haspopup="listbox"
                 aria-expanded={modelPickerOpen}
+                disabled={visibleModels.length === 0}
               >
-                <span>{model?.name ?? modelId}</span>
+                <span>{model?.name ?? (visibleModels.length ? "Choose model" : "No Anvil models")}</span>
                 <Icon icon={altArrowDownIcon} width={13} className={modelPickerOpen ? "model-chevron--open" : undefined} />
               </button>
               {modelPickerOpen && (
                 <div className="model-menu" role="listbox" aria-label="Model" onKeyDown={(event) => handleListboxKeyDown(event, () => { setModelPickerOpen(false); modelButtonRef.current?.focus(); })}>
                   <div className="model-menu-label">Model</div>
-                  {models.map((option) => (
+                  {visibleModels.map((option) => (
                     <button
                       type="button"
                       role="option"
@@ -355,7 +403,7 @@ export function Composer({
                         requestAnimationFrame(() => modelButtonRef.current?.focus());
                       }}
                     >
-                      <span>{option.name}<small>{option.provider}</small></span>
+                      <span>{option.name}</span>
                       {option.id === modelId && <i />}
                     </button>
                   ))}
@@ -401,32 +449,33 @@ export function Composer({
             </div>
           </div>
           <div className="composer-actions">
-            {running ? (
-              <select
-                className="delivery-select"
-                aria-label="Message delivery"
-                value={deliveryMode}
-                onChange={(event) => setDeliveryMode(event.target.value as typeof deliveryMode)}
-              >
-                <option value="steer">Steer</option>
-                <option value="followUp">Follow up</option>
-              </select>
-            ) : (
-              <span className="send-hint">↵ Send</span>
-            )}
-            {running && (
-              <button type="button" className="stop-button" onClick={onCancel} aria-label="Stop run">
+            {!running && <span className="send-hint">{creationError ? "Not created" : pending ? "Starting…" : "↵ Send"}</span>}
+            {running && !hasPrompt ? (
+              <button type="button" className="stop-button" onClick={onCancel} aria-label="Stop run" title="Stop run">
                 <Icon icon={stopIcon} width={14} />
               </button>
+            ) : (
+              <button
+                type="submit"
+                className="send-button"
+                disabled={!hasPrompt || pending || Boolean(creationError)}
+                aria-label={running ? "Send steering message" : "Send message"}
+                title={creationError ? "Thread creation failed" : pending ? "Starting thread…" : running ? "Steer Pi" : undefined}
+              >
+                <Icon icon={arrowUpIcon} width={18} />
+              </button>
             )}
-            <button type="submit" className="send-button" disabled={!prompt.trim()} aria-label={running ? `Queue ${deliveryMode === "steer" ? "steering message" : "follow-up"}` : "Send message"}>
-              <Icon icon={arrowUpIcon} width={18} />
-            </button>
           </div>
         </div>
       </form>
       {belowWidgets.map((widget) => <Widget key={widget.key} widget={widget} />)}
-      <div className="composer-note">Pi has full Forge access. Review consequential changes before using them.</div>
+      <div className="composer-note">
+        {creationError
+          ? "Thread creation failed. Your text is preserved here so you can copy it before removing the thread."
+          : pending
+            ? "Starting thread… You can type while Forge connects."
+            : "Pi has full Forge access. Review consequential changes before using them."}
+      </div>
     </div>
   );
 }

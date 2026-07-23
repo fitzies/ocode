@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { join, resolve, sep } from "node:path";
 
 import {
   createPiRpcAdapterState,
@@ -81,15 +81,17 @@ export class SessionManager {
   private readonly starting = new Map<string, Promise<ManagedSession>>();
   private readonly inFlightCommands = new Map<string, Promise<AnvilCommandResponse>>();
   private readonly interactionTimers = new Map<string, NodeJS.Timeout>();
+  private readonly deleting = new Set<string>();
+  private shuttingDown = false;
 
   constructor(
     private readonly config: ForgeConfig,
     private readonly database: ForgeDatabase,
     private readonly events: ForgeEventService,
   ) {
-    for (const project of config.projects) this.projects.set(project.id, project);
-    database.syncProjects(config.projects);
     const restored = events.currentSnapshot();
+    for (const project of restored.projects) this.projects.set(project.id, project);
+    this.cleanupOrphanSessionDirectories(new Set(restored.sessions.map((session) => session.id)));
     const staleInteractions = restored.pendingInteractions;
     const interruptedSessionIds = new Set(
       restored.sessions
@@ -147,6 +149,7 @@ export class SessionManager {
   };
 
   async stopAll(): Promise<void> {
+    this.shuttingDown = true;
     const runtimes = [...this.runtimes.values()];
     for (const runtime of runtimes) {
       runtime.stopping = true;
@@ -174,8 +177,10 @@ export class SessionManager {
   }
 
   private async dispatch(command: AnvilClientCommand): Promise<AnvilCommandResponse> {
+    if (command.type === "project.create") return this.createProject(command);
     if (command.type === "session.select") return commandResponse(command, true);
     if (command.type === "session.create") return this.createSession(command);
+    if (command.type === "session.delete") return this.deleteSession(command);
     if (!command.sessionId) return commandResponse(command, false, { error: "A session is required" });
 
     const stored = this.database.getSession(command.sessionId);
@@ -330,14 +335,61 @@ export class SessionManager {
     this.interactionTimers.set(request.id, timer);
   };
 
-  private async createSession(
+  private createProject(
+    command: Extract<AnvilClientCommand, { type: "project.create" }>,
+  ): AnvilCommandResponse {
+    const name = command.payload.name.trim();
+    const requestedPath = command.payload.path.trim();
+    if (!name || name.length > 80) {
+      return commandResponse(command, false, { error: "Workspace name must be between 1 and 80 characters" });
+    }
+    if (!requestedPath) return commandResponse(command, false, { error: "Workspace path is required" });
+
+    let path: string;
+    try {
+      path = realpathSync(resolve(requestedPath));
+      if (!statSync(path).isDirectory()) {
+        return commandResponse(command, false, { error: "Workspace path is not a directory" });
+      }
+    } catch {
+      return commandResponse(command, false, { error: "Workspace path does not exist or is not accessible" });
+    }
+    if ([...this.projects.values()].some((project) => project.path === path)) {
+      return commandResponse(command, false, { error: "That workspace path is already configured" });
+    }
+    if ([...this.projects.values()].some((project) => project.name.toLowerCase() === name.toLowerCase())) {
+      return commandResponse(command, false, { error: "A workspace with that name already exists" });
+    }
+
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "workspace";
+    const project: ProjectSummary = {
+      id: `${slug}-${randomUUID().slice(0, 8)}`,
+      name,
+      path,
+    };
+    this.events.createProject(
+      project,
+      domainEvent("project.upserted", { project }, null),
+    );
+    this.projects.set(project.id, project);
+    return commandResponse(command, true, { data: { projectId: project.id } });
+  }
+
+  private createSession(
     command: Extract<AnvilClientCommand, { type: "session.create" }>,
-  ): Promise<AnvilCommandResponse> {
+  ): AnvilCommandResponse {
     const project = this.projects.get(command.payload.projectId);
     if (!project) return commandResponse(command, false, { error: "Project is not configured on Forge" });
+    const sessionId = command.payload.sessionId;
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)) {
+      return commandResponse(command, false, { error: "Session id must be a UUID" });
+    }
+    if (this.database.getSession(sessionId)) {
+      return commandResponse(command, false, { error: "Session id already exists" });
+    }
     const timestamp = new Date().toISOString();
     const session: SessionSummary = {
-      id: randomUUID(),
+      id: sessionId,
       projectId: project.id,
       title: "New session",
       updatedAt: timestamp,
@@ -350,15 +402,81 @@ export class SessionManager {
       domainEvent("session.upserted", { session }, session.id),
     );
 
+    void this.ensureRuntime({ session }).catch((error) => {
+      if (this.shuttingDown || this.deleting.has(session.id)) return;
+      const message = error instanceof Error ? error.message : String(error);
+      const current = this.events.currentSnapshot().sessions.find(
+        (candidate) => candidate.id === session.id,
+      );
+      if (current && current.status !== "failed") {
+        this.events.append([
+          domainEvent("run.status", { status: "failed", message }, session.id),
+        ]);
+        this.syncSession(session.id);
+      }
+      process.stderr.write(`[pi:${session.id}] Session startup failed: ${message}\n`);
+    });
+
+    return commandResponse(command, true, { data: { sessionId: session.id } });
+  }
+
+  private async deleteSession(
+    command: Extract<AnvilClientCommand, { type: "session.delete" }>,
+  ): Promise<AnvilCommandResponse> {
+    const sessionId = command.payload.sessionId;
+    const stored = this.database.getSession(sessionId);
+    if (!stored) return commandResponse(command, false, { error: "Session not found" });
+
+    this.deleting.add(sessionId);
     try {
-      await this.ensureRuntime({ session });
-      return commandResponse(command, true, { data: { sessionId: session.id } });
-    } catch (error) {
-      this.syncSession(session.id);
-      return commandResponse(command, false, {
-        data: { sessionId: session.id },
-        error: error instanceof Error ? error.message : String(error),
-      });
+      const starting = this.starting.get(sessionId);
+      const runtime = this.runtimes.get(sessionId);
+      if (runtime) await this.stopRuntime(runtime);
+      if (starting) await starting.catch(() => undefined);
+      const settledRuntime = this.runtimes.get(sessionId);
+      if (settledRuntime && settledRuntime !== runtime) await this.stopRuntime(settledRuntime);
+      this.runtimes.delete(sessionId);
+
+      const pending = this.events.currentSnapshot().pendingInteractions.filter(
+        (request) => request.sessionId === sessionId,
+      );
+      for (const request of pending) {
+        const timer = this.interactionTimers.get(request.id);
+        if (timer) clearTimeout(timer);
+        this.interactionTimers.delete(request.id);
+      }
+
+      this.events.deleteSession(
+        sessionId,
+        domainEvent("session.deleted", { sessionId }, sessionId),
+      );
+      try {
+        rmSync(join(this.config.sessionDir, sessionId), { recursive: true, force: true });
+      } catch (error) {
+        process.stderr.write(
+          `[pi:${sessionId}] Session deleted; file cleanup will retry after restart: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+      return commandResponse(command, true);
+    } finally {
+      this.deleting.delete(sessionId);
+    }
+  }
+
+  private async stopRuntime(runtime: ManagedSession): Promise<void> {
+    runtime.stopping = true;
+    if (runtime.rpc.running) runtime.rpc.stop();
+    let timeout: NodeJS.Timeout | undefined;
+    const exited = await Promise.race([
+      runtime.rpc.waitForExit().then(() => true),
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => resolve(false), 2_000);
+      }),
+    ]);
+    if (timeout) clearTimeout(timeout);
+    if (!exited) {
+      runtime.rpc.stop("SIGKILL");
+      await runtime.rpc.waitForExit();
     }
   }
 
@@ -450,16 +568,19 @@ export class SessionManager {
       runtime.stopping = true;
       rpc.stop();
       this.runtimes.delete(stored.session.id);
-      const message = error instanceof Error ? error.message : String(error);
-      this.events.append([
-        domainEvent("run.status", { status: "failed", message }, stored.session.id),
-      ]);
-      this.syncSession(stored.session.id);
+      if (!this.shuttingDown && !this.deleting.has(stored.session.id)) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.events.append([
+          domainEvent("run.status", { status: "failed", message }, stored.session.id),
+        ]);
+        this.syncSession(stored.session.id);
+      }
       throw error;
     }
   }
 
   private onRecord(sessionId: string, runtime: ManagedSession, record: RpcRecord): void {
+    if (this.deleting.has(sessionId)) return;
     if (record.type === "response" && typeof record.id === "string" && runtime.suppressedResponseIds.delete(record.id)) {
       return;
     }
@@ -506,7 +627,30 @@ export class SessionManager {
 
   private syncSession(sessionId: string, piState?: { sessionId?: string; sessionFile?: string }): void {
     const session = this.events.currentSnapshot().sessions.find((candidate) => candidate.id === sessionId);
-    if (session) this.database.updateSession(session, piState);
+    if (!session) return;
+    if (piState?.sessionFile) {
+      const ownedDirectory = `${resolve(this.config.sessionDir, sessionId)}${sep}`;
+      const sessionFile = resolve(piState.sessionFile);
+      if (!sessionFile.startsWith(ownedDirectory)) {
+        throw new Error("Pi reported a session file outside its Anvil session directory");
+      }
+      piState = { ...piState, sessionFile };
+    }
+    this.database.updateSession(session, piState);
+  }
+
+  private cleanupOrphanSessionDirectories(sessionIds: Set<string>): void {
+    mkdirSync(this.config.sessionDir, { recursive: true, mode: 0o700 });
+    for (const entry of readdirSync(this.config.sessionDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || sessionIds.has(entry.name)) continue;
+      try {
+        rmSync(join(this.config.sessionDir, entry.name), { recursive: true, force: true });
+      } catch (error) {
+        process.stderr.write(
+          `[forge] Failed to clean orphan session directory ${entry.name}: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      }
+    }
   }
 
   private async sendSuppressedRequest(runtime: ManagedSession, record: RpcRecord): Promise<RpcRecord> {

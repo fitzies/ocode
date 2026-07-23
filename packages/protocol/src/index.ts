@@ -351,7 +351,9 @@ interface AnvilEventBase<TType extends string, TPayload> {
 export type AnvilEvent =
   | AnvilEventBase<"connection.changed", { connection: ConnectionState }>
   | AnvilEventBase<"catalog.updated", { catalog: CapabilityCatalog }>
+  | AnvilEventBase<"project.upserted", { project: ProjectSummary }>
   | AnvilEventBase<"session.upserted", { session: SessionSummary }>
+  | AnvilEventBase<"session.deleted", { sessionId: string }>
   | AnvilEventBase<"session.selected", { sessionId: string }>
   | AnvilEventBase<
       "session.configured",
@@ -427,8 +429,10 @@ interface AnvilCommandBase<TType extends string, TPayload> {
 }
 
 export type AnvilClientCommand =
+  | AnvilCommandBase<"project.create", { name: string; path: string }>
   | AnvilCommandBase<"session.select", { sessionId: string }>
-  | AnvilCommandBase<"session.create", { projectId: string; parentSessionId?: string }>
+  | AnvilCommandBase<"session.create", { projectId: string; sessionId: string; parentSessionId?: string }>
+  | AnvilCommandBase<"session.delete", { sessionId: string }>
   | AnvilCommandBase<
       "prompt.send",
       { content: string; delivery: PromptDelivery; images?: ImageContentBlock[] }
@@ -460,7 +464,9 @@ export function isJsonValue(value: unknown): value is JsonValue {
 const ANVIL_EVENT_TYPES = new Set<AnvilEvent["type"]>([
   "connection.changed",
   "catalog.updated",
+  "project.upserted",
   "session.upserted",
+  "session.deleted",
   "session.selected",
   "session.configured",
   "run.status",
@@ -561,8 +567,12 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
       return ["connected", "reconnecting", "offline"].includes(String(value.connection));
     case "catalog.updated":
       return isCapabilityCatalog(value.catalog);
+    case "project.upserted":
+      return isRecord(value.project) && hasStrings(value.project, "id", "name", "path");
     case "session.upserted":
       return isSessionSummary(value.session);
+    case "session.deleted":
+      return hasStrings(value, "sessionId");
     case "session.selected":
       return hasStrings(value, "sessionId");
     case "session.configured":
@@ -670,11 +680,16 @@ export function isAnvilClientCommand(value: unknown): value is AnvilClientComman
 
   const payload = value.payload;
   switch (value.type) {
+    case "project.create":
+      return value.sessionId === null && hasStrings(payload, "name", "path");
     case "session.select":
       return hasStrings(payload, "sessionId");
     case "session.create":
-      return hasStrings(payload, "projectId") &&
+      return value.sessionId === null &&
+        hasStrings(payload, "projectId", "sessionId") &&
         (payload.parentSessionId === undefined || typeof payload.parentSessionId === "string");
+    case "session.delete":
+      return value.sessionId === null && hasStrings(payload, "sessionId");
     case "prompt.send":
       return typeof value.sessionId === "string" &&
         hasStrings(payload, "content", "delivery") &&

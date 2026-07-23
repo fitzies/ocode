@@ -16,8 +16,10 @@ export class ForgeEventService extends EventEmitter {
     private readonly snapshotInterval = 250,
   ) {
     super();
+    database.syncProjects(projects);
+    const persistedProjects = database.listProjects();
     const stored = database.latestSnapshot();
-    let restored = stored?.snapshot ?? createEmptySnapshot({ projects });
+    let restored = stored?.snapshot ?? createEmptySnapshot({ projects: persistedProjects });
     while (true) {
       const tail = database.readEventsAfter(restored.lastSequence, 10_000);
       if (tail.length === 0) break;
@@ -27,7 +29,7 @@ export class ForgeEventService extends EventEmitter {
     this.snapshot = {
       ...restored,
       connection: "connected",
-      projects: [...projects],
+      projects: persistedProjects,
       sequenceGap: null,
     };
   }
@@ -49,9 +51,22 @@ export class ForgeEventService extends EventEmitter {
     return this.acceptCommitted(this.database.appendEvents(events));
   }
 
+  createProject(project: ProjectSummary, event: UnsequencedAnvilEvent): AnvilEvent {
+    const committed = this.database.createProjectWithEvent(project, event);
+    this.acceptCommitted([committed]);
+    return committed;
+  }
+
   createSession(session: SessionSummary, event: UnsequencedAnvilEvent): AnvilEvent {
     const committed = this.database.createSessionWithEvent(session, event);
     this.acceptCommitted([committed]);
+    return committed;
+  }
+
+  deleteSession(sessionId: string, event: UnsequencedAnvilEvent): AnvilEvent {
+    const committed = this.database.deleteSessionWithEvent(sessionId, event);
+    this.acceptCommitted([committed]);
+    this.checkpoint();
     return committed;
   }
 

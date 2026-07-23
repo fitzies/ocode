@@ -41,7 +41,7 @@ The final client strategy is intentionally undecided. Options include a responsi
 
 Phase 2 is implemented. The current usable deployment is the built web client served by the Forge backend on loopback and exposed with Tailscale Serve.
 
-1. Create `~/.config/anvil/config.json` from `deploy/config.example.json`. Set the exact Tailscale owner login, Pi executable, and allowlisted project paths.
+1. Create `~/.config/anvil/config.json` from `deploy/config.example.json`. Set the exact Tailscale owner login, Pi executable, and initial allowlisted project paths. Additional trusted workspaces can be added later by the authenticated owner from the web client.
 2. Build and start from the repository root:
 
    ```bash

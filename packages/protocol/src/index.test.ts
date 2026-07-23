@@ -54,6 +54,51 @@ describe("protocol runtime guards", () => {
     expect(isAnvilClientCommand(command)).toBe(true);
     expect(isAnvilClientCommand({ ...command, payload: { ...command.payload, delivery: "later" } })).toBe(false);
     expect(isAnvilClientCommand({ ...command, sessionId: null })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "project.create",
+      sessionId: null,
+      payload: { name: "Anvil", path: "/repo/anvil" },
+    })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.create",
+      sessionId: null,
+      payload: { projectId: "anvil", sessionId: "01959f7e-7d64-7000-8000-000000000001" },
+    })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.create",
+      sessionId: null,
+      payload: { projectId: "anvil" },
+    })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.delete",
+      sessionId: null,
+      payload: { sessionId: "session-1" },
+    })).toBe(true);
+  });
+
+  it("validates workspace and deletion events", () => {
+    const base = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-action",
+      sequence: 1,
+      sessionId: null,
+      timestamp: "2026-07-21T08:00:00.000Z",
+    };
+    expect(isAnvilEvent({
+      ...base,
+      type: "project.upserted",
+      payload: { project: { id: "anvil", name: "Anvil", path: "/repo/anvil" } },
+    })).toBe(true);
+    expect(isAnvilEvent({
+      ...base,
+      sessionId: "session-1",
+      type: "session.deleted",
+      payload: { sessionId: "session-1" },
+    })).toBe(true);
   });
 
   it("requires a bootstrap tail to follow its snapshot cursor", () => {

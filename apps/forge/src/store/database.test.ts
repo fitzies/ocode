@@ -65,6 +65,47 @@ describe("ForgeDatabase event journal", () => {
     database.close();
   });
 
+  it("persists UI-created projects and redacts deleted session history without sequence gaps", () => {
+    const database = new ForgeDatabase(":memory:");
+    const project = { id: "project-created", name: "Created", path: "/repo/created" };
+    database.createProjectWithEvent(project, {
+      sessionId: null,
+      timestamp: "2026-07-23T01:00:00.000Z",
+      type: "project.upserted",
+      payload: { project },
+    });
+    const session = {
+      id: "session-delete",
+      projectId: project.id,
+      title: "Delete me",
+      updatedAt: "2026-07-23T01:00:01.000Z",
+      status: "idle" as const,
+      modelId: "test/model",
+      thinkingLevel: "off" as const,
+    };
+    database.createSessionWithEvent(session, {
+      sessionId: session.id,
+      timestamp: session.updatedAt,
+      type: "session.upserted",
+      payload: { session },
+    });
+    database.deleteSessionWithEvent(session.id, {
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:02.000Z",
+      type: "session.deleted",
+      payload: { sessionId: session.id },
+    });
+
+    expect(database.listProjects()).toContainEqual(project);
+    expect(database.getSession(session.id)).toBeUndefined();
+    expect(database.readEventsAfter(0).map((item) => [item.sequence, item.type])).toEqual([
+      [1, "project.upserted"],
+      [2, "unknown"],
+      [3, "session.deleted"],
+    ]);
+    database.close();
+  });
+
   it("projects pending interactions transactionally with their events", () => {
     const database = new ForgeDatabase(":memory:");
     database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);

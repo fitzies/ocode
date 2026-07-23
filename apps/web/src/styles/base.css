@@ -98,6 +98,72 @@ button:disabled {
   font-size: 13px;
 }
 
+.empty-workspace {
+  display: grid;
+  max-width: 320px;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.empty-workspace svg {
+  margin-bottom: 4px;
+  color: var(--accent);
+}
+
+.empty-workspace strong {
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 560;
+}
+
+.empty-workspace p {
+  margin: 0 0 8px;
+  line-height: 1.55;
+}
+
+.empty-project-picker {
+  display: grid;
+  width: min(260px, 100%);
+  grid-template-columns: 1fr auto;
+  gap: 6px;
+  text-align: left;
+}
+
+.empty-project-picker label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.empty-project-picker select,
+.empty-project-picker button {
+  min-height: 34px;
+  padding: 7px 10px;
+  font: inherit;
+  border-radius: 7px;
+}
+
+.empty-project-picker select {
+  min-width: 0;
+  color: var(--text);
+  color-scheme: dark;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+}
+
+.empty-project-picker button {
+  color: var(--surface);
+  font-weight: 600;
+  background: var(--text);
+  border: 0;
+  cursor: pointer;
+}
+
 .icon-button {
   display: inline-flex;
   align-items: center;
@@ -242,9 +308,16 @@ button:disabled {
   margin-top: 17px;
 }
 
+.project-heading-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .project-heading {
   display: flex;
-  width: 100%;
+  min-width: 0;
+  flex: 1;
   min-height: 28px;
   align-items: center;
   padding: 0 7px;
@@ -261,6 +334,28 @@ button:disabled {
 
 .project-heading:hover {
   background: rgba(255, 255, 255, 0.025);
+}
+
+.project-new-session {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  place-items: center;
+  padding: 0;
+  color: #85867e;
+  font-size: 17px;
+  line-height: 1;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.project-new-session:hover,
+.project-new-session:focus-visible {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.055);
 }
 
 .project-chevron {

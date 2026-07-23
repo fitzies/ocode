@@ -4,7 +4,10 @@
   "packageManager": "pnpm@11.15.1",
   "scripts": {
     "dev": "corepack pnpm --filter @anvil/web dev",
-    "build": "corepack pnpm --filter @anvil/web build",
+    "dev:web": "corepack pnpm --filter @anvil/web dev",
+    "dev:forge": "corepack pnpm --filter @anvil/forge dev",
+    "build": "corepack pnpm --filter @anvil/forge build && corepack pnpm --filter @anvil/web build",
+    "start:forge": "corepack pnpm --filter @anvil/forge start",
     "typecheck": "corepack pnpm --recursive typecheck",
     "test": "corepack pnpm --recursive test"
   }

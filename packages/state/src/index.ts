@@ -15,7 +15,7 @@ const EMPTY_CATALOG: CapabilityCatalog = { models: [], commands: [], skills: [] 
 export function createEmptySnapshot(input?: {
   projects?: ProjectSummary[];
   sessions?: SessionSummary[];
-  catalog?: CapabilityCatalog;
+  catalogs?: Record<string, CapabilityCatalog>;
   activeSessionId?: string | null;
   capturedAt?: string;
 }): AnvilSnapshot {
@@ -28,7 +28,9 @@ export function createEmptySnapshot(input?: {
     sessions,
     activeSessionId: input?.activeSessionId ?? sessions[0]?.id ?? null,
     timelines: Object.fromEntries(sessions.map((session) => [session.id, []])),
-    catalog: input?.catalog ?? EMPTY_CATALOG,
+    catalogs: input?.catalogs ?? Object.fromEntries(
+      sessions.map((session) => [session.id, EMPTY_CATALOG]),
+    ),
     pendingInteractions: [],
     extensionStatuses: [],
     widgets: [],
@@ -42,8 +44,8 @@ export function createEmptySnapshot(input?: {
         session.status === "running" ? "running" : session.status === "failed" ? "failed" : "idle",
       ]),
     ),
-    lastSequenceBySession: {},
-    sequenceGaps: [],
+    lastSequence: 0,
+    sequenceGap: null,
   };
 }
 
@@ -99,60 +101,44 @@ function fallbackMessage(event: AnvilEvent, messageId: string): MessageEntry {
     content: [],
     status: "streaming",
     createdAt: event.timestamp,
-    raw: event.raw,
+    ...(event.raw === undefined ? {} : { raw: event.raw }),
   };
 }
 
 export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): AnvilSnapshot {
-  const sequenceKey = event.sessionId ?? "__global__";
-  const previousSequence = snapshot.lastSequenceBySession[sequenceKey] ?? 0;
+  const previousSequence = snapshot.lastSequence;
   if (event.sequence <= previousSequence) return snapshot;
   if (event.sequence > previousSequence + 1) {
-    const gap = {
-      sessionId: event.sessionId,
-      expected: previousSequence + 1,
-      received: event.sequence,
-      detectedAt: event.timestamp,
-    };
     return {
       ...snapshot,
-      sequenceGaps: [
-        ...snapshot.sequenceGaps.filter(
-          (candidate) => (candidate.sessionId ?? "__global__") !== sequenceKey,
-        ),
-        gap,
-      ],
+      sequenceGap: {
+        expected: previousSequence + 1,
+        received: event.sequence,
+        detectedAt: event.timestamp,
+      },
     };
   }
 
-  const existingGap = snapshot.sequenceGaps.find(
-    (candidate) => (candidate.sessionId ?? "__global__") === sequenceKey,
-  );
-  const sequenceGaps = existingGap && event.sequence < existingGap.received
-    ? snapshot.sequenceGaps.map((candidate) =>
-        (candidate.sessionId ?? "__global__") === sequenceKey
-          ? { ...candidate, expected: event.sequence + 1 }
-          : candidate,
-      )
-    : snapshot.sequenceGaps.filter(
-        (candidate) => (candidate.sessionId ?? "__global__") !== sequenceKey,
-      );
+  const sequenceGap = snapshot.sequenceGap && event.sequence < snapshot.sequenceGap.received
+    ? { ...snapshot.sequenceGap, expected: event.sequence + 1 }
+    : null;
 
   let next: AnvilSnapshot = {
     ...snapshot,
     capturedAt: event.timestamp,
-    lastSequenceBySession: {
-      ...snapshot.lastSequenceBySession,
-      [sequenceKey]: event.sequence,
-    },
-    sequenceGaps,
+    lastSequence: event.sequence,
+    sequenceGap,
   };
 
   switch (event.type) {
     case "connection.changed":
       return { ...next, connection: event.payload.connection };
     case "catalog.updated":
-      return { ...next, catalog: event.payload.catalog };
+      if (!event.sessionId) return next;
+      return {
+        ...next,
+        catalogs: { ...snapshot.catalogs, [event.sessionId]: event.payload.catalog },
+      };
     case "session.upserted": {
       const session = event.payload.session;
       const runState =
@@ -168,6 +154,10 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
         queues: {
           ...snapshot.queues,
           [session.id]: snapshot.queues[session.id] ?? { steering: [], followUp: [] },
+        },
+        catalogs: {
+          ...snapshot.catalogs,
+          [session.id]: snapshot.catalogs[session.id] ?? EMPTY_CATALOG,
         },
         runStates: { ...snapshot.runStates, [session.id]: runState },
       };
@@ -218,10 +208,11 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
               entry.kind === "message" && entry.id === event.payload.messageId,
           );
           const message = existing ?? fallbackMessage(event, event.payload.messageId);
+          const modelId = event.payload.modelId ?? message.modelId;
           const replacement: MessageEntry = {
             ...message,
             status: "streaming",
-            modelId: event.payload.modelId ?? message.modelId,
+            ...(modelId === undefined ? {} : { modelId }),
             content: upsertTextBlock(
               message.content,
               event.payload.blockId,
@@ -246,7 +237,7 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
             ...message,
             content: event.payload.content ?? message.content,
             status: event.payload.status ?? "complete",
-            error: event.payload.error,
+            ...(event.payload.error === undefined ? {} : { error: event.payload.error }),
           });
         }),
       };
@@ -286,7 +277,7 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
               content: event.payload.delta,
               status: "streaming",
               createdAt: event.timestamp,
-              raw: event.raw,
+              ...(event.raw === undefined ? {} : { raw: event.raw }),
             },
           ];
         }),
@@ -338,9 +329,9 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
                 status: "running",
                 arguments: {},
                 output: event.payload.output,
-                details: event.payload.details,
+                ...(event.payload.details === undefined ? {} : { details: event.payload.details }),
                 createdAt: event.timestamp,
-                raw: event.raw,
+                ...(event.raw === undefined ? {} : { raw: event.raw }),
               },
             ];
           }
@@ -349,7 +340,9 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
               ? {
                   ...entry,
                   output: event.payload.output,
-                  details: event.payload.details ?? entry.details,
+                  ...(event.payload.details !== undefined
+                    ? { details: event.payload.details }
+                    : entry.details === undefined ? {} : { details: entry.details }),
                   status: "running",
                 }
               : entry,
@@ -377,10 +370,10 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
                 status: event.payload.status,
                 arguments: {},
                 output: event.payload.output,
-                details: event.payload.details,
+                ...(event.payload.details === undefined ? {} : { details: event.payload.details }),
                 createdAt: event.timestamp,
                 endedAt: event.timestamp,
-                raw: event.raw,
+                ...(event.raw === undefined ? {} : { raw: event.raw }),
               },
             ];
           }
@@ -389,7 +382,9 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
               ? {
                   ...entry,
                   output: event.payload.output,
-                  details: event.payload.details ?? entry.details,
+                  ...(event.payload.details !== undefined
+                    ? { details: event.payload.details }
+                    : entry.details === undefined ? {} : { details: entry.details }),
                   status: event.payload.status,
                   endedAt: event.timestamp,
                 }
@@ -417,9 +412,9 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
         title: request.title,
         status:
           request.method === "unknown" && !request.fields ? "unsupported" : "pending",
-        summary: request.message,
+        ...(request.message === undefined ? {} : { summary: request.message }),
         createdAt: event.timestamp,
-        raw: request.raw,
+        ...(request.raw === undefined ? {} : { raw: request.raw }),
       };
       return {
         ...next,
@@ -473,7 +468,7 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
                 sessionId: event.sessionId,
                 key: event.payload.key,
                 text: event.payload.text,
-                source: event.payload.source,
+                ...(event.payload.source === undefined ? {} : { source: event.payload.source }),
                 updatedAt: event.timestamp,
               },
             ]
@@ -530,7 +525,7 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
             message: "Anvil preserved an event it does not recognize.",
             details: event.payload.payload,
             createdAt: event.timestamp,
-            raw: event.raw,
+            ...(event.raw === undefined ? {} : { raw: event.raw }),
           },
         ]),
       };
@@ -563,8 +558,6 @@ export function resetSessionState(snapshot: AnvilSnapshot, sessionId: string): A
     queues: { ...snapshot.queues, [sessionId]: { steering: [], followUp: [] } },
     composerDrafts: { ...snapshot.composerDrafts, [sessionId]: "" },
     runStates: { ...snapshot.runStates, [sessionId]: "idle" },
-    lastSequenceBySession: { ...snapshot.lastSequenceBySession, [sessionId]: 0 },
-    sequenceGaps: snapshot.sequenceGaps.filter((gap) => gap.sessionId !== sessionId),
   };
 }
 
@@ -581,10 +574,16 @@ export function reconcileSnapshotAndTail(
     timelines: Object.fromEntries(
       Object.entries(incoming.timelines).map(([sessionId, entries]) => [sessionId, [...entries]]),
     ),
+    catalogs: Object.fromEntries(
+      Object.entries(incoming.catalogs).map(([sessionId, catalog]) => [
+        sessionId,
+        { models: [...catalog.models], commands: [...catalog.commands], skills: [...catalog.skills] },
+      ]),
+    ),
     pendingInteractions: [...incoming.pendingInteractions],
     extensionStatuses: [...incoming.extensionStatuses],
     widgets: [...incoming.widgets],
-    sequenceGaps: [],
+    sequenceGap: null,
   };
   return applyAnvilEvents(restored, tail);
 }

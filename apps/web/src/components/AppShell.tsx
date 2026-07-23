@@ -1,3 +1,4 @@
+import type { CapabilityCatalog } from "@anvil/protocol";
 import { Icon } from "@iconify/react";
 import branchingPathsIcon from "@iconify-icons/solar/branching-paths-down-linear";
 import forgeServerIcon from "@iconify-icons/solar/server-square-cloud-bold-duotone";
@@ -13,10 +14,13 @@ import { ReplayControls } from "./ReplayControls";
 import { Sidebar } from "./Sidebar";
 import { Timeline } from "./Timeline";
 
+const EMPTY_CATALOG: CapabilityCatalog = { models: [], commands: [], skills: [] };
+
 export function AppShell() {
   const snapshot = useSyncExternalStore(anvilClient.subscribe, anvilClient.getSnapshot);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mobile, setMobile] = useState(false);
+  const [newProjectId, setNewProjectId] = useState("");
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const activeSession =
     snapshot.sessions.find((session) => session.id === snapshot.activeSessionId) ??
@@ -35,9 +39,14 @@ export function AppShell() {
   const widgets = activeSession
     ? snapshot.widgets.filter((widget) => widget.sessionId === activeSession.id)
     : [];
-  const sequenceGap = activeSession
-    ? snapshot.sequenceGaps.find((gap) => gap.sessionId === activeSession.id)
-    : undefined;
+  const sequenceGap = snapshot.sequenceGap;
+  const fixtureMode = snapshot.replay.fixtureId !== "live";
+  const activeCatalog = activeSession
+    ? snapshot.catalogs[activeSession.id] ?? EMPTY_CATALOG
+    : EMPTY_CATALOG;
+  const selectedProjectId = snapshot.projects.some((project) => project.id === newProjectId)
+    ? newProjectId
+    : snapshot.projects[0]?.id ?? "";
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 900px)");
@@ -55,16 +64,52 @@ export function AppShell() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        anvilClient.createSession();
-        setSidebarOpen(false);
+        const projectId = activeSession?.projectId ??
+          (snapshot.projects.length === 1 ? snapshot.projects[0]?.id : undefined);
+        if (projectId) {
+          anvilClient.createSession(projectId);
+          setSidebarOpen(false);
+        }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [sidebarOpen]);
+  }, [activeSession?.projectId, sidebarOpen, snapshot.projects]);
 
   if (!activeSession) {
-    return <main className="app-loading">No sessions are available.</main>;
+    const connecting = snapshot.connection !== "connected" && snapshot.projects.length === 0;
+    return (
+      <main className="app-loading">
+        <div className="empty-workspace">
+          <Icon icon={forgeServerIcon} width={24} />
+          <strong>{connecting ? "Connecting to Forge" : "No sessions yet"}</strong>
+          <p>
+            {connecting
+              ? "Restoring projects and conversations…"
+              : snapshot.projects.length > 0
+                ? "Choose where Pi should start the conversation."
+                : "No Forge projects are configured."}
+          </p>
+          {!connecting && snapshot.projects.length > 0 && (
+            <div className="empty-project-picker">
+              <label htmlFor="new-session-project">Project</label>
+              <select
+                id="new-session-project"
+                value={selectedProjectId}
+                onChange={(event) => setNewProjectId(event.target.value)}
+              >
+                {snapshot.projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => anvilClient.createSession(selectedProjectId)}>
+                Start session
+              </button>
+            </div>
+          )}
+        </div>
+      </main>
+    );
   }
 
   const connectionLabel =
@@ -86,6 +131,7 @@ export function AppShell() {
           menuButtonRef.current?.focus();
         }}
         onSelectSession={anvilClient.selectSession}
+        onCreateSession={anvilClient.createSession}
       />
 
       <main className="workspace">
@@ -108,7 +154,7 @@ export function AppShell() {
           </div>
 
           <div className="header-actions">
-            {import.meta.env.DEV && (
+            {import.meta.env.DEV && fixtureMode && (
               <ReplayControls
                 replay={snapshot.replay}
                 onFixtureChange={anvilClient.selectReplayFixture}
@@ -118,7 +164,12 @@ export function AppShell() {
                 onToggle={anvilClient.toggleReplay}
               />
             )}
-            <button className={`connection-chip connection-chip--${snapshot.connection}`} title="Cycle fixture connection state" onClick={anvilClient.cycleConnectionState}>
+            <button
+              className={`connection-chip connection-chip--${snapshot.connection}`}
+              title={fixtureMode ? "Cycle fixture connection state" : "Forge connection state"}
+              onClick={fixtureMode ? anvilClient.cycleConnectionState : undefined}
+              disabled={!fixtureMode}
+            >
               <Icon icon={forgeServerIcon} width={15} /><span>{connectionLabel}</span>
             </button>
             <div className="trust-chip" title="Pi runtime access level"><Icon icon={shieldCheckIcon} width={15} />Full access</div>
@@ -136,6 +187,11 @@ export function AppShell() {
             Reconnecting event stream · waiting for sequence {sequenceGap.expected} before {sequenceGap.received}
           </div>
         )}
+        {snapshot.clientError && (
+          <div className="reconciliation-banner" role="alert">
+            Forge command failed · {snapshot.clientError}
+          </div>
+        )}
 
         <Timeline session={activeSession} entries={timeline} onSuggestion={(prompt) => anvilClient.sendPrompt(prompt)} />
 
@@ -144,9 +200,9 @@ export function AppShell() {
           modelId={activeSession.modelId}
           thinkingLevel={activeSession.thinkingLevel}
           status={activeSession.status}
-          models={snapshot.catalog.models}
-          commands={snapshot.catalog.commands}
-          skills={snapshot.catalog.skills}
+          models={activeCatalog.models}
+          commands={activeCatalog.commands}
+          skills={activeCatalog.skills}
           queue={snapshot.queues[activeSession.id] ?? { steering: [], followUp: [] }}
           draft={snapshot.composerDrafts[activeSession.id]}
           widgets={widgets}

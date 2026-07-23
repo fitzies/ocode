@@ -6,7 +6,7 @@ Anvil is a personal, remote interface for running Pi coding-agent sessions on **
 
 - Forge owns the backend, Pi processes, repositories, credentials, and persistent sessions.
 - Pi is integrated through its RPC mode or TypeScript SDK; prefer RPC subprocesses initially for session isolation.
-- Remote clients communicate with the backend through a secure API over Tailscale—not through SSH. The streaming transport may be WebSockets, SSE, or another suitable protocol and is not decided yet.
+- Remote clients communicate with the backend through HTTP commands and globally sequenced SSE events over Tailscale—not through SSH.
 - SSH is reserved for server administration, deployment, and troubleshooting.
 - The backend API must remain client-independent. The first client may be web-based or native, and additional clients should be able to share the same sessions later.
 - A future native client may also run Pi locally to work directly with files on that device.
@@ -36,6 +36,30 @@ The final client strategy is intentionally undecided. Options include a responsi
 - Treat shell and filesystem access as highly privileged.
 - Do not expose Anvil publicly by default.
 - Prioritize reliability across disconnects before advanced UI features.
+
+## Current Runbook
+
+Phase 2 is implemented. The current usable deployment is the built web client served by the Forge backend on loopback and exposed with Tailscale Serve.
+
+1. Create `~/.config/anvil/config.json` from `deploy/config.example.json`. Set the exact Tailscale owner login, Pi executable, and allowlisted project paths.
+2. Build and start from the repository root:
+
+   ```bash
+   corepack pnpm build
+   corepack pnpm start:forge
+   ```
+
+3. In another Forge administration shell, expose the loopback service:
+
+   ```bash
+   sudo tailscale serve --bg http://127.0.0.1:3210
+   ```
+
+4. Open the Forge tailnet HTTPS URL. Do not expose port 3210 publicly or enable Funnel.
+
+For frontend development, run Forge with `ANVIL_ALLOW_UNAUTHENTICATED=true`, then run `VITE_ANVIL_TRANSPORT=forge corepack pnpm dev:web`; Vite uses port 5173 and proxies `/api` to Forge. Without `VITE_ANVIL_TRANSPORT=forge`, development uses recorded fixtures.
+
+To stop a manual deployment, interrupt `start:forge` with Ctrl+C and run `sudo tailscale serve --https=443 off`. If a detached development process remains, identify and terminate the process listening on port 3210 (Forge) or 5173 (Vite). Production service installation and recovery details are in `docs/forge.md` and `deploy/anvil-forge.service`.
 
 ## Delivery Phases
 

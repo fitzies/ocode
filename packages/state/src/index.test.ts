@@ -1,7 +1,7 @@
-import { ANVIL_PROTOCOL_VERSION, type AnvilEvent, type SessionSummary } from "@anvil/protocol";
+import { ANVIL_PROTOCOL_VERSION, isAnvilSnapshot, type AnvilEvent, type SessionSummary } from "@anvil/protocol";
 import { describe, expect, it } from "vitest";
 
-import { applyAnvilEvent, createEmptySnapshot, reconcileSnapshotAndTail } from "./anvilState";
+import { applyAnvilEvent, createEmptySnapshot, reconcileSnapshotAndTail } from "./index";
 
 const session: SessionSummary = {
   id: "session-1",
@@ -52,23 +52,56 @@ describe("Anvil event reducer", () => {
 
     expect(snapshot.timelines[session.id]).toHaveLength(1);
     expect(snapshot.timelines[session.id][0]).toMatchObject({ status: "complete", content: [{ text: "Hello" }] });
-    expect(afterDelta.lastSequenceBySession[session.id]).toBe(2);
+    expect(afterDelta.lastSequence).toBe(2);
+    expect(isAnvilSnapshot(snapshot)).toBe(true);
   });
 
   it("signals sequence gaps instead of discarding late events", () => {
     let snapshot = createEmptySnapshot({ sessions: [session] });
     const delta = event(2, "message.delta", { messageId: "assistant-1", blockId: "text-1", delta: "late" });
     snapshot = applyAnvilEvent(snapshot, delta);
-    expect(snapshot.sequenceGaps).toEqual([{ sessionId: session.id, expected: 1, received: 2, detectedAt: delta.timestamp }]);
+    expect(snapshot.sequenceGap).toEqual({ expected: 1, received: 2, detectedAt: delta.timestamp });
     expect(snapshot.timelines[session.id]).toHaveLength(0);
 
     snapshot = applyAnvilEvent(snapshot, event(1, "message.started", {
       message: { id: "assistant-1", kind: "message", role: "assistant", content: [], status: "streaming", createdAt: "2026-07-21T09:00:01.000Z" },
     }));
-    expect(snapshot.sequenceGaps[0]?.expected).toBe(2);
+    expect(snapshot.sequenceGap?.expected).toBe(2);
     snapshot = applyAnvilEvent(snapshot, delta);
-    expect(snapshot.sequenceGaps).toHaveLength(0);
+    expect(snapshot.sequenceGap).toBeNull();
     expect(snapshot.timelines[session.id][0]).toMatchObject({ content: [{ text: "late" }] });
+  });
+
+  it("keeps capability catalogs scoped to their Pi sessions", () => {
+    const otherSession = { ...session, id: "session-2", modelId: "other/model" };
+    let snapshot = createEmptySnapshot({ sessions: [session, otherSession] });
+    snapshot = applyAnvilEvent(snapshot, event(1, "catalog.updated", {
+      catalog: {
+        models: [{
+          id: "openai/test",
+          provider: "openai",
+          name: "Test",
+          reasoning: true,
+          input: ["text"],
+          supportedThinkingLevels: ["off", "medium"],
+        }],
+        commands: [{ name: "project-one", source: "prompt", location: "project" }],
+        skills: [],
+      },
+    }));
+    snapshot = applyAnvilEvent(snapshot, {
+      ...event(2, "catalog.updated", {
+        catalog: {
+          models: [],
+          commands: [{ name: "project-two", source: "prompt", location: "project" }],
+          skills: [],
+        },
+      }),
+      sessionId: otherSession.id,
+    });
+
+    expect(snapshot.catalogs[session.id].commands.map((command) => command.name)).toEqual(["project-one"]);
+    expect(snapshot.catalogs[otherSession.id].commands.map((command) => command.name)).toEqual(["project-two"]);
   });
 
   it("restores the underlying run state after the last pending dialog resolves", () => {

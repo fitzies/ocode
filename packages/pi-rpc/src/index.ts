@@ -1,5 +1,4 @@
 import {
-  ANVIL_PROTOCOL_VERSION,
   type AnvilEvent,
   type CapabilityCatalog,
   type ContentBlock,
@@ -9,6 +8,13 @@ import {
   type JsonValue,
   type MessageEntry,
 } from "@anvil/protocol";
+
+export type UnsequencedAnvilEvent = {
+  [TType in AnvilEvent["type"]]: Omit<
+    Extract<AnvilEvent, { type: TType }>,
+    "protocolVersion" | "id" | "sequence"
+  >;
+}[AnvilEvent["type"]];
 
 export interface PiRpcAdapterState {
   fixtureId: string;
@@ -105,6 +111,29 @@ function contentBlocks(value: unknown, prefix: string): ContentBlock[] {
     }
     if (type === "thinking") return [];
     return [{ id, type: "unknown", contentType: type, raw: json(block) }];
+  });
+}
+
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+function supportedThinkingLevels(model: Record<string, unknown>): Array<(typeof THINKING_LEVELS)[number]> {
+  if (model.reasoning !== true) return ["off"];
+  const levelMap = recordOf(model.thinkingLevelMap);
+  return THINKING_LEVELS.filter((level) => {
+    const mapped = levelMap[level];
+    if (mapped === null) return false;
+    if (level === "xhigh" || level === "max") return mapped !== undefined;
+    return true;
+  });
+}
+
+function toolWasCancelled(record: Record<string, unknown>): boolean {
+  const details = recordOf(record.details);
+  if (record.cancelled === true || details.cancelled === true) return true;
+  if (!Array.isArray(record.content)) return false;
+  return record.content.some((item) => {
+    const block = recordOf(item);
+    return block.type === "text" && /\b(?:aborted|cancelled)\b/i.test(stringOf(block.text));
   });
 }
 
@@ -217,25 +246,22 @@ export function normalizePiRpcRecord(
   state: PiRpcAdapterState,
   record: Record<string, unknown>,
   at = 0,
-): AnvilEvent[] {
+): UnsequencedAnvilEvent[] {
   const timestamp = new Date(state.baseTimestamp + at).toISOString();
   const raw = json(record);
-  const events: AnvilEvent[] = [];
+  const events: UnsequencedAnvilEvent[] = [];
   const emit = <T extends AnvilEvent["type"]>(
     type: T,
     payload: Extract<AnvilEvent, { type: T }>["payload"],
   ) => {
-    const sequence = state.nextSequence++;
+    state.nextSequence++;
     events.push({
-      protocolVersion: ANVIL_PROTOCOL_VERSION,
-      id: `${state.fixtureId}-${sequence}`,
-      sequence,
       sessionId: state.sessionId,
       timestamp,
       type,
       payload,
       raw,
-    } as AnvilEvent);
+    } as UnsequencedAnvilEvent);
   };
 
   const type = stringOf(record.type, "unknown");
@@ -275,9 +301,7 @@ export function normalizePiRpcRecord(
                 : ["text" as const],
               contextWindow: numberOf(model.contextWindow),
               maxTokens: numberOf(model.maxTokens),
-              supportedThinkingLevels: reasoning
-                ? (["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const)
-                : (["off"] as const),
+              supportedThinkingLevels: supportedThinkingLevels(model),
             };
           })
         : [];
@@ -291,23 +315,29 @@ export function normalizePiRpcRecord(
         ...state.catalog,
         commands: commands
           .filter((item) => item.source !== "skill")
-          .map((item) => ({
-            name: stringOf(item.name),
-            description: stringOf(item.description) || undefined,
-            source: item.source === "extension" ? "extension" as const : "prompt" as const,
-            location: item.location === "user" || item.location === "project" || item.location === "path" ? item.location : undefined,
-            path: stringOf(item.path) || undefined,
-          })),
+          .map((item) => {
+            const sourceInfo = recordOf(item.sourceInfo);
+            const location = sourceInfo.location ?? item.location;
+            return {
+              name: stringOf(item.name),
+              description: stringOf(item.description) || undefined,
+              source: item.source === "extension" ? "extension" as const : "prompt" as const,
+              location: location === "user" || location === "project" || location === "path" ? location : undefined,
+              path: stringOf(sourceInfo.path, stringOf(item.path)) || undefined,
+            };
+          }),
         skills: commands
           .filter((item) => item.source === "skill")
           .map((item) => {
             const commandName = stringOf(item.name);
+            const sourceInfo = recordOf(item.sourceInfo);
+            const location = sourceInfo.location ?? item.location;
             return {
               name: commandName.replace(/^skill:/, ""),
               command: commandName,
               description: stringOf(item.description) || undefined,
-              location: item.location === "user" || item.location === "project" || item.location === "path" ? item.location : undefined,
-              path: stringOf(item.path) || undefined,
+              location: location === "user" || location === "project" || location === "path" ? location : undefined,
+              path: stringOf(sourceInfo.path, stringOf(item.path)) || undefined,
             };
           }),
       };
@@ -348,6 +378,21 @@ export function normalizePiRpcRecord(
       data: raw,
     });
     return events;
+  }
+  if (type === "session_info_changed") {
+    emit("session.configured", {
+      title: stringOf(record.name, "New session"),
+    });
+    return events;
+  }
+  if (type === "thinking_level_changed") {
+    const level = stringOf(record.level);
+    if (THINKING_LEVELS.includes(level as (typeof THINKING_LEVELS)[number])) {
+      emit("session.configured", {
+        thinkingLevel: level as (typeof THINKING_LEVELS)[number],
+      });
+      return events;
+    }
   }
   if (type === "agent_start") {
     emit("run.status", { status: "running" });
@@ -487,7 +532,9 @@ export function normalizePiRpcRecord(
         toolCallId,
         output: contentBlocks(message.content, `tool-${toolCallId}-result`),
         details: message.details === undefined ? undefined : json(message.details),
-        status: message.isError === true ? "failed" : "completed",
+        status: toolWasCancelled(message)
+          ? "cancelled"
+          : message.isError === true ? "failed" : "completed",
       });
       return events;
     }
@@ -572,7 +619,9 @@ export function normalizePiRpcRecord(
       toolCallId: stringOf(record.toolCallId),
       output: contentBlocks(result.content, `tool-${stringOf(record.toolCallId)}-result`),
       details: result.details === undefined ? undefined : json(result.details),
-      status: record.isError === true ? "failed" : "completed",
+      status: toolWasCancelled(result)
+        ? "cancelled"
+        : record.isError === true ? "failed" : "completed",
     });
     return events;
   }
@@ -669,6 +718,25 @@ export function normalizePiRpcRecord(
     });
     return events;
   }
+  if (type === "compaction_end") {
+    const failed = record.aborted !== true && !record.result;
+    emit("timeline.event", {
+      entry: {
+        id: `compaction-end-${state.nextSequence}`,
+        kind: "event",
+        category: failed ? "error" : "lifecycle",
+        tone: failed ? "error" : record.aborted === true ? "warning" : "success",
+        title: failed ? "Context compaction failed" : record.aborted === true ? "Context compaction cancelled" : "Context compacted",
+        message: failed
+          ? stringOf(record.errorMessage, "Compaction did not produce a result.")
+          : `Reason: ${stringOf(record.reason, "manual")}`,
+        details: raw,
+        createdAt: timestamp,
+        raw,
+      },
+    });
+    return events;
+  }
   if (type === "auto_retry_start" || type === "auto_retry_end") {
     emit("timeline.event", {
       entry: {
@@ -706,6 +774,6 @@ export function normalizePiRpcRecord(
 export function normalizeRecordedRpcItems(
   state: PiRpcAdapterState,
   items: RecordedRpcItem[],
-): AnvilEvent[] {
+): UnsequencedAnvilEvent[] {
   return items.flatMap((item) => normalizePiRpcRecord(state, item.record, item.at));
 }

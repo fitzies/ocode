@@ -1,10 +1,9 @@
+import type { RecordedRpcItem } from "@anvil/pi-rpc";
 import type {
   CapabilityCatalog,
   ProjectSummary,
   SessionSummary,
 } from "@anvil/protocol";
-
-import type { RecordedRpcItem } from "../lib/piRpcAdapter";
 import dialogQueue from "./dialog-queue.json";
 import failureUnknown from "./failure-unknown.json";
 import ordinaryRun from "./ordinary-run.json";

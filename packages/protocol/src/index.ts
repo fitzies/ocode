@@ -1,4 +1,4 @@
-export const ANVIL_PROTOCOL_VERSION = 1 as const;
+export const ANVIL_PROTOCOL_VERSION = 2 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
 
 export type JsonPrimitive = string | number | boolean | null;
@@ -290,7 +290,6 @@ export interface SessionQueue {
 }
 
 export interface SequenceGap {
-  sessionId: string | null;
   expected: number;
   received: number;
   detectedAt: string;
@@ -306,20 +305,36 @@ export interface AnvilSnapshot {
   sessions: SessionSummary[];
   activeSessionId: string | null;
   timelines: Record<string, TimelineEntry[]>;
-  catalog: CapabilityCatalog;
+  catalogs: Record<string, CapabilityCatalog>;
   pendingInteractions: InteractionRequest[];
   extensionStatuses: ExtensionStatus[];
   widgets: ExtensionWidget[];
   queues: Record<string, SessionQueue>;
   composerDrafts: Record<string, string>;
   runStates: Record<string, DurableRunState>;
-  lastSequenceBySession: Record<string, number>;
-  sequenceGaps: SequenceGap[];
+  lastSequence: number;
+  sequenceGap: SequenceGap | null;
 }
 
-export interface AnvilSnapshotAndTail {
+export interface AnvilBootstrap {
+  protocolVersion: ProtocolVersion;
   snapshot: AnvilSnapshot;
   events: AnvilEvent[];
+  cursor: number;
+}
+
+export interface AnvilStreamReset {
+  protocolVersion: ProtocolVersion;
+  reason: "cursor_invalid" | "cursor_expired" | "server_reset";
+  cursor: number;
+}
+
+export interface AnvilApiError {
+  protocolVersion: ProtocolVersion;
+  code: string;
+  message: string;
+  retryable: boolean;
+  details?: JsonValue;
 }
 
 interface AnvilEventBase<TType extends string, TPayload> {
@@ -429,6 +444,7 @@ export interface AnvilCommandResponse {
   commandId: string;
   timestamp: string;
   success: boolean;
+  outcome?: "completed" | "unknown";
   data?: JsonValue;
   error?: string;
 }
@@ -510,6 +526,13 @@ function isModelDescriptor(value: unknown): boolean {
     value.supportedThinkingLevels.every((level) => ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(level));
 }
 
+function isCapabilityCatalog(value: unknown): boolean {
+  return isRecord(value) &&
+    Array.isArray(value.models) && value.models.every(isModelDescriptor) &&
+    Array.isArray(value.commands) && value.commands.every((item) => isRecord(item) && hasStrings(item, "name", "source")) &&
+    Array.isArray(value.skills) && value.skills.every((item) => isRecord(item) && hasStrings(item, "name", "command"));
+}
+
 function isSessionSummary(value: unknown): boolean {
   return isRecord(value) &&
     hasStrings(value, "id", "projectId", "title", "updatedAt", "status", "modelId", "thinkingLevel") &&
@@ -537,10 +560,7 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
     case "connection.changed":
       return ["connected", "reconnecting", "offline"].includes(String(value.connection));
     case "catalog.updated":
-      return isRecord(value.catalog) &&
-        Array.isArray(value.catalog.models) && value.catalog.models.every(isModelDescriptor) &&
-        Array.isArray(value.catalog.commands) && value.catalog.commands.every((item) => isRecord(item) && hasStrings(item, "name", "source")) &&
-        Array.isArray(value.catalog.skills) && value.catalog.skills.every((item) => isRecord(item) && hasStrings(item, "name", "command"));
+      return isCapabilityCatalog(value.catalog);
     case "session.upserted":
       return isSessionSummary(value.session);
     case "session.selected":
@@ -606,6 +626,7 @@ function hasEventEnvelope(value: unknown): value is Record<string, unknown> {
     value.protocolVersion === ANVIL_PROTOCOL_VERSION &&
     typeof value.id === "string" &&
     Number.isSafeInteger(value.sequence) &&
+    Number(value.sequence) > 0 &&
     (value.sessionId === null || typeof value.sessionId === "string") &&
     typeof value.timestamp === "string" &&
     typeof value.type === "string"
@@ -617,6 +638,7 @@ export function isAnvilEvent(value: unknown): value is AnvilEvent {
   if (!ANVIL_EVENT_TYPES.has(value.type as AnvilEvent["type"])) return false;
   if (!isJsonValue(value.payload)) return false;
   if (value.raw !== undefined && !isJsonValue(value.raw)) return false;
+  if (value.type === "catalog.updated" && typeof value.sessionId !== "string") return false;
   return isEventPayload(value.type as AnvilEvent["type"], value.payload);
 }
 
@@ -633,4 +655,94 @@ export function decodeAnvilEvent(value: unknown): AnvilEvent | undefined {
     type: "unknown",
     payload: { eventType: String(value.type), payload },
   };
+}
+
+export function isAnvilClientCommand(value: unknown): value is AnvilClientCommand {
+  if (
+    !isRecord(value) ||
+    value.protocolVersion !== ANVIL_PROTOCOL_VERSION ||
+    !hasStrings(value, "id", "timestamp", "type") ||
+    !(value.sessionId === null || typeof value.sessionId === "string") ||
+    !isRecord(value.payload)
+  ) {
+    return false;
+  }
+
+  const payload = value.payload;
+  switch (value.type) {
+    case "session.select":
+      return hasStrings(payload, "sessionId");
+    case "session.create":
+      return hasStrings(payload, "projectId") &&
+        (payload.parentSessionId === undefined || typeof payload.parentSessionId === "string");
+    case "prompt.send":
+      return typeof value.sessionId === "string" &&
+        hasStrings(payload, "content", "delivery") &&
+        ["prompt", "steer", "followUp"].includes(String(payload.delivery)) &&
+        (payload.images === undefined ||
+          (Array.isArray(payload.images) &&
+            payload.images.every((image) => isRecord(image) && image.type === "image" && isContentBlock(image))));
+    case "run.cancel":
+      return typeof value.sessionId === "string" && Object.keys(payload).length === 0;
+    case "model.set":
+      return typeof value.sessionId === "string" && hasStrings(payload, "modelId");
+    case "thinking.set":
+      return typeof value.sessionId === "string" &&
+        typeof payload.level === "string" &&
+        ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(payload.level);
+    case "interaction.respond":
+      return typeof value.sessionId === "string" &&
+        hasStrings(payload, "requestId") &&
+        (payload.value === undefined || isJsonValue(payload.value)) &&
+        (payload.confirmed === undefined || typeof payload.confirmed === "boolean") &&
+        (payload.cancelled === undefined || typeof payload.cancelled === "boolean");
+    default:
+      return false;
+  }
+}
+
+export function isAnvilSnapshot(value: unknown): value is AnvilSnapshot {
+  if (!isRecord(value) || !isJsonValue(value)) return false;
+  return value.protocolVersion === ANVIL_PROTOCOL_VERSION &&
+    typeof value.capturedAt === "string" &&
+    ["connected", "reconnecting", "offline"].includes(String(value.connection)) &&
+    Array.isArray(value.projects) &&
+    value.projects.every((project) => isRecord(project) && hasStrings(project, "id", "name", "path")) &&
+    Array.isArray(value.sessions) && value.sessions.every(isSessionSummary) &&
+    (value.activeSessionId === null || typeof value.activeSessionId === "string") &&
+    isRecord(value.timelines) &&
+    isRecord(value.catalogs) &&
+    Object.values(value.catalogs).every(isCapabilityCatalog) &&
+    Array.isArray(value.pendingInteractions) && value.pendingInteractions.every(isInteractionRequest) &&
+    Array.isArray(value.extensionStatuses) &&
+    Array.isArray(value.widgets) &&
+    isRecord(value.queues) &&
+    isRecord(value.composerDrafts) &&
+    isRecord(value.runStates) &&
+    Number.isSafeInteger(value.lastSequence) && Number(value.lastSequence) >= 0 &&
+    (value.sequenceGap === null ||
+      (isRecord(value.sequenceGap) &&
+        Number.isSafeInteger(value.sequenceGap.expected) &&
+        Number.isSafeInteger(value.sequenceGap.received) &&
+        typeof value.sequenceGap.detectedAt === "string"));
+}
+
+export function isAnvilBootstrap(value: unknown): value is AnvilBootstrap {
+  if (
+    !isRecord(value) ||
+    value.protocolVersion !== ANVIL_PROTOCOL_VERSION ||
+    !Number.isSafeInteger(value.cursor) ||
+    Number(value.cursor) < 0 ||
+    !isAnvilSnapshot(value.snapshot) ||
+    !Array.isArray(value.events) ||
+    !value.events.every(isAnvilEvent)
+  ) {
+    return false;
+  }
+  const snapshot = value.snapshot;
+  const cursor = Number(value.cursor);
+  return snapshot.lastSequence <= cursor &&
+    value.events.every((event) =>
+      event.sequence > snapshot.lastSequence && event.sequence <= cursor
+    );
 }

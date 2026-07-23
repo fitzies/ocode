@@ -10,11 +10,25 @@ describe("FixtureAnvilClient", () => {
     const client = new FixtureAnvilClient();
     const snapshot = client.getSnapshot();
 
-    expect(snapshot.catalog.models.length).toBeGreaterThan(1);
-    expect(snapshot.catalog.commands.some((command) => command.name === "handoff")).toBe(true);
+    expect(snapshot.catalogs["ordinary-run"].models.length).toBeGreaterThan(1);
+    expect(snapshot.catalogs["ordinary-run"].commands.some((command) => command.name === "handoff")).toBe(true);
     expect(snapshot.timelines["parallel-tools"].filter((entry) => entry.kind === "tool")).toHaveLength(2);
     expect(snapshot.pendingInteractions.filter((request) => request.sessionId === "dialog-queue")).toHaveLength(6);
     expect(snapshot.timelines["failure-unknown"].some((entry) => entry.kind === "event" && entry.category === "unknown")).toBe(true);
+  });
+
+  it("creates sessions in the explicitly selected project", () => {
+    const client = new FixtureAnvilClient();
+    const projectId = client.getSnapshot().projects.at(-1)?.id;
+    expect(projectId).toBeDefined();
+
+    client.createSession(projectId!);
+
+    const created = client.getSnapshot().sessions.find(
+      (session) => session.id === client.getSnapshot().activeSessionId,
+    );
+    expect(created?.projectId).toBe(projectId);
+    expect(client.getSnapshot().catalogs[created!.id]).toBeDefined();
   });
 
   it("replays raw RPC records over time and can restore the final state instantly", () => {

@@ -1,0 +1,11 @@
+{
+  "ownerLogin": "you@example.com",
+  "piExecutable": "/usr/local/bin/pi",
+  "projects": [
+    {
+      "id": "anvil",
+      "name": "Anvil",
+      "path": "/home/forge/code/anvil"
+    }
+  ]
+}

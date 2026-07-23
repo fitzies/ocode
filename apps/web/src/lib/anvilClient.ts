@@ -1,6 +1,9 @@
 import {
   ANVIL_PROTOCOL_VERSION,
+  decodeAnvilEvent,
+  isAnvilBootstrap,
   type AnvilClientCommand,
+  type AnvilCommandResponse,
   type AnvilEvent,
   type AnvilSnapshot,
   type InteractionResponse,
@@ -9,20 +12,22 @@ import {
   type ThinkingLevel,
   type TimelineEntry,
 } from "@anvil/protocol";
-
-import { fixtureById, fixtureCatalog, fixtures, type FixtureDefinition } from "../fixtures";
 import {
   createPiRpcAdapterState,
   normalizePiRpcRecord,
   normalizeRecordedRpcItems,
   type PiRpcAdapterState,
-} from "./piRpcAdapter";
+  type UnsequencedAnvilEvent,
+} from "@anvil/pi-rpc";
 import {
   applyAnvilEvent,
   applyAnvilEvents,
   createEmptySnapshot,
+  reconcileSnapshotAndTail,
   resetSessionState,
-} from "./anvilState";
+} from "@anvil/state";
+
+import { fixtureById, fixtureCatalog, fixtures, type FixtureDefinition } from "../fixtures";
 
 export type DeliveryMode = "prompt" | "steer" | "followUp";
 
@@ -36,6 +41,7 @@ export interface ReplayStatus {
 
 export interface AnvilClientSnapshot extends AnvilSnapshot {
   replay: ReplayStatus;
+  clientError?: string;
 }
 
 export interface AnvilClient {
@@ -43,7 +49,7 @@ export interface AnvilClient {
   subscribe(listener: () => void): () => void;
   dispatch(command: AnvilClientCommand): void;
   selectSession(sessionId: string): void;
-  createSession(): void;
+  createSession(projectId: string): void;
   sendPrompt(content: string, mode?: DeliveryMode): void;
   cancelActiveRun(): void;
   setModel(modelId: string): void;
@@ -72,6 +78,19 @@ function textBlock(id: string, text: string) {
   return { id, type: "text" as const, text };
 }
 
+function sequenceEvents(
+  events: UnsequencedAnvilEvent[],
+  after: number,
+  idPrefix: string,
+): AnvilEvent[] {
+  return events.map((event, index) => ({
+    ...event,
+    protocolVersion: ANVIL_PROTOCOL_VERSION,
+    id: `${idPrefix}-${after + index + 1}`,
+    sequence: after + index + 1,
+  } as AnvilEvent));
+}
+
 export class FixtureAnvilClient implements AnvilClient {
   private snapshot: AnvilClientSnapshot;
   private readonly listeners = new Set<() => void>();
@@ -84,7 +103,9 @@ export class FixtureAnvilClient implements AnvilClient {
     let base = createEmptySnapshot({
       projects: initialProjects,
       sessions: initialSessions,
-      catalog: fixtureCatalog,
+      catalogs: Object.fromEntries(
+        initialSessions.map((session) => [session.id, fixtureCatalog]),
+      ),
       activeSessionId: fixtures[0]?.session.id ?? null,
       capturedAt: fixtures[0]?.baseTimestamp,
     });
@@ -95,7 +116,14 @@ export class FixtureAnvilClient implements AnvilClient {
         sessionId: fixture.session.id,
         baseTimestamp: fixture.baseTimestamp,
       });
-      base = applyAnvilEvents(base, normalizeRecordedRpcItems(adapter, fixture.records));
+      base = applyAnvilEvents(
+        base,
+        sequenceEvents(
+          normalizeRecordedRpcItems(adapter, fixture.records),
+          base.lastSequence,
+          fixture.id,
+        ),
+      );
     }
 
     const initialFixture = fixtures[0]!;
@@ -124,7 +152,7 @@ export class FixtureAnvilClient implements AnvilClient {
         this.selectSession(command.payload.sessionId);
         break;
       case "session.create":
-        this.createSession();
+        this.createSession(command.payload.projectId);
         break;
       case "prompt.send":
         this.sendPrompt(command.payload.content, command.payload.delivery);
@@ -163,14 +191,14 @@ export class FixtureAnvilClient implements AnvilClient {
     this.emit();
   };
 
-  createSession = () => {
+  createSession = (projectId: string) => {
+    if (!this.snapshot.projects.some((project) => project.id === projectId)) return;
     this.pauseReplay();
     const id = `session-${Date.now()}`;
-    const activeSession = this.activeSession();
-    const model = this.snapshot.catalog.models[0];
+    const model = fixtureCatalog.models[0];
     const session: SessionSummary = {
       id,
-      projectId: activeSession?.projectId ?? this.snapshot.projects[0]?.id ?? "anvil",
+      projectId,
       title: "New session",
       updatedAt: timestamp(),
       status: "idle",
@@ -184,6 +212,7 @@ export class FixtureAnvilClient implements AnvilClient {
       sessions: [session, ...this.snapshot.sessions],
       timelines: { ...this.snapshot.timelines, [id]: [] },
       queues: { ...this.snapshot.queues, [id]: { steering: [], followUp: [] } },
+      catalogs: { ...this.snapshot.catalogs, [id]: fixtureCatalog },
       runStates: { ...this.snapshot.runStates, [id]: "idle" },
     };
     this.emit();
@@ -406,7 +435,9 @@ export class FixtureAnvilClient implements AnvilClient {
 
   setModel = (modelId: string) => {
     const session = this.activeSession();
-    const model = this.snapshot.catalog.models.find((candidate) => candidate.id === modelId);
+    const model = session
+      ? this.snapshot.catalogs[session.id]?.models.find((candidate) => candidate.id === modelId)
+      : undefined;
     if (!session || !model) return;
     const thinkingLevel = model.supportedThinkingLevels.includes(session.thinkingLevel)
       ? session.thinkingLevel
@@ -416,9 +447,11 @@ export class FixtureAnvilClient implements AnvilClient {
 
   setThinkingLevel = (thinkingLevel: ThinkingLevel) => {
     const session = this.activeSession();
-    const model = this.snapshot.catalog.models.find(
-      (candidate) => candidate.id === session?.modelId,
-    );
+    const model = session
+      ? this.snapshot.catalogs[session.id]?.models.find(
+          (candidate) => candidate.id === session.modelId,
+        )
+      : undefined;
     if (!session || !model?.supportedThinkingLevels.includes(thinkingLevel)) return;
     this.upsertLocalSession({ ...session, thinkingLevel, updatedAt: timestamp() });
   };
@@ -517,7 +550,14 @@ export class FixtureAnvilClient implements AnvilClient {
       sessionId: fixture.session.id,
       baseTimestamp: fixture.baseTimestamp,
     });
-    const rebuilt = applyAnvilEvents(reset, normalizeRecordedRpcItems(adapter, fixture.records));
+    const rebuilt = applyAnvilEvents(
+      reset,
+      sequenceEvents(
+        normalizeRecordedRpcItems(adapter, fixture.records),
+        reset.lastSequence,
+        fixture.id,
+      ),
+    );
     this.snapshot = {
       ...rebuilt,
       activeSessionId: fixture.session.id,
@@ -597,7 +637,11 @@ export class FixtureAnvilClient implements AnvilClient {
       if (!this.replayAdapter) return;
       const base = applyAnvilEvents(
         this.snapshot,
-        normalizePiRpcRecord(this.replayAdapter, item.record, item.at),
+        sequenceEvents(
+          normalizePiRpcRecord(this.replayAdapter, item.record, item.at),
+          this.snapshot.lastSequence,
+          fixture.id,
+        ),
       );
       const nextCursor = cursor + 1;
       this.snapshot = {
@@ -640,8 +684,7 @@ export class FixtureAnvilClient implements AnvilClient {
     sessionId: string | null,
     emit = true,
   ) {
-    const key = sessionId ?? "__global__";
-    const sequence = (this.snapshot.lastSequenceBySession[key] ?? 0) + 1;
+    const sequence = this.snapshot.lastSequence + 1;
     const event = {
       protocolVersion: ANVIL_PROTOCOL_VERSION,
       id: `local-${++this.localId}`,
@@ -661,6 +704,255 @@ export class FixtureAnvilClient implements AnvilClient {
   }
 }
 
-export const anvilClient = new FixtureAnvilClient();
+export interface ForgeAnvilClientOptions {
+  fetch?: typeof fetch;
+  createEventSource?: (url: string) => EventSource;
+  autoConnect?: boolean;
+}
+
+export class ForgeAnvilClient implements AnvilClient {
+  private snapshot: AnvilClientSnapshot = {
+    ...createEmptySnapshot(),
+    connection: "reconnecting",
+    replay: { fixtureId: "live", playing: false, cursor: 0, total: 0, speed: 1 },
+  };
+  private readonly listeners = new Set<() => void>();
+  private readonly fetcher: typeof fetch;
+  private readonly createEventSource: (url: string) => EventSource;
+  private stream?: EventSource;
+  private retryTimer?: ReturnType<typeof setTimeout>;
+  private retryDelay = 1_000;
+  private bootstrapPromise?: Promise<void>;
+  private pendingSelectedSessionId?: string;
+
+  constructor(options: ForgeAnvilClientOptions = {}) {
+    this.fetcher = options.fetch ?? fetch.bind(globalThis);
+    this.createEventSource = options.createEventSource ?? ((url) => new EventSource(url));
+    if (options.autoConnect !== false) void this.bootstrap();
+    if (typeof window !== "undefined") {
+      window.addEventListener("offline", () => this.setConnection("offline"));
+      window.addEventListener("online", () => void this.bootstrap());
+    }
+  }
+
+  getSnapshot = () => this.snapshot;
+
+  subscribe = (listener: () => void) => {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  };
+
+  dispatch = (command: AnvilClientCommand) => {
+    if (command.type === "session.select") {
+      this.selectSession(command.payload.sessionId);
+      return;
+    }
+    void this.sendCommand(command);
+  };
+
+  selectSession = (sessionId: string) => {
+    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
+    this.snapshot = { ...this.snapshot, activeSessionId: sessionId };
+    this.emit();
+  };
+
+  createSession = (projectId: string) => {
+    if (!this.snapshot.projects.some((project) => project.id === projectId)) return;
+    void this.sendCommand(this.command("session.create", null, { projectId }));
+  };
+
+  sendPrompt = (content: string, delivery: DeliveryMode = "prompt") => {
+    const prompt = content.trim();
+    if (!prompt || !this.snapshot.activeSessionId) return;
+    void this.sendCommand(this.command("prompt.send", this.snapshot.activeSessionId, {
+      content: prompt,
+      delivery,
+    }));
+  };
+
+  cancelActiveRun = () => {
+    if (!this.snapshot.activeSessionId) return;
+    void this.sendCommand(this.command("run.cancel", this.snapshot.activeSessionId, {}));
+  };
+
+  setModel = (modelId: string) => {
+    if (!this.snapshot.activeSessionId) return;
+    void this.sendCommand(this.command("model.set", this.snapshot.activeSessionId, { modelId }));
+  };
+
+  setThinkingLevel = (level: ThinkingLevel) => {
+    if (!this.snapshot.activeSessionId) return;
+    void this.sendCommand(this.command("thinking.set", this.snapshot.activeSessionId, { level }));
+  };
+
+  respondToInteraction = (response: InteractionResponse) => {
+    const request = this.snapshot.pendingInteractions.find((item) => item.id === response.requestId);
+    if (!request) return;
+    void this.sendCommand(this.command("interaction.respond", request.sessionId, response));
+  };
+
+  clearComposerDraft = () => {
+    const sessionId = this.snapshot.activeSessionId;
+    if (!sessionId) return;
+    this.snapshot = {
+      ...this.snapshot,
+      composerDrafts: { ...this.snapshot.composerDrafts, [sessionId]: "" },
+    };
+    this.emit();
+  };
+
+  cycleConnectionState = () => undefined;
+  selectReplayFixture = () => undefined;
+  toggleReplay = () => undefined;
+  restartReplay = () => undefined;
+  instantReplay = () => undefined;
+  setReplaySpeed = () => undefined;
+
+  private bootstrap(): Promise<void> {
+    if (this.bootstrapPromise) return this.bootstrapPromise;
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.bootstrapPromise = this.loadBootstrap().finally(() => {
+      this.bootstrapPromise = undefined;
+    });
+    return this.bootstrapPromise;
+  }
+
+  private async loadBootstrap(): Promise<void> {
+    this.setConnection("reconnecting");
+    try {
+      const response = await this.fetcher("/api/v1/bootstrap", {
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error(`Forge bootstrap failed with HTTP ${response.status}`);
+      const value: unknown = await response.json();
+      if (!isAnvilBootstrap(value)) throw new Error("Forge returned an invalid bootstrap payload");
+      const previousActiveSessionId = this.snapshot.activeSessionId;
+      const restored = reconcileSnapshotAndTail(this.snapshot, value.snapshot, value.events);
+      const preferredSessionId = [
+        this.pendingSelectedSessionId,
+        previousActiveSessionId,
+        restored.activeSessionId,
+      ].find((sessionId) => sessionId && restored.sessions.some((session) => session.id === sessionId)) ??
+        restored.sessions[0]?.id ?? null;
+      if (preferredSessionId === this.pendingSelectedSessionId) {
+        this.pendingSelectedSessionId = undefined;
+      }
+      this.snapshot = {
+        ...restored,
+        activeSessionId: preferredSessionId,
+        connection: "connected",
+        replay: this.snapshot.replay,
+        clientError: undefined,
+      };
+      this.retryDelay = 1_000;
+      this.emit();
+      this.startStream(value.cursor);
+    } catch (error) {
+      console.error(error);
+      this.setConnection(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
+      this.retryTimer = setTimeout(() => void this.bootstrap(), this.retryDelay);
+      this.retryDelay = Math.min(this.retryDelay * 2, 30_000);
+    }
+  }
+
+  private startStream(cursor: number): void {
+    this.stream?.close();
+    const stream = this.createEventSource(`/api/v1/events?after=${cursor}`);
+    this.stream = stream;
+    stream.onopen = () => this.setConnection("connected");
+    stream.onerror = () => this.setConnection(
+      typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting",
+    );
+    stream.addEventListener("anvil", (message) => {
+      try {
+        const event = decodeAnvilEvent(JSON.parse((message as MessageEvent<string>).data));
+        if (!event) throw new Error("Forge streamed an invalid event");
+        const replay = this.snapshot.replay;
+        const next = applyAnvilEvent(this.snapshot, event);
+        this.snapshot = { ...next, connection: "connected", replay };
+        if (event.type === "session.upserted" && event.payload.session.id === this.pendingSelectedSessionId) {
+          this.snapshot = { ...this.snapshot, activeSessionId: this.pendingSelectedSessionId };
+          this.pendingSelectedSessionId = undefined;
+        }
+        this.emit();
+        if (this.snapshot.sequenceGap) void this.bootstrap();
+      } catch (error) {
+        console.error(error);
+        stream.close();
+        void this.bootstrap();
+      }
+    });
+    stream.addEventListener("reset", () => {
+      stream.close();
+      void this.bootstrap();
+    });
+  }
+
+  private async sendCommand(command: AnvilClientCommand): Promise<void> {
+    try {
+      const response = await this.fetcher("/api/v1/commands", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify(command),
+      });
+      const value = await response.json() as AnvilCommandResponse;
+      if (!response.ok || !value.success) throw new Error(value.error ?? `Forge command failed with HTTP ${response.status}`);
+      if (this.snapshot.clientError) {
+        this.snapshot = { ...this.snapshot, clientError: undefined };
+        this.emit();
+      }
+      if (command.type === "session.create" && value.data && typeof value.data === "object" && !Array.isArray(value.data)) {
+        const sessionId = (value.data as Record<string, JsonValue>).sessionId;
+        if (typeof sessionId === "string") {
+          if (this.snapshot.sessions.some((session) => session.id === sessionId)) {
+            this.pendingSelectedSessionId = undefined;
+            this.selectSession(sessionId);
+          } else {
+            this.pendingSelectedSessionId = sessionId;
+          }
+        }
+      }
+    } catch (error) {
+      console.error(error);
+      this.snapshot = {
+        ...this.snapshot,
+        clientError: error instanceof Error ? error.message : String(error),
+      };
+      this.emit();
+    }
+  }
+
+  private command<T extends AnvilClientCommand["type"]>(
+    type: T,
+    sessionId: string | null,
+    payload: Extract<AnvilClientCommand, { type: T }>["payload"],
+  ): AnvilClientCommand {
+    return {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: crypto.randomUUID(),
+      sessionId,
+      timestamp: timestamp(),
+      type,
+      payload,
+    } as AnvilClientCommand;
+  }
+
+  private setConnection(connection: AnvilSnapshot["connection"]): void {
+    if (this.snapshot.connection === connection) return;
+    this.snapshot = { ...this.snapshot, connection };
+    this.emit();
+  }
+
+  private emit(): void {
+    this.listeners.forEach((listener) => listener());
+  }
+}
+
+const useFixtureTransport = import.meta.env.VITE_ANVIL_TRANSPORT === "fixture" ||
+  (import.meta.env.DEV && import.meta.env.VITE_ANVIL_TRANSPORT !== "forge");
+
+export const anvilClient: AnvilClient = useFixtureTransport
+  ? new FixtureAnvilClient()
+  : new ForgeAnvilClient();
 
 export type { AnvilSnapshot, JsonValue, TimelineEntry };

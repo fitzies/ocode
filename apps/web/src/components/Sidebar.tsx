@@ -12,6 +12,7 @@ interface SidebarProps {
   mobile: boolean;
   onClose: () => void;
   onSelectSession: (sessionId: string) => void;
+  onCreateSession: (projectId: string) => void;
 }
 
 function StatusMark({ status }: { status: SessionStatus }) {
@@ -32,6 +33,7 @@ export function Sidebar({
   mobile,
   onClose,
   onSelectSession,
+  onCreateSession,
 }: SidebarProps) {
   const [query, setQuery] = useState("");
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
@@ -118,19 +120,33 @@ export function Sidebar({
 
           return (
             <section className="project-group" key={project.id}>
-              <button
-                className="project-heading"
-                onClick={() => toggleProject(project.id)}
-                aria-expanded={!collapsed}
-              >
-                <Icon
-                  icon={altArrowDownIcon}
-                  width={13}
-                  className={`project-chevron ${collapsed ? "project-chevron--collapsed" : ""}`}
-                />
-                <span>{project.name}</span>
-                <span className="project-thread-count">{sessions.length}</span>
-              </button>
+              <div className="project-heading-row">
+                <button
+                  className="project-heading"
+                  onClick={() => toggleProject(project.id)}
+                  aria-expanded={!collapsed}
+                >
+                  <Icon
+                    icon={altArrowDownIcon}
+                    width={13}
+                    className={`project-chevron ${collapsed ? "project-chevron--collapsed" : ""}`}
+                  />
+                  <span>{project.name}</span>
+                  <span className="project-thread-count">{sessions.length}</span>
+                </button>
+                <button
+                  type="button"
+                  className="project-new-session"
+                  aria-label={`Start a session in ${project.name}`}
+                  title={`New session in ${project.name}`}
+                  onClick={() => {
+                    onCreateSession(project.id);
+                    onClose();
+                  }}
+                >
+                  <span aria-hidden="true">+</span>
+                </button>
+              </div>
               {!collapsed && <div className="session-list">
                 {sessions.map((session) => (
                   <button

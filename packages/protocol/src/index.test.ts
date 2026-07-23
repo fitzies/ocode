@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { ANVIL_PROTOCOL_VERSION, decodeAnvilEvent, isAnvilEvent, isJsonValue } from "./index";
+import {
+  ANVIL_PROTOCOL_VERSION,
+  decodeAnvilEvent,
+  isAnvilBootstrap,
+  isAnvilClientCommand,
+  isAnvilEvent,
+  isJsonValue,
+} from "./index";
 
 describe("protocol runtime guards", () => {
   it("accepts JSON-compatible arbitrary extension details", () => {
@@ -33,6 +40,52 @@ describe("protocol runtime guards", () => {
         payload: { eventType: "future.extension.event", payload: { arbitrary: true } },
       }),
     ).toBe(true);
+  });
+
+  it("validates client commands at the wire boundary", () => {
+    const command = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "command-1",
+      sessionId: "session-1",
+      timestamp: "2026-07-21T08:00:00.000Z",
+      type: "prompt.send",
+      payload: { content: "Continue", delivery: "steer", images: [] },
+    };
+    expect(isAnvilClientCommand(command)).toBe(true);
+    expect(isAnvilClientCommand({ ...command, payload: { ...command.payload, delivery: "later" } })).toBe(false);
+    expect(isAnvilClientCommand({ ...command, sessionId: null })).toBe(false);
+  });
+
+  it("requires a bootstrap tail to follow its snapshot cursor", () => {
+    const snapshot = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      capturedAt: "2026-07-21T08:00:00.000Z",
+      connection: "connected",
+      projects: [],
+      sessions: [],
+      activeSessionId: null,
+      timelines: {},
+      catalogs: {},
+      pendingInteractions: [],
+      extensionStatuses: [],
+      widgets: [],
+      queues: {},
+      composerDrafts: {},
+      runStates: {},
+      lastSequence: 0,
+      sequenceGap: null,
+    };
+    const event = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-1",
+      sequence: 1,
+      sessionId: null,
+      timestamp: "2026-07-21T08:00:01.000Z",
+      type: "connection.changed",
+      payload: { connection: "connected" },
+    };
+    expect(isAnvilBootstrap({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [event], cursor: 1 })).toBe(true);
+    expect(isAnvilBootstrap({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [{ ...event, sequence: 2 }], cursor: 1 })).toBe(false);
   });
 
   it("rejects malformed envelopes and decodes malformed payloads as unknown", () => {
@@ -83,6 +136,13 @@ describe("protocol runtime guards", () => {
       type: "catalog.updated",
       payload: { catalog: { models: [{}], commands: [], skills: [] } },
     })).toBe(false);
+    expect(isAnvilEvent({
+      ...malformed,
+      id: "event-unscoped-catalog",
+      sessionId: null,
+      type: "catalog.updated",
+      payload: { catalog: { models: [], commands: [], skills: [] } },
+    })).toBe(false);
     expect(
       isAnvilEvent({
         protocolVersion: ANVIL_PROTOCOL_VERSION,
@@ -92,6 +152,17 @@ describe("protocol runtime guards", () => {
         timestamp: "now",
         type: "unknown",
         payload: {},
+      }),
+    ).toBe(false);
+    expect(
+      isAnvilEvent({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: "event-zero",
+        sequence: 0,
+        sessionId: null,
+        timestamp: "now",
+        type: "connection.changed",
+        payload: { connection: "connected" },
       }),
     ).toBe(false);
   });

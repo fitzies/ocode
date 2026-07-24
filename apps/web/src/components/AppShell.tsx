@@ -1,10 +1,42 @@
 import type { ArtifactReference, CapabilityCatalog } from "@anvil/protocol";
-import { Icon } from "@iconify/react";
-import forgeServerIcon from "@iconify-icons/solar/server-square-cloud-bold-duotone";
-import hamburgerMenuIcon from "@iconify-icons/solar/hamburger-menu-linear";
-import settingsIcon from "@iconify-icons/solar/settings-minimalistic-linear";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  ComputerIcon,
+  Moon02Icon,
+  RefreshIcon,
+  ServerStack01Icon,
+  Settings01Icon,
+  Sun03Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { toast } from "sonner";
 
+import { useTheme } from "@/components/theme-provider";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { anvilClient, type DeliveryMode } from "../lib/anvilClient";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
 import { InteractionPanel } from "./InteractionDialog";
@@ -13,12 +45,6 @@ import { Timeline } from "./Timeline";
 import { AddWorkspaceDialog, DeleteThreadDialog } from "./WorkspaceDialogs";
 
 const EMPTY_CATALOG: CapabilityCatalog = { models: [], commands: [], skills: [] };
-
-type CompletionToast = {
-  id: string;
-  sessionId: string;
-  title: string;
-};
 
 type LiveIndicators = {
   context?: { tokens: number | null; contextWindow: number; percent: number | null };
@@ -30,24 +56,32 @@ type LiveIndicators = {
 };
 
 export function AppShell() {
+  return (
+    <SidebarProvider
+      defaultOpen
+      className="h-full min-h-0 overflow-hidden"
+      style={{ "--sidebar-width": "17.625rem" } as CSSProperties}
+    >
+      <AppShellContent />
+    </SidebarProvider>
+  );
+}
+
+function AppShellContent() {
   const snapshot = useSyncExternalStore(anvilClient.subscribe, anvilClient.getSnapshot);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [mobile, setMobile] = useState(false);
+  const { isMobile, setOpenMobile } = useSidebar();
+  const { theme, setTheme } = useTheme();
   const [newProjectId, setNewProjectId] = useState("");
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [indicators, setIndicators] = useState<LiveIndicators>({});
-  const [completionToasts, setCompletionToasts] = useState<CompletionToast[]>([]);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [restartState, setRestartState] = useState<"idle" | "restarting">("idle");
-  const [restartError, setRestartError] = useState<string>();
+  const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
+  const [rebuildState, setRebuildState] = useState<"idle" | "rebuilding">("idle");
+  const [rebuildError, setRebuildError] = useState<string>();
   const gitIndicatorsByProject = useRef(new Map<string, LiveIndicators["git"]>());
   const terminalSequences = useRef<Map<string, number> | null>(null);
-  const toastTimers = useRef(new Map<string, number>());
-  const menuButtonRef = useRef<HTMLButtonElement>(null);
-  const settingsControlRef = useRef<HTMLDivElement>(null);
   const activeSession =
     snapshot.sessions.find((session) => session.id === snapshot.activeSessionId) ??
     snapshot.sessions[0];
@@ -92,10 +126,6 @@ export function AppShell() {
     snapshot.connection,
   ]);
   const sendSuggestion = useCallback((prompt: string) => anvilClient.sendPrompt(prompt), []);
-  const closeSidebar = useCallback(() => {
-    setSidebarOpen(false);
-    menuButtonRef.current?.focus();
-  }, []);
   const openAddWorkspace = useCallback(() => setAddWorkspaceOpen(true), []);
   const requestDeleteSession = useCallback((sessionId: string) => {
     const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
@@ -162,30 +192,25 @@ export function AppShell() {
   }, []);
   const startSession = useCallback((projectId: string) => {
     anvilClient.createSession(projectId);
-    setSidebarOpen(false);
+    if (isMobile) setOpenMobile(false);
     requestAnimationFrame(() => {
       document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Message Pi']")?.focus();
     });
-  }, []);
-  const restartForge = useCallback(async () => {
-    const running = snapshot.sessions.filter(
-      (session) => session.status === "running" || session.status === "waiting",
-    ).length;
-    const warning = running > 0
-      ? `Restart Forge now? ${running} active ${running === 1 ? "thread" : "threads"} will be interrupted.`
-      : "Restart the Forge backend now? Anvil will reconnect automatically.";
-    if (!window.confirm(warning)) return;
-    setRestartState("restarting");
-    setRestartError(undefined);
+  }, [isMobile, setOpenMobile]);
+  const rebuildWebApp = useCallback(async () => {
+    setRebuildState("rebuilding");
+    setRebuildError(undefined);
     try {
-      await anvilClient.restartForge();
-      setSettingsOpen(false);
+      await anvilClient.rebuildWebApp();
+      setRebuildDialogOpen(false);
+      toast.success("Web app rebuilt", { description: "Reloading the updated interface…" });
+      window.setTimeout(() => window.location.reload(), 500);
     } catch (error) {
-      setRestartError(error instanceof Error ? error.message : String(error));
+      setRebuildError(error instanceof Error ? error.message : String(error));
     } finally {
-      setRestartState("idle");
+      setRebuildState("idle");
     }
-  }, [snapshot.sessions]);
+  }, []);
   const closeDeleteDialog = (deleted = false) => {
     const sessionId = sessionPendingDeletion?.id;
     setSessionPendingDeletion(null);
@@ -247,15 +272,6 @@ export function AppShell() {
   }, [activeSession?.title]);
 
   useEffect(() => {
-    if (!settingsOpen) return;
-    const closeOnOutsidePointer = (event: PointerEvent) => {
-      if (!settingsControlRef.current?.contains(event.target as Node)) setSettingsOpen(false);
-    };
-    window.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () => window.removeEventListener("pointerdown", closeOnOutsidePointer);
-  }, [settingsOpen]);
-
-  useEffect(() => {
     const current = new Map(snapshot.sessions.map((session) => [
       session.id,
       session.lastTerminalSequence ?? 0,
@@ -288,23 +304,20 @@ export function AppShell() {
         continue;
       }
 
-      const toastId = `${session.id}-${sequence}`;
-      setCompletionToasts((currentToasts) => [
-        ...currentToasts.filter((toast) => toast.sessionId !== session.id),
-        { id: toastId, sessionId: session.id, title: session.title },
-      ]);
-      const existingTimer = toastTimers.current.get(session.id);
-      if (existingTimer !== undefined) window.clearTimeout(existingTimer);
-      toastTimers.current.set(session.id, window.setTimeout(() => {
-        setCompletionToasts((currentToasts) => currentToasts.filter((toast) => toast.id !== toastId));
-        toastTimers.current.delete(session.id);
-      }, 8_000));
+      toast.success("Thread completed", {
+        id: `completed-${session.id}`,
+        description: session.title,
+        duration: 8_000,
+        action: {
+          label: "View",
+          onClick: () => {
+            anvilClient.selectSession(session.id);
+            anvilClient.markSessionRead(session.id);
+          },
+        },
+      });
     }
   }, [snapshot.sessions]);
-
-  useEffect(() => () => {
-    for (const timer of toastTimers.current.values()) window.clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     const markVisibleCompletionRead = () => {
@@ -327,22 +340,7 @@ export function AppShell() {
   }, [activeSession?.id, activeSession?.lastTerminalSequence, snapshot.hydratingSessionIds]);
 
   useEffect(() => {
-    const query = window.matchMedia("(max-width: 900px)");
-    const update = () => setMobile(query.matches);
-    update();
-    query.addEventListener("change", update);
-    return () => query.removeEventListener("change", update);
-  }, []);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && settingsOpen) {
-        setSettingsOpen(false);
-        settingsControlRef.current?.querySelector<HTMLButtonElement>("[aria-haspopup='menu']")?.focus();
-      } else if (event.key === "Escape" && sidebarOpen) {
-        setSidebarOpen(false);
-        menuButtonRef.current?.focus();
-      }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
         const projectId = activeSession?.projectId ??
@@ -358,13 +356,13 @@ export function AppShell() {
         )[threadIndex];
         if (target) {
           anvilClient.selectSession(target.id);
-          setSidebarOpen(false);
+          if (isMobile) setOpenMobile(false);
         }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeSession, settingsOpen, sidebarOpen, snapshot.projects, snapshot.sessions, startSession]);
+  }, [activeSession, isMobile, setOpenMobile, snapshot.projects, snapshot.sessions, startSession]);
 
   if (!activeSession && snapshot.connection !== "connected") {
     return (
@@ -377,12 +375,8 @@ export function AppShell() {
 
   return (
     <div className="app-shell">
-      {sidebarOpen && <button className="sidebar-backdrop" aria-label="Close sidebar" onClick={() => setSidebarOpen(false)} />}
       <Sidebar
         snapshot={sidebarSnapshot}
-        open={sidebarOpen}
-        mobile={mobile}
-        onClose={closeSidebar}
         onSelectSession={anvilClient.selectSession}
         onCreateSession={startSession}
         onAddWorkspace={openAddWorkspace}
@@ -391,12 +385,10 @@ export function AppShell() {
         onSetSessionSettled={anvilClient.setSessionSettled}
       />
 
-      <main className="workspace">
+      <SidebarInset className="workspace">
         <header className="session-header">
           <div className="header-title-group">
-            <button ref={menuButtonRef} className="icon-button menu-trigger" onClick={() => setSidebarOpen(true)} aria-label="Open sidebar">
-              <Icon icon={hamburgerMenuIcon} width={18} />
-            </button>
+            <SidebarTrigger className="menu-trigger" aria-label="Toggle sidebar" />
             <div className="session-heading">
               <h1>
                 {activeSession ? (
@@ -413,39 +405,42 @@ export function AppShell() {
                 <span className="git-deletions">−{indicators.git.deletions}</span>
               </span>
             )}
-            <div className="settings-control" ref={settingsControlRef}>
-              <button
-                className="icon-button header-settings"
-                aria-label="Forge settings"
-                aria-haspopup="menu"
-                aria-expanded={settingsOpen}
-                onClick={() => {
-                  setSettingsOpen((open) => !open);
-                  setRestartError(undefined);
-                }}
-              >
-                <Icon icon={settingsIcon} width={18} />
-              </button>
-              {settingsOpen && (
-                <div className="settings-popover" role="menu" aria-label="Forge settings">
-                  <div className="settings-popover-heading">
-                    <strong>Forge runtime</strong>
-                    <span>{snapshot.connection === "connected" ? "Connected" : "Reconnecting"}</span>
-                  </div>
-                  <button
-                    type="button"
-                    className="settings-restart"
-                    role="menuitem"
-                    disabled={restartState === "restarting"}
-                    onClick={() => void restartForge()}
-                  >
-                    <span>{restartState === "restarting" ? "Restarting Forge…" : "Restart Forge"}</span>
-                    <small>Stops the backend, then reconnects through systemd.</small>
-                  </button>
-                  {restartError && <p className="settings-error" role="alert">{restartError}</p>}
-                </div>
-              )}
-            </div>
+            <DropdownMenu onOpenChange={(open) => open && setRebuildError(undefined)}>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Forge settings">
+                  <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel className="flex items-center justify-between">
+                  <span>Forge runtime</span>
+                  <span className={`font-mono text-[0.625rem] font-normal uppercase tracking-wider ${snapshot.connection === "connected" ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>
+                    {snapshot.connection === "connected" ? "Connected" : "Reconnecting"}
+                  </span>
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    {theme === "dark" ? <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} /> : theme === "light" ? <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} /> : <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />}
+                    Appearance
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup value={theme} onValueChange={(value) => setTheme(value as "system" | "light" | "dark")}>
+                      <DropdownMenuRadioItem value="system"><HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />System</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="light"><HugeiconsIcon icon={Sun03Icon} strokeWidth={2} />Light</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="dark"><HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />Dark</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuItem
+                  disabled={rebuildState === "rebuilding"}
+                  onSelect={() => setRebuildDialogOpen(true)}
+                >
+                  <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+                  Rebuild
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
@@ -507,7 +502,7 @@ export function AppShell() {
         ) : (
           <div className="app-loading app-loading--workspace">
             <div className="empty-workspace">
-              <Icon icon={forgeServerIcon} width={24} />
+              <HugeiconsIcon icon={ServerStack01Icon} strokeWidth={2} className="size-6" />
               <strong>No threads yet</strong>
               <p>
                 {snapshot.projects.length > 0
@@ -515,54 +510,25 @@ export function AppShell() {
                   : "Add a workspace with the + in the sidebar."}
               </p>
               {snapshot.projects.length > 0 && (
-                <div className="empty-project-picker">
-                  <label htmlFor="new-session-project">Workspace</label>
-                  <select
-                    id="new-session-project"
-                    value={selectedProjectId}
-                    onChange={(event) => setNewProjectId(event.target.value)}
-                  >
-                    {snapshot.projects.map((project) => (
-                      <option key={project.id} value={project.id}>{project.name}</option>
-                    ))}
-                  </select>
-                  <button type="button" onClick={() => startSession(selectedProjectId)}>
-                    Start thread
-                  </button>
+                <div className="mt-2 grid w-full grid-cols-[1fr_auto] gap-2 text-left">
+                  <label className="col-span-2 text-[0.625rem] font-medium uppercase tracking-wider text-muted-foreground" htmlFor="new-session-project">Workspace</label>
+                  <Select value={selectedProjectId} onValueChange={setNewProjectId}>
+                    <SelectTrigger id="new-session-project" className="w-full">
+                      <SelectValue placeholder="Choose a workspace" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {snapshot.projects.map((project) => (
+                        <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button type="button" onClick={() => startSession(selectedProjectId)}>Start thread</Button>
                 </div>
               )}
             </div>
           </div>
         )}
-      </main>
-
-      <div className="completion-toasts" aria-live="polite" aria-atomic="false">
-        {completionToasts.map((toast) => (
-          <div className="completion-toast" role="status" key={toast.id}>
-            <span className="completion-toast-mark" aria-hidden="true" />
-            <button
-              type="button"
-              className="completion-toast-copy"
-              onClick={() => {
-                anvilClient.selectSession(toast.sessionId);
-                anvilClient.markSessionRead(toast.sessionId);
-                setCompletionToasts((current) => current.filter((candidate) => candidate.id !== toast.id));
-              }}
-            >
-              <strong>Thread completed</strong>
-              <span>{toast.title}</span>
-            </button>
-            <button
-              type="button"
-              className="completion-toast-dismiss"
-              aria-label={`Dismiss completion notification for ${toast.title}`}
-              onClick={() => setCompletionToasts((current) => current.filter((candidate) => candidate.id !== toast.id))}
-            >
-              ×
-            </button>
-          </div>
-        ))}
-      </div>
+      </SidebarInset>
 
       {addWorkspaceOpen && (
         <AddWorkspaceDialog
@@ -577,6 +543,24 @@ export function AppShell() {
           onDelete={() => anvilClient.deleteSession(sessionPendingDeletion.id)}
         />
       )}
+      <AlertDialog open={rebuildDialogOpen} onOpenChange={(open) => !open && rebuildState !== "rebuilding" && setRebuildDialogOpen(false)}>
+        <AlertDialogContent onEscapeKeyDown={(event) => rebuildState === "rebuilding" && event.preventDefault()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Rebuild the web app?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This builds the latest React changes and reloads the updated interface. Running threads will not be interrupted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {rebuildError && <p className="text-xs text-destructive" role="alert">{rebuildError}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rebuildState === "rebuilding"}>Cancel</AlertDialogCancel>
+            <Button disabled={rebuildState === "rebuilding"} onClick={() => void rebuildWebApp()}>
+              <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+              {rebuildState === "rebuilding" ? "Rebuilding…" : "Rebuild"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

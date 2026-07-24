@@ -1,24 +1,26 @@
 :root {
-  font-family: "Geist Variable", "Geist", sans-serif;
-  color: #ededed;
-  background: #0a0a0a;
+  font-family: "Inter Variable", sans-serif;
+  color: var(--foreground);
+  background: var(--background);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --bg: #0a0a0a;
-  --sidebar: #0d0d0d;
-  --surface: #111111;
-  --surface-hover: #171717;
-  --surface-raised: #1a1a1a;
-  --border: rgba(255, 255, 255, 0.075);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --text: #ededed;
-  --text-secondary: #a1a1a1;
-  --muted: #85867e;
-  --accent: #f2f2f2;
-  --accent-soft: rgba(255, 255, 255, 0.065);
-  --green: #46a758;
-  --red: #e5484d;
-  --amber: #f5a524;
+  --bg: var(--background);
+  --surface: var(--card);
+  --surface-hover: var(--accent);
+  --surface-raised: var(--popover);
+  --border-strong: color-mix(in oklab, var(--foreground) 16%, transparent);
+  --text: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --text-muted: color-mix(in oklab, var(--foreground) 54%, transparent);
+  --legacy-accent: var(--foreground);
+  --accent-soft: color-mix(in oklab, var(--foreground) 7%, transparent);
+  --legacy-text-high: color-mix(in oklab, var(--foreground) 92%, transparent);
+  --legacy-text: color-mix(in oklab, var(--foreground) 76%, transparent);
+  --legacy-text-low: color-mix(in oklab, var(--foreground) 56%, transparent);
+  --legacy-text-faint: color-mix(in oklab, var(--foreground) 40%, transparent);
+  --green: var(--status-success);
+  --red: var(--status-error);
+  --amber: var(--status-warning);
 }
 
 * {
@@ -36,15 +38,8 @@ body,
 body {
   overflow: hidden;
   background:
-    radial-gradient(circle at 62% -24%, rgba(255, 255, 255, 0.035), transparent 30rem),
+    radial-gradient(circle at 62% -24%, color-mix(in oklab, var(--foreground) 3.5%, transparent), transparent 30rem),
     var(--bg);
-}
-
-button,
-input,
-textarea,
-select {
-  font: inherit;
 }
 
 button,
@@ -53,16 +48,16 @@ summary {
   -webkit-tap-highlight-color: transparent;
 }
 
-button {
+button:not([data-slot]) {
   color: inherit;
 }
 
-button:focus-visible,
-input:focus-visible,
-textarea:focus-visible,
-select:focus-visible,
+button:not([data-slot]):focus-visible,
+input:not([data-slot]):focus-visible,
+textarea:not([data-slot]):focus-visible,
+select:not([data-slot]):focus-visible,
 summary:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.55);
+  outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 
@@ -106,8 +101,8 @@ button:disabled {
 .forge-spinner {
   width: 20px;
   height: 20px;
-  border: 2px solid rgba(255, 255, 255, 0.14);
-  border-top-color: rgba(255, 255, 255, 0.82);
+  border: 2px solid color-mix(in oklab, var(--foreground) 14%, transparent);
+  border-top-color: color-mix(in oklab, var(--foreground) 82%, transparent);
   border-radius: 50%;
   animation: forge-spinner 700ms linear infinite;
 }
@@ -131,7 +126,7 @@ button:disabled {
 
 .empty-workspace svg {
   margin-bottom: 4px;
-  color: var(--accent);
+  color: var(--legacy-accent);
 }
 
 .empty-workspace strong {
@@ -155,7 +150,7 @@ button:disabled {
 
 .empty-project-picker label {
   grid-column: 1 / -1;
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -193,7 +188,7 @@ button:disabled {
   width: 32px;
   height: 32px;
   padding: 0;
-  color: var(--muted);
+  color: var(--text-muted);
   background: transparent;
   border: 0;
   border-radius: 7px;
@@ -203,7 +198,7 @@ button:disabled {
 
 .icon-button:hover:not(:disabled) {
   color: var(--text);
-  background: rgba(255, 255, 255, 0.055);
+  background: color-mix(in oklab, var(--foreground) 5.5%, transparent);
 }
 
 .icon-button:disabled,
@@ -223,7 +218,7 @@ button:disabled {
   height: 100%;
   color: var(--text-secondary);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.012), transparent 12rem),
+    linear-gradient(180deg, color-mix(in oklab, var(--foreground) 1.2%, transparent), transparent 12rem),
     var(--sidebar);
   border-right: 1px solid var(--border);
 }
@@ -248,6 +243,7 @@ button:disabled {
 }
 
 .sidebar-close {
+  display: none;
   margin-right: 4px;
 }
 
@@ -258,22 +254,22 @@ button:disabled {
   margin: 0 11px 17px;
   padding: 0 9px;
   gap: 7px;
-  color: #898a82;
-  background: rgba(255, 255, 255, 0.025);
+  color: var(--legacy-text-low);
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
   border: 1px solid var(--border);
   border-radius: 7px;
   transition: border-color 120ms ease, background 120ms ease;
 }
 
 .thread-search:focus-within {
-  background: rgba(255, 255, 255, 0.035);
+  background: color-mix(in oklab, var(--foreground) 3.5%, transparent);
   border-color: var(--border-strong);
 }
 
 .thread-search input {
   min-width: 0;
   flex: 1;
-  color: #d4d4d4;
+  color: var(--legacy-text);
   font-size: 11.5px;
   background: transparent;
   border: 0;
@@ -281,11 +277,11 @@ button:disabled {
 }
 
 .thread-search input::placeholder {
-  color: #898a82;
+  color: var(--legacy-text-low);
 }
 
 .thread-search kbd {
-  color: #898a82;
+  color: var(--legacy-text-low);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9px;
 }
@@ -294,7 +290,7 @@ button:disabled {
 .workspace-empty-note,
 .search-empty {
   padding: 12px 7px 20px;
-  color: #777871;
+  color: var(--legacy-text-faint);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -303,13 +299,13 @@ button:disabled {
   width: 5px;
   height: 5px;
   flex: 0 0 auto;
-  background: #61625c;
+  background: var(--legacy-text-faint);
   border-radius: 50%;
 }
 
 .session-status--running {
-  background: #5b9dff;
-  box-shadow: 0 0 0 3px rgba(91, 157, 255, 0.13);
+  background: var(--status-info);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--status-info) 16%, transparent);
 }
 
 .session-status--waiting { background: var(--amber); }
@@ -318,7 +314,7 @@ button:disabled {
   width: 7px;
   height: 7px;
   background: var(--green);
-  box-shadow: 0 0 0 3px rgba(70, 167, 88, 0.1);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--green) 14%, transparent);
 }
 
 .sidebar-search-row {
@@ -356,14 +352,14 @@ button:disabled {
   min-height: 30px;
   flex: 0 0 auto;
   padding: 0 9px;
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-size: 10px;
   max-width: 112px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  background: rgba(255, 255, 255, 0.018);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: color-mix(in oklab, var(--foreground) 1.8%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
   border-radius: 8px;
   cursor: pointer;
   transition: color 110ms ease, background 110ms ease, border-color 110ms ease;
@@ -373,22 +369,22 @@ button:disabled {
 .project-filter:focus-visible,
 .project-filter-add:hover,
 .project-filter-add:focus-visible {
-  color: #d1d1cd;
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--legacy-text-high);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  border-color: color-mix(in oklab, var(--foreground) 12%, transparent);
   outline: 0;
 }
 
 .project-filter--active {
-  color: #eeeeea;
-  background: #242522;
-  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--legacy-text-high);
+  background: var(--accent);
+  border-color: color-mix(in oklab, var(--foreground) 15%, transparent);
 }
 
 .project-filter-add {
   width: 30px;
   padding: 0;
-  color: #9a9b93;
+  color: var(--legacy-text-low);
   font-size: 14px;
 }
 
@@ -398,7 +394,7 @@ button:disabled {
   padding: 2px 9px 22px;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 8%, transparent) transparent;
 }
 
 .thread-queue-actions {
@@ -414,10 +410,10 @@ button:disabled {
   height: 32px;
   place-items: center;
   padding: 0;
-  color: #96978f;
+  color: var(--legacy-text-low);
   font-size: 17px;
   line-height: 1;
-  background: rgba(255, 255, 255, 0.025);
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
   border: 1px solid var(--border);
   border-radius: 7px;
   cursor: pointer;
@@ -425,9 +421,9 @@ button:disabled {
 
 .thread-create:hover,
 .thread-create:focus-visible {
-  color: #ededE8;
-  background: rgba(255, 255, 255, 0.045);
-  border-color: rgba(255, 255, 255, 0.07);
+  color: var(--legacy-text-high);
+  background: color-mix(in oklab, var(--foreground) 4.5%, transparent);
+  border-color: color-mix(in oklab, var(--foreground) 7%, transparent);
   outline: 0;
 }
 
@@ -439,8 +435,8 @@ button:disabled {
   display: grid;
   width: 168px;
   padding: 4px;
-  background: #151613;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--popover);
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
   border-radius: 8px;
   box-shadow: 0 14px 32px rgba(0, 0, 0, 0.42);
 }
@@ -451,7 +447,7 @@ button:disabled {
   min-height: 31px;
   padding: 7px 8px;
   overflow: hidden;
-  color: #aaaBA4;
+  color: var(--legacy-text);
   font-size: 10.5px;
   text-align: left;
   text-overflow: ellipsis;
@@ -467,8 +463,8 @@ button:disabled {
 
 .new-thread-menu button:hover,
 .new-thread-menu button:focus-visible {
-  color: #efefeb;
-  background: rgba(255, 255, 255, 0.055);
+  color: var(--legacy-text-high);
+  background: color-mix(in oklab, var(--foreground) 5.5%, transparent);
   outline: 0;
 }
 
@@ -479,12 +475,12 @@ button:disabled {
 .thread-section-heading {
   display: flex;
   width: 100%;
-  min-height: 24px;
+  min-height: 22px;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 7px;
+  margin-bottom: 3px;
   padding: 0 7px;
-  color: #73746d;
+  color: var(--legacy-text-faint);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9px;
   font-weight: 560;
@@ -493,7 +489,7 @@ button:disabled {
 }
 
 .thread-section-toggle {
-  min-height: 30px;
+  min-height: 26px;
   background: transparent;
   border: 0;
   border-radius: 5px;
@@ -502,14 +498,14 @@ button:disabled {
 
 .thread-section-toggle:hover,
 .thread-section-toggle:focus-visible {
-  color: #a6a79f;
-  background: rgba(255, 255, 255, 0.025);
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
   outline: 0;
 }
 
 .thread-empty {
   padding: 14px 8px 19px;
-  color: #6f7069;
+  color: var(--legacy-text-faint);
   font-size: 10px;
   line-height: 1.5;
 }
@@ -533,8 +529,8 @@ button:disabled {
   height: 68px;
   padding: 9px 10px;
   text-align: left;
-  background: rgba(255, 255, 255, 0.018);
-  border: 1px solid rgba(255, 255, 255, 0.052);
+  background: color-mix(in oklab, var(--foreground) 1.8%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 5.2%, transparent);
   border-radius: 8px;
   cursor: pointer;
   transition: background 110ms ease, border-color 110ms ease, transform 110ms ease;
@@ -545,8 +541,8 @@ button:disabled {
 }
 
 .session-row:hover {
-  background: rgba(255, 255, 255, 0.036);
-  border-color: rgba(255, 255, 255, 0.085);
+  background: color-mix(in oklab, var(--foreground) 3.6%, transparent);
+  border-color: color-mix(in oklab, var(--foreground) 8.5%, transparent);
 }
 
 .session-row:active {
@@ -554,14 +550,14 @@ button:disabled {
 }
 
 .session-row:focus-visible {
-  border-color: rgba(220, 221, 214, 0.34);
+  border-color: color-mix(in oklab, var(--foreground) 34%, transparent);
   outline: 0;
 }
 
 .session-row--active,
 .session-row--active:hover {
-  background: #1d1e1b;
-  border-color: rgba(255, 255, 255, 0.14);
+  background: var(--accent);
+  border-color: color-mix(in oklab, var(--foreground) 14%, transparent);
 }
 
 .session-copy {
@@ -587,7 +583,7 @@ button:disabled {
 
 .session-project {
   overflow: hidden;
-  color: #8d8e86;
+  color: var(--legacy-text-low);
   font-size: 9.5px;
   font-weight: 540;
   text-overflow: ellipsis;
@@ -596,22 +592,35 @@ button:disabled {
 
 .session-runtime {
   flex: 0 0 auto;
-  font-family: "Geist Mono Variable", "Geist Mono", monospace;
-  font-size: 8px;
-  font-weight: 580;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  font-size: 9px;
+  font-weight: 560;
 }
 
-.session-runtime--running { color: #76aaff; }
-.session-runtime--waiting { color: #c3a363; }
-.session-runtime--idle { color: #666760; }
-.session-runtime--failed { color: #c57d80; }
+.session-runtime--waiting { color: var(--amber); }
+.session-runtime--failed { color: var(--red); }
+
+.session-spinner {
+  width: 11px;
+  height: 11px;
+  flex: 0 0 auto;
+  border: 1.5px solid color-mix(in oklab, var(--foreground) 18%, transparent);
+  border-top-color: color-mix(in oklab, var(--foreground) 70%, transparent);
+  border-radius: 999px;
+  animation: session-spin 700ms linear infinite;
+}
+
+@keyframes session-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-spinner { animation-duration: 1.8s; }
+}
 
 .session-title {
   display: block;
   overflow: hidden;
-  color: #c2c2bd;
+  color: var(--legacy-text);
   font-size: 11.5px;
   font-weight: 470;
   line-height: 1.3;
@@ -620,14 +629,14 @@ button:disabled {
 }
 
 .session-row--active .session-title {
-  color: #f0f0ed;
+  color: var(--legacy-text-high);
 }
 
 .session-meta {
   justify-content: space-between;
   margin: 0;
   gap: 8px;
-  color: #70716a;
+  color: var(--legacy-text-faint);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 8.5px;
 }
@@ -644,6 +653,11 @@ button:disabled {
   gap: 5px;
 }
 
+.session-recency--completed {
+  color: var(--legacy-text-low);
+  font-weight: 560;
+}
+
 .session-settle {
   position: absolute;
   right: 8px;
@@ -651,14 +665,11 @@ button:disabled {
   z-index: 2;
   min-height: 26px;
   padding: 0 7px;
-  color: #aaa99f;
-  font-family: "Geist Mono Variable", "Geist Mono", monospace;
-  font-size: 8px;
-  font-weight: 620;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  background: #252621;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--legacy-text);
+  font-size: 9px;
+  font-weight: 560;
+  background: var(--accent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
   border-radius: 5px;
   cursor: pointer;
   opacity: 0;
@@ -681,14 +692,14 @@ button:disabled {
 
 .session-settle:hover,
 .session-settle:focus-visible {
-  color: #f1f1ed;
-  background: #30312b;
+  color: var(--legacy-text-high);
+  background: var(--accent);
   outline: 0;
 }
 
 .thread-section--settled {
   padding-top: 13px;
-  border-top: 1px solid rgba(255, 255, 255, 0.055);
+  border-top: 1px solid color-mix(in oklab, var(--foreground) 5.5%, transparent);
 }
 
 .session-list--settled {
@@ -698,8 +709,8 @@ button:disabled {
 .session-item--settled .session-row {
   height: 33px;
   min-height: 0;
-  padding: 8px 82px 8px 23px;
-  color: #777871;
+  padding: 8px 48px 8px 23px;
+  color: var(--legacy-text-faint);
   background: transparent;
   border-color: transparent;
   border-radius: 6px;
@@ -709,14 +720,14 @@ button:disabled {
   position: absolute;
   top: 10px;
   left: 9px;
-  color: #5f7562;
+  color: var(--green);
   font-size: 10px;
   content: "✓";
 }
 
 .session-item--settled .session-row:hover,
 .session-item--settled .session-row--active {
-  background: rgba(255, 255, 255, 0.028);
+  background: color-mix(in oklab, var(--foreground) 2.8%, transparent);
   border-color: transparent;
 }
 
@@ -732,21 +743,29 @@ button:disabled {
 }
 
 .session-item--settled .session-title {
-  color: #85867f;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--legacy-text-low);
   font-size: 10.5px;
   font-weight: 420;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-item--settled .session-row--active .session-title {
-  color: #bebeb8;
+  color: var(--legacy-text);
 }
 
 .session-item--settled .session-meta {
   position: absolute;
   top: 0;
-  right: 9px;
+  right: 8px;
+  width: 36px;
   height: 100%;
   margin: 0;
+  overflow: hidden;
+  justify-content: flex-end;
 }
 
 .session-item--settled .session-settle {
@@ -759,8 +778,8 @@ button:disabled {
   z-index: 90;
   width: 160px;
   padding: 4px;
-  background: #141414;
-  border: 1px solid rgba(255, 255, 255, 0.13);
+  background: var(--popover);
+  border: 1px solid color-mix(in oklab, var(--foreground) 13%, transparent);
   border-radius: 7px;
   box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
 }
@@ -769,7 +788,7 @@ button:disabled {
   width: 100%;
   min-height: 31px;
   padding: 0 9px;
-  color: #c88f91;
+  color: var(--red);
   font-size: 10.5px;
   text-align: left;
   background: transparent;
@@ -780,8 +799,8 @@ button:disabled {
 
 .thread-context-menu button:hover,
 .thread-context-menu button:focus-visible {
-  color: #efb1b3;
-  background: rgba(180, 73, 78, 0.11);
+  color: var(--red);
+  background: color-mix(in oklab, var(--red) 12%, transparent);
   outline: 0;
 }
 
@@ -801,28 +820,28 @@ button:disabled {
   display: flex;
   justify-content: space-between;
   margin-bottom: 5px;
-  color: #8a8b82;
+  color: var(--legacy-text-low);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 10px;
   font-variant-numeric: tabular-nums;
 }
 
-.usage-limit--success .usage-limit-label span:last-child { color: #78a47b; }
-.usage-limit--warning .usage-limit-label span:last-child { color: #b39460; }
-.usage-limit--danger .usage-limit-label span:last-child { color: #b87575; }
-.usage-limit--muted .usage-limit-label span:last-child { color: #686960; }
+.usage-limit--success .usage-limit-label span:last-child { color: var(--green); }
+.usage-limit--warning .usage-limit-label span:last-child { color: var(--amber); }
+.usage-limit--danger .usage-limit-label span:last-child { color: var(--red); }
+.usage-limit--muted .usage-limit-label span:last-child { color: var(--legacy-text-faint); }
 
 .usage-track {
   height: 2px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.07);
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
   border-radius: 2px;
 }
 
 .usage-track i {
   display: block;
   height: 100%;
-  background: #797a72;
+  background: var(--legacy-text-faint);
   border-radius: inherit;
 }
 
@@ -830,12 +849,12 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 6px;
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-size: 9.5px;
 }
 
 .forge-status-name {
-  color: #a1a1a1;
+  color: var(--legacy-text);
   font-size: 10.5px;
   font-weight: 520;
 }
@@ -849,7 +868,7 @@ button:disabled {
   height: 5px;
   background: var(--green);
   border-radius: 50%;
-  box-shadow: 0 0 0 2px rgba(124, 173, 120, 0.09);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--green) 12%, transparent);
 }
 
 .online-dot--reconnecting {

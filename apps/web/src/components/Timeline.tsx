@@ -6,14 +6,16 @@ import type {
   TimelineEntry,
   ToolEntry,
 } from "@anvil/protocol";
-import { Icon } from "@iconify/react";
-import altArrowRightIcon from "@iconify-icons/solar/alt-arrow-right-linear";
-import checkCircleIcon from "@iconify-icons/solar/check-circle-bold-duotone";
-import commandIcon from "@iconify-icons/solar/command-bold-duotone";
-import dangerCircleIcon from "@iconify-icons/solar/danger-circle-bold-duotone";
-import infoCircleIcon from "@iconify-icons/solar/info-circle-bold-duotone";
-import questionCircleIcon from "@iconify-icons/solar/question-circle-bold-duotone";
-import refreshIcon from "@iconify-icons/solar/refresh-linear";
+import {
+  AlertCircleIcon,
+  ArrowRight01Icon,
+  CheckmarkCircle02Icon,
+  CommandIcon,
+  HelpCircleIcon,
+  InformationCircleIcon,
+  Loading03Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useLayoutEffect, useMemo, useRef } from "react";
 import Markdown, { type Components } from "react-markdown";
@@ -102,7 +104,7 @@ function JsonDetails({ label, value }: { label: string; value?: JsonValue }) {
   if (artifact) return <ArtifactLink artifact={artifact} />;
   return (
     <details className="technical-detail">
-      <summary>{label}<Icon icon={altArrowRightIcon} width={12} /></summary>
+      <summary>{label}<HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="size-3" /></summary>
       <pre>{JSON.stringify(value, null, 2)}</pre>
     </details>
   );
@@ -158,11 +160,11 @@ function ContentBlocks({ blocks, compact = false }: { blocks: ContentBlock[]; co
 
 function ToolStatus({ entry }: { entry: ToolEntry }) {
   if (entry.status === "running" || entry.status === "queued") {
-    return <Icon icon={refreshIcon} className="spin" width={15} aria-label="Running" />;
+    return <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="spin size-3.5" aria-label="Running" />;
   }
-  if (entry.status === "failed") return <Icon icon={dangerCircleIcon} width={15} aria-label="Failed" />;
-  if (entry.status === "cancelled") return <Icon icon={dangerCircleIcon} width={15} aria-label="Cancelled" />;
-  return <Icon icon={checkCircleIcon} width={15} aria-label="Completed" />;
+  if (entry.status === "failed") return <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} className="size-3.5" aria-label="Failed" />;
+  if (entry.status === "cancelled") return <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} className="size-3.5" aria-label="Cancelled" />;
+  return <HugeiconsIcon icon={CheckmarkCircle02Icon} strokeWidth={2} className="size-3.5" aria-label="Completed" />;
 }
 
 function TimelineItem({ entry }: { entry: TimelineEntry }) {
@@ -202,7 +204,7 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
     return (
       <details className={`tool-event tool-event--${entry.status}`}>
         <summary>
-          <span className="tool-icon"><Icon icon={commandIcon} width={15} /></span>
+          <span className="tool-icon"><HugeiconsIcon icon={CommandIcon} strokeWidth={2} className="size-3.5" /></span>
           <span className="tool-main">
             <strong>{entry.summary}</strong>
             <span className={failureText ? "tool-failure-summary" : undefined}>
@@ -210,7 +212,7 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
             </span>
           </span>
           <span className="tool-status"><ToolStatus entry={entry} /></span>
-          <Icon icon={altArrowRightIcon} className="disclosure-icon" width={14} />
+          <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
         </summary>
         <div className="tool-detail">
           {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">Output</span><ContentBlocks blocks={entry.output} compact /></section>}
@@ -225,7 +227,7 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
   if (entry.kind === "interaction") {
     return (
       <article className={`interaction-event interaction-event--${entry.status}`}>
-        <span className="interaction-icon"><Icon icon={questionCircleIcon} width={16} /></span>
+        <span className="interaction-icon"><HugeiconsIcon icon={HelpCircleIcon} strokeWidth={2} className="size-4" /></span>
         <span className="interaction-copy">
           <strong>{entry.title}</strong>
           <span>{entry.summary ?? (entry.status === "pending" ? "Waiting for your response" : `Request ${entry.status}`)}</span>
@@ -238,7 +240,7 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
 
   return (
     <article className={`system-event system-event--${entry.tone}`}>
-      <span className="system-event-icon"><Icon icon={entry.tone === "error" ? dangerCircleIcon : infoCircleIcon} width={16} /></span>
+      <span className="system-event-icon"><HugeiconsIcon icon={entry.tone === "error" ? AlertCircleIcon : InformationCircleIcon} strokeWidth={2} className="size-4" /></span>
       <span className="system-event-copy">
         <strong>{entry.title}</strong>
         {entry.message && <span>{entry.message}</span>}

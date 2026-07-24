@@ -5,7 +5,7 @@
   flex: 1;
   flex-direction: column;
   background:
-    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.018), transparent 28rem),
+    radial-gradient(circle at 50% 0%, color-mix(in oklab, var(--foreground) 1.8%, transparent), transparent 28rem),
     var(--bg);
 }
 
@@ -18,7 +18,7 @@
   justify-content: space-between;
   padding: 0 18px 0 23px;
   gap: 20px;
-  background: rgba(10, 10, 10, 0.88);
+  background: color-mix(in oklab, var(--background) 88%, transparent);
   border-bottom: 1px solid var(--border);
   backdrop-filter: blur(16px);
 }
@@ -37,7 +37,7 @@
 }
 
 .menu-trigger {
-  display: none;
+  display: inline-flex;
 }
 
 .session-heading {
@@ -52,7 +52,7 @@
   max-width: min(42vw, 580px);
   margin: 0;
   overflow: hidden;
-  color: #ededed;
+  color: var(--legacy-text-high);
   font-size: 13px;
   font-weight: 580;
   letter-spacing: -0.005em;
@@ -69,7 +69,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-size: 9.5px;
 }
 
@@ -77,17 +77,17 @@
   width: 5px;
   height: 5px;
   content: "";
-  background: #676860;
+  background: var(--legacy-text-faint);
   border-radius: 50%;
 }
 
 .header-run-state--running {
-  color: #7acb88;
+  color: var(--green);
 }
 
 .header-run-state--running::before {
   background: var(--green);
-  box-shadow: 0 0 0 3px rgba(70, 167, 88, 0.1);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--green) 14%, transparent);
 }
 
 .header-run-state--waiting::before {
@@ -101,13 +101,13 @@
 .session-context {
   margin-top: 4px;
   gap: 5px;
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9px;
 }
 
 .context-separator {
-  color: #44453f;
+  color: var(--legacy-text-faint);
 }
 
 .header-actions {
@@ -125,9 +125,9 @@
   right: 0;
   width: min(290px, calc(100vw - 28px));
   padding: 7px;
-  color: #c8c8c0;
-  background: #121311;
-  border: 1px solid #30312d;
+  color: var(--legacy-text);
+  background: var(--popover);
+  border: 1px solid var(--border);
   border-radius: 9px;
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.52);
 }
@@ -146,7 +146,7 @@
 }
 
 .settings-popover-heading span {
-  color: #6e9871;
+  color: var(--green);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 8.5px;
   text-transform: uppercase;
@@ -161,7 +161,7 @@
   margin-top: 6px;
   padding: 9px;
   gap: 3px;
-  color: #c8c8c0;
+  color: var(--legacy-text);
   text-align: left;
   background: transparent;
   border: 0;
@@ -171,12 +171,12 @@
 
 .settings-restart:hover:not(:disabled),
 .settings-restart:focus-visible {
-  background: rgba(255, 255, 255, 0.05);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
   outline: none;
 }
 
 .settings-restart:disabled {
-  color: #77786f;
+  color: var(--legacy-text-faint);
   cursor: wait;
 }
 
@@ -186,14 +186,14 @@
 }
 
 .settings-restart small {
-  color: #77786f;
+  color: var(--legacy-text-faint);
   font-size: 9.5px;
   line-height: 1.45;
 }
 
 .settings-error {
   margin: 6px 9px 8px;
-  color: #c98282;
+  color: var(--red);
   font-size: 9.5px;
   line-height: 1.4;
 }
@@ -209,8 +209,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-.git-additions { color: #6e9871; }
-.git-deletions { color: #a26d6d; }
+.git-additions { color: var(--green); }
+.git-deletions { color: var(--red); }
 
 .connection-chip,
 .trust-chip {
@@ -218,9 +218,9 @@
   height: 27px;
   align-items: center;
   gap: 6px;
-  color: #8e8f87;
+  color: var(--legacy-text-low);
   font-size: 10px;
-  background: rgba(255, 255, 255, 0.027);
+  background: color-mix(in oklab, var(--foreground) 2.7%, transparent);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
@@ -231,8 +231,8 @@
 }
 
 .connection-chip:hover {
-  color: #c0bfb6;
-  background: rgba(255, 255, 255, 0.045);
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 4.5%, transparent);
 }
 
 .connection-chip svg {
@@ -252,7 +252,7 @@
 }
 
 .trust-chip svg {
-  color: #7d7d7d;
+  color: var(--legacy-text-faint);
 }
 
 .extension-status-bar {
@@ -263,8 +263,8 @@
   padding: 4px 23px;
   gap: 14px;
   overflow-x: auto;
-  color: #8a8b82;
-  background: rgba(255, 255, 255, 0.015);
+  color: var(--legacy-text-low);
+  background: color-mix(in oklab, var(--foreground) 1.5%, transparent);
   border-bottom: 1px solid var(--border);
   scrollbar-width: none;
 }
@@ -285,7 +285,7 @@
 }
 
 .extension-status-bar small {
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 8px;
 }
@@ -293,11 +293,11 @@
 .reconciliation-banner {
   min-height: 30px;
   padding: 7px 23px;
-  color: #c3a66e;
+  color: var(--amber);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9px;
-  background: rgba(197, 157, 84, 0.055);
-  border-bottom: 1px solid rgba(197, 157, 84, 0.12);
+  background: color-mix(in oklab, var(--amber) 7%, transparent);
+  border-bottom: 1px solid color-mix(in oklab, var(--amber) 15%, transparent);
 }
 
 
@@ -320,9 +320,9 @@
   min-height: 62px;
   padding: 10px 10px 10px 13px;
   gap: 10px;
-  color: #e8e8e3;
-  background: #171815;
-  border: 1px solid #33342f;
+  color: var(--legacy-text-high);
+  background: var(--popover);
+  border: 1px solid var(--border);
   border-radius: 9px;
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
   pointer-events: auto;
@@ -334,7 +334,7 @@
   height: 8px;
   background: var(--green);
   border-radius: 50%;
-  box-shadow: 0 0 0 4px rgba(70, 167, 88, 0.1);
+  box-shadow: 0 0 0 4px color-mix(in oklab, var(--green) 14%, transparent);
 }
 
 .completion-toast-copy {
@@ -359,7 +359,7 @@
 .completion-toast-copy span {
   min-width: 0;
   overflow: hidden;
-  color: #96978f;
+  color: var(--legacy-text-low);
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -368,7 +368,7 @@
 .completion-toast-dismiss {
   align-self: start;
   padding: 0 2px;
-  color: #77786f;
+  color: var(--legacy-text-faint);
   font-size: 16px;
   line-height: 1;
   background: none;
@@ -378,7 +378,7 @@
 
 .completion-toast-dismiss:hover,
 .completion-toast-dismiss:focus-visible {
-  color: #d3d3cd;
+  color: var(--legacy-text-high);
 }
 
 @keyframes completion-toast-in {

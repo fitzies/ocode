@@ -1,4 +1,6 @@
+import { execFile } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { promisify } from "node:util";
 
 import { ArtifactStore } from "./artifacts/artifactStore.ts";
 import { loadForgeConfig } from "./config.ts";
@@ -7,6 +9,8 @@ import { ForgeHttpServer } from "./http/server.ts";
 import { LiveIndicatorsService } from "./runtime/indicators.ts";
 import { SessionManager } from "./runtime/sessionManager.ts";
 import { ForgeDatabase } from "./store/database.ts";
+
+const execFileAsync = promisify(execFile);
 
 async function main(): Promise<void> {
   const config = loadForgeConfig();
@@ -40,7 +44,12 @@ async function main(): Promise<void> {
     handleCommand: sessions.handleCommand,
     indicators,
     searchFiles: sessions.searchFiles,
-    requestRestart: process.env.INVOCATION_ID ? () => void shutdown(75) : undefined,
+    requestRebuild: async () => {
+      await execFileAsync("corepack", ["pnpm", "--filter", "@anvil/web", "build"], {
+        cwd: process.cwd(),
+        maxBuffer: 10 * 1024 * 1024,
+      });
+    },
     ownerLogin: config.ownerLogin,
     webRoot: config.webRoot,
   });

@@ -1,7 +1,7 @@
 import type { ModelDescriptor } from "@anvil/protocol";
 import { describe, expect, it } from "vitest";
 
-import { activeFileMention, selectAnvilModels, updateComposerDraft } from "./Composer";
+import { activeFileMention, nextThinkingLevel, selectAnvilModels, updateComposerDraft } from "./Composer";
 
 const model = (id: string, name: string): ModelDescriptor => ({
   id,
@@ -31,19 +31,30 @@ describe("activeFileMention", () => {
   });
 });
 
+describe("nextThinkingLevel", () => {
+  it("cycles through the model's supported levels and wraps", () => {
+    const levels = ["off", "medium", "high", "xhigh", "max"] as const;
+
+    expect(nextThinkingLevel(levels, "medium")).toBe("high");
+    expect(nextThinkingLevel(levels, "max")).toBe("off");
+    expect(nextThinkingLevel(levels, "minimal")).toBe("off");
+    expect(nextThinkingLevel(["off"], "off")).toBeUndefined();
+  });
+});
+
 describe("selectAnvilModels", () => {
-  it("selects the three Anvil model ids and presents only their aliases", () => {
+  it("preserves all 5.6 models with Pi's names and ordering", () => {
     const selected = selectAnvilModels([
       model("openai-codex/gpt-5.4", "GPT-5.4"),
-      model("openai-codex/gpt-5.6-terra", "GPT-5.6 Terra"),
-      model("openai-codex/gpt-5.6-sol", "GPT-5.6 Sol"),
-      model("openai-codex/gpt-5.6-luna", "GPT-5.6 Luna"),
+      model("openai-codex/gpt-5.6", "GPT-5.6"),
+      model("openai-codex/gpt-5.6-high", "GPT-5.6 High"),
+      model("custom/latest", "Custom 5.6"),
     ]);
 
     expect(selected.map(({ id, name }) => ({ id, name }))).toEqual([
-      { id: "openai-codex/gpt-5.6-sol", name: "Sol" },
-      { id: "openai-codex/gpt-5.6-luna", name: "Luna" },
-      { id: "openai-codex/gpt-5.6-terra", name: "Terra" },
+      { id: "openai-codex/gpt-5.6", name: "GPT-5.6" },
+      { id: "openai-codex/gpt-5.6-high", name: "GPT-5.6 High" },
+      { id: "custom/latest", name: "Custom 5.6" },
     ]);
   });
 });

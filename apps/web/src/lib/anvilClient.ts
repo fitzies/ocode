@@ -81,7 +81,7 @@ export interface AnvilClient {
   uploadAttachment(sessionId: string, file: File): Promise<ArtifactReference>;
   deleteAttachment(sessionId: string, artifactId: string): Promise<void>;
   searchFiles(sessionId: string, query: string): Promise<WorkspaceFile[]>;
-  restartForge(): Promise<void>;
+  rebuildWebApp(): Promise<void>;
   cancelActiveRun(): void;
   setModel(modelId: string): void;
   setThinkingLevel(level: ThinkingLevel): void;
@@ -689,8 +689,8 @@ export class FixtureAnvilClient implements AnvilClient {
     });
   }).map((path) => ({ path }));
 
-  restartForge = async (): Promise<void> => {
-    throw new Error("Forge restart is unavailable while replaying fixtures");
+  rebuildWebApp = async (): Promise<void> => {
+    throw new Error("Web app rebuild is unavailable while replaying fixtures");
   };
 
   cancelActiveRun = () => {
@@ -1065,6 +1065,11 @@ export class ForgeAnvilClient implements AnvilClient {
   private retryDelay = 1_000;
   private bootstrapPromise?: Promise<void>;
   private readonly pendingCreates = new Map<string, PendingSessionCreate>();
+  private readonly pendingThinkingChanges = new Map<string, {
+    confirmedLevel: ThinkingLevel;
+    desiredLevel: ThinkingLevel;
+    inFlightLevel?: ThinkingLevel;
+  }>();
   private readonly cache = new ThreadCache();
   private readonly promptOutbox = new PromptOutbox({
     cache: this.cache,
@@ -1262,48 +1267,14 @@ export class ForgeAnvilClient implements AnvilClient {
     }
   };
 
-  restartForge = async (): Promise<void> => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30_000);
-    try {
-      const response = await this.fetcher("/api/v1/admin/restart", {
-        method: "POST",
-        headers: { accept: "application/json" },
-        signal: controller.signal,
-      });
-      const restart = await response.json().catch(() => undefined) as {
-        message?: string;
-        instanceId?: string;
-      } | undefined;
-      if (!response.ok) {
-        throw new Error(restart?.message ?? `Forge restart failed with HTTP ${response.status}`);
-      }
-
-      this.stream?.close();
-      this.setConnection("reconnecting");
-      while (!controller.signal.aborted) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        try {
-          const health = await this.fetcher("/api/v1/health/ready", {
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          if (!health.ok) continue;
-          const ready = await health.json() as { instanceId?: string };
-          if (restart?.instanceId && ready.instanceId === restart.instanceId) continue;
-          void this.bootstrap();
-          return;
-        } catch (error) {
-          if (controller.signal.aborted) throw error;
-          // Brief connection failures are expected while systemd restarts Forge.
-        }
-      }
-      throw new Error("Forge did not become ready within 30 seconds");
-    } catch (error) {
-      if (controller.signal.aborted) throw new Error("Forge did not become ready within 30 seconds");
-      throw error;
-    } finally {
-      clearTimeout(timeout);
+  rebuildWebApp = async (): Promise<void> => {
+    const response = await this.fetcher("/api/v1/admin/rebuild", {
+      method: "POST",
+      headers: { accept: "application/json" },
+    });
+    const result = await response.json().catch(() => undefined) as { message?: string } | undefined;
+    if (!response.ok) {
+      throw new Error(result?.message ?? `Web app rebuild failed with HTTP ${response.status}`);
     }
   };
 
@@ -1332,9 +1303,60 @@ export class ForgeAnvilClient implements AnvilClient {
   };
 
   setThinkingLevel = (level: ThinkingLevel) => {
-    if (!this.snapshot.activeSessionId) return;
-    void this.sendCommand(this.command("thinking.set", this.snapshot.activeSessionId, { level }));
+    const sessionId = this.snapshot.activeSessionId;
+    if (!sessionId) return;
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session || session.thinkingLevel === level) return;
+
+    const pending = this.pendingThinkingChanges.get(sessionId) ?? {
+      confirmedLevel: session.thinkingLevel,
+      desiredLevel: level,
+    };
+    pending.desiredLevel = level;
+    this.pendingThinkingChanges.set(sessionId, pending);
+
+    this.snapshot = {
+      ...this.snapshot,
+      sessions: this.snapshot.sessions.map((candidate) => candidate.id === sessionId
+        ? { ...candidate, thinkingLevel: level, updatedAt: timestamp() }
+        : candidate),
+    };
+    this.emit();
+    void this.flushThinkingLevel(sessionId);
   };
+
+  private async flushThinkingLevel(sessionId: string): Promise<void> {
+    const pending = this.pendingThinkingChanges.get(sessionId);
+    if (!pending || pending.inFlightLevel) return;
+
+    const requestedLevel = pending.desiredLevel;
+    pending.inFlightLevel = requestedLevel;
+    const response = await this.sendCommand(this.command("thinking.set", sessionId, { level: requestedLevel }));
+    const tracked = this.pendingThinkingChanges.get(sessionId);
+    if (tracked !== pending) return;
+
+    pending.inFlightLevel = undefined;
+    if (response?.success) pending.confirmedLevel = requestedLevel;
+    if (pending.desiredLevel !== requestedLevel) {
+      void this.flushThinkingLevel(sessionId);
+      return;
+    }
+
+    this.pendingThinkingChanges.delete(sessionId);
+    if (!response) {
+      void this.bootstrap();
+      return;
+    }
+    if (response.success) return;
+
+    this.snapshot = {
+      ...this.snapshot,
+      sessions: this.snapshot.sessions.map((candidate) => candidate.id === sessionId
+        ? { ...candidate, thinkingLevel: pending.confirmedLevel, updatedAt: timestamp() }
+        : candidate),
+    };
+    this.emit();
+  }
 
   respondToInteraction = (response: InteractionResponse) => {
     const request = this.snapshot.pendingInteractions.find((item) => item.id === response.requestId);
@@ -1719,6 +1741,17 @@ export class ForgeAnvilClient implements AnvilClient {
           !this.hydrationBuffers.has(event.sessionId)
         ) {
           next = mergeSessionDetail(next, detailFromSnapshot(previousSnapshot, event.sessionId, detailWatermark));
+        }
+        const pendingThinking = event.sessionId
+          ? this.pendingThinkingChanges.get(event.sessionId)
+          : undefined;
+        if (pendingThinking && event.type === "session.configured" && event.payload.thinkingLevel !== undefined) {
+          next = {
+            ...next,
+            sessions: next.sessions.map((session) => session.id === event.sessionId
+              ? { ...session, thinkingLevel: pendingThinking.desiredLevel }
+              : session),
+          };
         }
         const eventApplied = next.lastSequence === event.sequence;
         this.snapshot = {

@@ -3,7 +3,7 @@
   z-index: 4;
   flex: 0 0 auto;
   padding: 10px 24px 12px;
-  background: linear-gradient(180deg, rgba(10, 10, 10, 0), var(--bg) 26%);
+  background: linear-gradient(180deg, transparent, var(--bg) 26%);
 }
 
 .composer,
@@ -23,10 +23,10 @@
   margin-bottom: 7px;
   padding: 0 10px;
   gap: 8px;
-  color: #c99a46;
+  color: var(--amber);
   font-size: 10px;
-  background: rgba(213, 162, 77, 0.06);
-  border: 1px solid rgba(213, 162, 77, 0.13);
+  background: color-mix(in oklab, var(--amber) 6%, transparent);
+  border: 1px solid color-mix(in oklab, var(--amber) 16%, transparent);
   border-radius: 7px;
 }
 
@@ -40,16 +40,16 @@
 .composer {
   position: relative;
   padding: 12px 12px 9px;
-  background: #111111;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--card);
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
   border-radius: 10px;
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3), inset 0 1px rgba(255, 255, 255, 0.025);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3), inset 0 1px color-mix(in oklab, var(--foreground) 2.5%, transparent);
   transition: border-color 140ms ease, box-shadow 140ms ease;
 }
 
 .composer:focus-within {
-  border-color: rgba(255, 255, 255, 0.24);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32), 0 0 0 2px rgba(255, 255, 255, 0.025);
+  border-color: color-mix(in oklab, var(--foreground) 12%, transparent);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3), inset 0 1px color-mix(in oklab, var(--foreground) 2.5%, transparent);
 }
 
 .composer textarea {
@@ -68,8 +68,15 @@
   outline: none;
 }
 
+.composer textarea:focus,
+.composer textarea:focus-visible {
+  border: 0;
+  outline: none;
+  box-shadow: none;
+}
+
 .composer textarea::placeholder {
-  color: #85867e;
+  color: var(--legacy-text-low);
 }
 
 .composer-attachments {
@@ -78,7 +85,7 @@
   padding: 0 1px 9px;
   gap: 6px;
   overflow-x: auto;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.065);
+  border-bottom: 1px solid color-mix(in oklab, var(--foreground) 6.5%, transparent);
   scrollbar-width: thin;
 }
 
@@ -91,21 +98,21 @@
   align-items: center;
   padding: 6px 5px 6px 7px;
   gap: 5px;
-  color: #a7a89f;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.085);
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 3.5%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 8.5%, transparent);
   border-radius: 7px;
 }
 
-.composer-attachment > svg { color: #85867e; }
+.composer-attachment > svg { color: var(--legacy-text-low); }
 .composer-attachment > span { display: flex; min-width: 0; flex-direction: column; gap: 1px; }
-.composer-attachment strong { overflow: hidden; color: #c5c5bd; font-size: 9.5px; font-weight: 540; text-overflow: ellipsis; white-space: nowrap; }
-.composer-attachment small { color: #777870; font: 7.5px/1.2 "Geist Mono Variable", "Geist Mono", monospace; }
-.composer-attachment > button { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; color: #72736c; background: transparent; border: 0; border-radius: 5px; cursor: pointer; }
-.composer-attachment > button:hover { color: #d1d1ca; background: rgba(255, 255, 255, 0.05); }
+.composer-attachment strong { overflow: hidden; color: var(--legacy-text); font-size: 9.5px; font-weight: 540; text-overflow: ellipsis; white-space: nowrap; }
+.composer-attachment small { color: var(--legacy-text-faint); font: 7.5px/1.2 "Geist Mono Variable", "Geist Mono", monospace; }
+.composer-attachment > button { display: grid; width: 20px; height: 20px; padding: 0; place-items: center; color: var(--legacy-text-faint); background: transparent; border: 0; border-radius: 5px; cursor: pointer; }
+.composer-attachment > button:hover { color: var(--legacy-text-high); background: color-mix(in oklab, var(--foreground) 5%, transparent); }
 .composer-attachment--uploading { opacity: 0.7; }
-.composer-attachment--failed { border-color: rgba(217, 102, 107, 0.3); }
-.composer-attachment--failed small { color: #c77e82; }
+.composer-attachment--failed { border-color: color-mix(in oklab, var(--red) 30%, transparent); }
+.composer-attachment--failed small { color: var(--red); }
 
 .composer-toolbar,
 .composer-tools,
@@ -127,11 +134,11 @@
 
 .composer-icon {
   display: grid;
-  width: 27px;
-  height: 27px;
+  width: 30px;
+  height: 30px;
   padding: 0;
   place-items: center;
-  color: #74756d;
+  color: var(--legacy-text-faint);
   background: transparent;
   border: 0;
   border-radius: 6px;
@@ -139,8 +146,13 @@
 }
 
 .composer-icon:hover {
-  color: #b3b2aa;
-  background: rgba(255, 255, 255, 0.045);
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 4.5%, transparent);
+}
+
+.composer-icon svg {
+  width: 17px;
+  height: 17px;
 }
 
 .toolbar-divider {
@@ -161,7 +173,7 @@
   align-items: center;
   gap: 5px;
   padding: 0 7px;
-  color: #9b9b9b;
+  color: var(--legacy-text-low);
   font-size: 10.5px;
   background: transparent;
   border: 0;
@@ -181,13 +193,13 @@
 .model-select[aria-expanded="true"]:not(:disabled),
 .thinking-level:hover,
 .thinking-level[aria-expanded="true"] {
-  color: #d4d4d4;
-  background: rgba(255, 255, 255, 0.045);
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 4.5%, transparent);
 }
 
 .model-select svg,
 .thinking-level svg {
-  color: #666666;
+  color: var(--legacy-text-faint);
   transition: transform 120ms ease;
 }
 
@@ -202,8 +214,8 @@
   z-index: 20;
   width: 190px;
   padding: 5px;
-  background: #171717;
-  border: 1px solid rgba(255, 255, 255, 0.11);
+  background: var(--accent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 11%, transparent);
   border-radius: 9px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.42);
 }
@@ -214,7 +226,7 @@
 
 .model-menu-label {
   padding: 5px 8px 6px;
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-size: 9px;
   font-weight: 560;
   letter-spacing: 0.08em;
@@ -228,7 +240,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 0 8px;
-  color: #969696;
+  color: var(--legacy-text-low);
   font-size: 11px;
   text-align: left;
   background: transparent;
@@ -239,8 +251,8 @@
 
 .model-option:hover,
 .model-option--selected {
-  color: #ededed;
-  background: rgba(255, 255, 255, 0.055);
+  color: var(--legacy-text-high);
+  background: color-mix(in oklab, var(--foreground) 5.5%, transparent);
 }
 
 .model-option > span {
@@ -251,7 +263,7 @@
 }
 
 .model-option small {
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-size: 8px;
 }
 
@@ -259,7 +271,7 @@
   width: 5px;
   height: 5px;
   flex: 0 0 auto;
-  background: #ededed;
+  background: var(--legacy-text-high);
   border-radius: 50%;
 }
 
@@ -273,17 +285,17 @@
 }
 
 .composer-context {
-  color: #66675f;
+  color: var(--legacy-text-faint);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 8.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.composer-context--high { color: #a48657; }
+.composer-context--high { color: var(--amber); }
 
 .send-hint {
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 8.5px;
 }
@@ -301,41 +313,41 @@
 }
 
 .send-button {
-  color: #0a0a0a;
-  background: #ededed;
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.23);
+  color: var(--background);
+  background: var(--legacy-text-high);
+  box-shadow: inset 0 1px color-mix(in oklab, var(--foreground) 23%, transparent);
 }
 
 .send-button:hover:not(:disabled) {
-  background: #ffffff;
+  background: var(--legacy-text-high);
 }
 
 .send-button:disabled {
-  color: #5f5f5f;
-  background: #242424;
+  color: var(--legacy-text-faint);
+  background: var(--accent);
   box-shadow: none;
 }
 
 .stop-button {
-  color: #d8d6cd;
-  background: rgba(208, 111, 98, 0.16);
-  border: 1px solid rgba(208, 111, 98, 0.18);
+  color: var(--legacy-text-high);
+  background: color-mix(in oklab, var(--red) 16%, transparent);
+  border: 1px solid color-mix(in oklab, var(--red) 20%, transparent);
 }
 
 .stop-button:hover {
-  background: rgba(208, 111, 98, 0.22);
+  background: color-mix(in oklab, var(--red) 24%, transparent);
 }
 
 .composer-note {
   margin-top: 7px;
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-size: 8.5px;
   text-align: center;
 }
 
 .queue-banner {
   margin-bottom: 7px;
-  color: #8da5bd;
+  color: var(--status-info);
   font-size: 9.5px;
   text-align: right;
 }
@@ -345,17 +357,17 @@
   margin-bottom: 7px;
   padding: 8px 10px;
   gap: 2px;
-  color: #9a9b92;
+  color: var(--legacy-text-low);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9px;
   line-height: 1.45;
-  background: rgba(255, 255, 255, 0.02);
+  background: color-mix(in oklab, var(--foreground) 2%, transparent);
   border: 1px solid var(--border);
   border-radius: 7px;
 }
 
 .composer + .extension-widget { margin-top: 7px; margin-bottom: 0; }
-.extension-widget-key { margin-bottom: 2px; color: #85867e; font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
+.extension-widget-key { margin-bottom: 2px; color: var(--legacy-text-low); font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
 
 .slash-menu {
   position: absolute;
@@ -366,8 +378,8 @@
   max-height: min(390px, 55vh);
   padding: 5px;
   overflow-y: auto;
-  background: #151515;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: var(--popover);
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
   border-radius: 10px;
   box-shadow: 0 22px 54px rgba(0, 0, 0, 0.52);
 }
@@ -377,7 +389,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 7px 8px;
-  color: #898a82;
+  color: var(--legacy-text-low);
   font-size: 8.5px;
   font-weight: 600;
   letter-spacing: .07em;
@@ -385,7 +397,7 @@
 }
 
 .slash-menu-heading kbd {
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 8px;
   font-weight: 400;
@@ -401,7 +413,7 @@
   align-items: center;
   padding: 6px 8px;
   gap: 8px;
-  color: #85867e;
+  color: var(--legacy-text-low);
   text-align: left;
   background: transparent;
   border: 0;
@@ -410,11 +422,11 @@
 }
 
 .slash-option--active,
-.slash-option:hover { color: #d1d0c8; background: rgba(255, 255, 255, 0.055); }
-.slash-option > svg { color: #797a72; }
+.slash-option:hover { color: var(--legacy-text-high); background: color-mix(in oklab, var(--foreground) 5.5%, transparent); }
+.slash-option > svg { color: var(--legacy-text-faint); }
 .slash-option-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
-.slash-option-copy strong { overflow: hidden; color: #c1c1b8; font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 10px; font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
-.slash-option-copy small { overflow: hidden; color: #8b8c84; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
-.slash-source { padding: 3px 5px; color: #898a82; font-size: 7.5px; letter-spacing: .05em; text-transform: uppercase; background: rgba(255,255,255,.03); border-radius: 4px; }
-.slash-source--skill { color: #a29372; }
+.slash-option-copy strong { overflow: hidden; color: var(--legacy-text); font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 10px; font-weight: 520; text-overflow: ellipsis; white-space: nowrap; }
+.slash-option-copy small { overflow: hidden; color: var(--legacy-text-low); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.slash-source { padding: 3px 5px; color: var(--legacy-text-low); font-size: 7.5px; letter-spacing: .05em; text-transform: uppercase; background: color-mix(in oklab, var(--foreground) 3%, transparent); border-radius: 4px; }
+.slash-source--skill { color: var(--amber); }
 

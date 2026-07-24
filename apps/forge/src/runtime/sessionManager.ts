@@ -132,6 +132,8 @@ export class SessionManager {
   private readonly runtimes = new Map<string, ManagedSession>();
   private readonly starting = new Map<string, Promise<ManagedSession>>();
   private readonly inFlightCommands = new Map<string, Promise<AnvilCommandResponse>>();
+  private readonly lifecycleTails = new Map<string, Promise<void>>();
+  private readonly activeCommandCounts = new Map<string, number>();
   private readonly interactionTimers = new Map<string, NodeJS.Timeout>();
   private readonly deleting = new Set<string>();
   private readonly workspaceFiles = new WorkspaceFileIndex();
@@ -247,21 +249,47 @@ export class SessionManager {
     if (command.type === "project.create") return this.createProject(command);
     if (command.type === "session.select") return commandResponse(command, true);
     if (command.type === "session.create") return this.createSession(command);
-    if (command.type === "session.delete") return this.deleteSession(command);
-    if (command.type === "session.settled") return this.setSessionSettled(command);
+    if (command.type === "session.delete") {
+      return this.withSessionLifecycle(command.payload.sessionId, () => this.deleteSession(command));
+    }
+    if (command.type === "session.settled") {
+      if (!command.sessionId) return commandResponse(command, false, { error: "Session not found" });
+      return this.withSessionLifecycle(command.sessionId, () => this.setSessionSettled(command));
+    }
     if (!command.sessionId) return commandResponse(command, false, { error: "A session is required" });
+    return this.afterSessionLifecycle(command.sessionId, () => this.dispatchTrackedRuntimeCommand(command));
+  }
 
-    const stored = this.database.getSession(command.sessionId);
+  private async dispatchTrackedRuntimeCommand(command: AnvilClientCommand): Promise<AnvilCommandResponse> {
+    const sessionId = command.sessionId;
+    if (!sessionId) return commandResponse(command, false, { error: "A session is required" });
+    this.activeCommandCounts.set(sessionId, (this.activeCommandCounts.get(sessionId) ?? 0) + 1);
+    try {
+      return await this.dispatchRuntimeCommand(command);
+    } finally {
+      const remaining = (this.activeCommandCounts.get(sessionId) ?? 1) - 1;
+      if (remaining > 0) this.activeCommandCounts.set(sessionId, remaining);
+      else this.activeCommandCounts.delete(sessionId);
+    }
+  }
+
+  private async dispatchRuntimeCommand(command: AnvilClientCommand): Promise<AnvilCommandResponse> {
+    const sessionId = command.sessionId;
+    if (!sessionId) return commandResponse(command, false, { error: "A session is required" });
+    const stored = this.database.getSession(sessionId);
     if (!stored) return commandResponse(command, false, { error: "Session not found" });
+    if (stored.session.settled && command.type !== "prompt.send") {
+      return commandResponse(command, false, { error: "Send a prompt to resume this settled thread" });
+    }
     const snapshot = this.events.currentSnapshot();
-    const catalog = snapshot.catalogs[command.sessionId];
+    const catalog = snapshot.catalogs[sessionId];
     if (command.type === "model.set" && !catalog?.models.some(
       (model) => model.id === command.payload.modelId,
     )) {
       return commandResponse(command, false, { error: "Model is not available in this session" });
     }
     if (command.type === "thinking.set") {
-      const session = snapshot.sessions.find((candidate) => candidate.id === command.sessionId);
+      const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
       const model = catalog?.models.find((candidate) => candidate.id === session?.modelId);
       if (!model?.supportedThinkingLevels.includes(command.payload.level)) {
         return commandResponse(command, false, {
@@ -270,6 +298,13 @@ export class SessionManager {
       }
     }
     const runtime = await this.ensureRuntime(stored);
+    if (command.type === "prompt.send" && stored.session.settled) {
+      this.events.setSessionSettled(
+        sessionId,
+        false,
+        domainEvent("session.settled", { settled: false }, sessionId),
+      );
+    }
 
     if (command.type === "run.cancel") {
       const previousOutcome = runtime.adapter.terminalOutcomeInCurrentRun;
@@ -283,7 +318,7 @@ export class SessionManager {
       }
       if (response.success) {
         const pending = this.events.currentSnapshot().pendingInteractions.filter(
-          (request) => request.sessionId === command.sessionId,
+          (request) => request.sessionId === sessionId,
         );
         for (const request of pending) {
           runtime.rpc.send({
@@ -296,11 +331,11 @@ export class SessionManager {
           ...pending.map((request) => domainEvent(
             "interaction.resolved",
             { requestId: request.id, status: "cancelled" },
-            command.sessionId,
+            sessionId,
           )),
-          domainEvent("run.status", { status: "idle", outcome: "cancelled" }, command.sessionId),
+          domainEvent("run.status", { status: "idle", outcome: "cancelled" }, sessionId),
         ]);
-        this.syncSession(command.sessionId);
+        this.syncSession(sessionId);
       } else {
         runtime.adapter.terminalOutcomeInCurrentRun = previousOutcome;
       }
@@ -540,17 +575,42 @@ export class SessionManager {
     return commandResponse(command, true, { data: { sessionId: session.id } });
   }
 
-  private setSessionSettled(
+  private async setSessionSettled(
     command: Extract<AnvilClientCommand, { type: "session.settled" }>,
-  ): AnvilCommandResponse {
-    if (!command.sessionId || !this.database.getSession(command.sessionId)) {
+  ): Promise<AnvilCommandResponse> {
+    const sessionId = command.sessionId;
+    if (!sessionId || !this.database.getSession(sessionId)) {
       return commandResponse(command, false, { error: "Session not found" });
     }
+
+    if (command.payload.settled) {
+      const snapshot = this.events.currentSnapshot();
+      const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+      const hasPendingInteraction = snapshot.pendingInteractions.some(
+        (request) => request.sessionId === sessionId,
+      );
+      const runtimeStarting = this.starting.has(sessionId);
+      const commandInFlight = (this.activeCommandCounts.get(sessionId) ?? 0) > 0;
+      if (
+        session?.status === "running" ||
+        session?.status === "waiting" ||
+        hasPendingInteraction ||
+        runtimeStarting ||
+        commandInFlight ||
+        this.runningTools(sessionId).length > 0
+      ) {
+        return commandResponse(command, false, {
+          error: "Wait for Pi to finish and resolve any pending requests before settling this thread",
+        });
+      }
+    }
+
     this.events.setSessionSettled(
-      command.sessionId,
+      sessionId,
       command.payload.settled,
-      domainEvent("session.settled", { settled: command.payload.settled }, command.sessionId),
+      domainEvent("session.settled", { settled: command.payload.settled }, sessionId),
     );
+    if (command.payload.settled) await this.stopSessionRuntime(sessionId);
     return commandResponse(command, true);
   }
 
@@ -597,8 +657,19 @@ export class SessionManager {
     }
   }
 
+  private async stopSessionRuntime(sessionId: string): Promise<void> {
+    const starting = this.starting.get(sessionId);
+    const runtime = this.runtimes.get(sessionId);
+    if (runtime) await this.stopRuntime(runtime);
+    if (starting) await starting.catch(() => undefined);
+    const startedRuntime = this.runtimes.get(sessionId);
+    if (startedRuntime && startedRuntime !== runtime) await this.stopRuntime(startedRuntime);
+    this.runtimes.delete(sessionId);
+  }
+
   private async stopRuntime(runtime: ManagedSession): Promise<void> {
     runtime.stopping = true;
+    this.clearToolTimers(runtime);
     if (runtime.rpc.running) runtime.rpc.stop();
     let timeout: NodeJS.Timeout | undefined;
     const exited = await Promise.race([
@@ -916,6 +987,21 @@ export class SessionManager {
     } finally {
       runtime.suppressedResponseIds.delete(id);
     }
+  }
+
+  private afterSessionLifecycle<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const barrier = this.lifecycleTails.get(sessionId);
+    return barrier ? barrier.then(operation, operation) : operation();
+  }
+
+  private withSessionLifecycle<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.lifecycleTails.get(sessionId) ?? Promise.resolve();
+    const result = previous.then(operation, operation);
+    const tail = result.then(() => undefined, () => undefined);
+    this.lifecycleTails.set(sessionId, tail);
+    return result.finally(() => {
+      if (this.lifecycleTails.get(sessionId) === tail) this.lifecycleTails.delete(sessionId);
+    });
   }
 
   private enqueue<T>(runtime: ManagedSession, operation: () => Promise<T>): Promise<T> {

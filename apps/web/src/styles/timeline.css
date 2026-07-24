@@ -4,7 +4,7 @@
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  scrollbar-color: color-mix(in oklab, var(--foreground) 10%, transparent) transparent;
 }
 
 .timeline-inner {
@@ -40,7 +40,7 @@
   max-height: 180px;
   overflow: hidden;
   margin: 0;
-  color: #a7a89f;
+  color: var(--legacy-text);
   font: 10px/1.55 "Geist Mono Variable", "Geist Mono", monospace;
   white-space: pre-wrap;
 }
@@ -51,20 +51,20 @@
   justify-content: space-between;
   padding: 9px 11px;
   gap: 14px;
-  color: #c7c8bf;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 3.5%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
   border-radius: 6px;
   text-decoration: none;
 }
 
 .artifact-block > a:hover {
-  background: rgba(255, 255, 255, 0.055);
-  border-color: rgba(255, 255, 255, 0.14);
+  background: color-mix(in oklab, var(--foreground) 5.5%, transparent);
+  border-color: color-mix(in oklab, var(--foreground) 14%, transparent);
 }
 
 .artifact-block small {
-  color: #777870;
+  color: var(--legacy-text-faint);
   font: 8.5px/1.3 "Geist Mono Variable", "Geist Mono", monospace;
   white-space: nowrap;
 }
@@ -73,7 +73,7 @@
   display: flex;
   align-items: center;
   margin: 2px 0 29px;
-  color: #85867e;
+  color: var(--legacy-text-low);
   font-size: 9px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -91,7 +91,7 @@
 
 .content-blocks { display: grid; gap: 10px; }
 .text-block {
-  color: #c7c7c7;
+  color: var(--legacy-text);
   font-size: 13px;
   line-height: 1.7;
   overflow-wrap: anywhere;
@@ -107,7 +107,7 @@
 .markdown-body h5,
 .markdown-body h6 {
   margin: 1.35em 0 0.5em;
-  color: #e1e1dc;
+  color: var(--legacy-text-high);
   font-weight: 620;
   line-height: 1.25;
   letter-spacing: -0.015em;
@@ -118,39 +118,39 @@
 .markdown-body h4,
 .markdown-body h5,
 .markdown-body h6 { font-size: 1em; }
-.markdown-body strong { color: #e0e0db; font-weight: 650; }
+.markdown-body strong { color: var(--legacy-text-high); font-weight: 650; }
 .markdown-body ul,
 .markdown-body ol { margin: 0 0 0.85em; padding-left: 1.55em; }
 .markdown-body li { padding-left: 0.15em; }
 .markdown-body li + li { margin-top: 0.25em; }
 .markdown-body li > p { margin-bottom: 0.35em; }
-.markdown-body li::marker { color: #85867e; }
+.markdown-body li::marker { color: var(--legacy-text-low); }
 .markdown-body blockquote {
   margin: 0 0 0.85em;
   padding: 0.05em 0 0.05em 0.9em;
-  color: #a8a8a1;
-  border-left: 2px solid #52534d;
+  color: var(--legacy-text-low);
+  border-left: 2px solid var(--legacy-text-faint);
 }
 .markdown-body blockquote > :last-child { margin-bottom: 0; }
-.markdown-body a { color: #9dbbd1; text-decoration: underline; text-decoration-color: rgba(157, 187, 209, 0.4); text-underline-offset: 2px; }
-.markdown-body a:hover { color: #bed5e5; text-decoration-color: currentColor; }
+.markdown-body a { color: var(--link); text-decoration: underline; text-decoration-color: color-mix(in oklab, var(--link) 40%, transparent); text-underline-offset: 2px; }
+.markdown-body a:hover { color: var(--link); text-decoration-color: currentColor; }
 .markdown-body code {
   padding: 0.12em 0.32em;
-  color: #d8d8d1;
+  color: var(--legacy-text-high);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 0.88em;
-  background: rgba(255, 255, 255, 0.065);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: color-mix(in oklab, var(--foreground) 6.5%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 7%, transparent);
   border-radius: 4px;
 }
 .markdown-body pre {
   margin: 0 0 0.95em;
   padding: 11px 12px;
   overflow: auto;
-  color: #c6c6bf;
+  color: var(--legacy-text);
   font-size: 11px;
   line-height: 1.6;
-  background: #0c0c0c;
+  background: var(--background);
   border: 1px solid var(--border);
   border-radius: 7px;
 }
@@ -159,9 +159,9 @@
 .markdown-body table { display: block; width: max-content; max-width: 100%; margin: 0 0 0.95em; overflow-x: auto; border-spacing: 0; border-collapse: collapse; }
 .markdown-body th,
 .markdown-body td { padding: 6px 9px; text-align: left; border: 1px solid var(--border); }
-.markdown-body th { color: #deded8; font-weight: 600; background: rgba(255, 255, 255, 0.035); }
-.markdown-body input[type="checkbox"] { margin: 0 0.45em 0 0; accent-color: #8fa58c; }
-.markdown-body del { color: #85867e; }
+.markdown-body th { color: var(--legacy-text-high); font-weight: 600; background: color-mix(in oklab, var(--foreground) 3.5%, transparent); }
+.markdown-body input[type="checkbox"] { margin: 0 0.45em 0 0; accent-color: var(--green); }
+.markdown-body del { color: var(--legacy-text-low); }
 
 .user-message {
   display: flex;
@@ -173,14 +173,14 @@
 .user-message > .content-blocks {
   max-width: 600px;
   padding: 11px 14px;
-  color: #e6e6e6;
-  background: #171717;
-  border: 1px solid rgba(255, 255, 255, 0.085);
+  color: var(--legacy-text-high);
+  background: var(--accent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 8.5%, transparent);
   border-radius: 12px 12px 4px 12px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 }
 
-.user-message .text-block { color: #e6e6e6; }
+.user-message .text-block { color: var(--legacy-text-high); }
 .message-pending {
   margin: 5px 4px 0;
   color: var(--text-muted);
@@ -188,14 +188,14 @@
 }
 .assistant-message { margin: 26px 8% 30px 0; }
 .system-message { margin: 18px 8%; padding: 10px 12px; border-left: 2px solid var(--border-strong); }
-.message-error { margin-top: 8px; color: #e98b8f; font-size: 10.5px; }
+.message-error { margin-top: 8px; color: var(--red); font-size: 10.5px; }
 .stream-caret {
   display: inline-block;
   width: 5px;
   height: 13px;
   margin-left: 3px;
   vertical-align: -2px;
-  background: #aaa99f;
+  background: var(--legacy-text);
   animation: pulse 1s ease-in-out infinite;
 }
 
@@ -218,7 +218,7 @@
 .technical-detail > summary::-webkit-details-marker { display: none; }
 
 .thinking-event {
-  color: #85867d;
+  color: var(--legacy-text-low);
   font-size: 11px;
   font-style: italic;
   font-synthesis: style;
@@ -227,7 +227,7 @@
 .thinking-event * { font-style: italic; }
 .thinking-label {
   margin-right: 0.35em;
-  color: #9a9b93;
+  color: var(--legacy-text-low);
 }
 .thinking-markdown { display: inline; }
 .thinking-markdown p { display: inline; margin: 0; }
@@ -240,79 +240,79 @@
 .thinking-markdown h4,
 .thinking-markdown h5,
 .thinking-markdown h6,
-.thinking-markdown strong { color: #aaa9a1; }
+.thinking-markdown strong { color: var(--legacy-text); }
 .thinking-markdown pre { font-size: 9.5px; }
 .thinking-event--cancelled { opacity: 0.72; }
 
-.disclosure-icon { margin-left: auto; color: #606159; transition: transform 120ms ease; }
+.disclosure-icon { margin-left: auto; color: var(--legacy-text-faint); transition: transform 120ms ease; }
 details[open] > summary .disclosure-icon { transform: rotate(90deg); }
 
 .tool-batch {
   padding: 7px;
-  background: rgba(255, 255, 255, 0.012);
-  border: 1px solid rgba(255, 255, 255, 0.055);
+  background: color-mix(in oklab, var(--foreground) 1.2%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 5.5%, transparent);
   border-radius: 10px;
 }
 .tool-batch .tool-event { margin: 5px 0; }
-.tool-batch-label { display: flex; justify-content: space-between; padding: 2px 5px 6px; color: #85867e; font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
-.tool-batch-label small { color: #85867e; font-size: 8.5px; }
+.tool-batch-label { display: flex; justify-content: space-between; padding: 2px 5px 6px; color: var(--legacy-text-low); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
+.tool-batch-label small { color: var(--legacy-text-low); font-size: 8.5px; }
 
 .tool-event {
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.018);
+  background: color-mix(in oklab, var(--foreground) 1.8%, transparent);
   border: 1px solid var(--border);
   border-radius: 8px;
 }
 .tool-event > summary { min-height: 42px; padding: 6px 9px; gap: 9px; }
-.tool-event:hover { border-color: rgba(255, 255, 255, 0.13); }
+.tool-event:hover { border-color: color-mix(in oklab, var(--foreground) 13%, transparent); }
 .tool-icon {
   display: grid;
   width: 25px;
   height: 25px;
   flex: 0 0 auto;
   place-items: center;
-  color: #92938a;
-  background: rgba(255, 255, 255, 0.04);
+  color: var(--legacy-text-low);
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
   border-radius: 5px;
 }
 .tool-main { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
-.tool-main strong { overflow: hidden; color: #b7b7ae; font-size: 10.5px; font-weight: 540; text-overflow: ellipsis; white-space: nowrap; }
-.tool-main > span { overflow: hidden; color: #85867e; font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
-.tool-main > .tool-failure-summary { color: #c98282; }
+.tool-main strong { overflow: hidden; color: var(--legacy-text); font-size: 10.5px; font-weight: 540; text-overflow: ellipsis; white-space: nowrap; }
+.tool-main > span { overflow: hidden; color: var(--legacy-text-low); font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.tool-main > .tool-failure-summary { color: var(--red); }
 .tool-status { display: grid; width: 20px; place-items: center; color: var(--green); }
 .tool-event--running .tool-status,
-.tool-event--queued .tool-status { color: #b4b4b4; }
+.tool-event--queued .tool-status { color: var(--legacy-text); }
 .tool-event--failed .tool-status,
 .tool-event--cancelled .tool-status { color: var(--red); }
-.tool-detail { padding: 9px 12px; color: #85867e; font-size: 10px; line-height: 1.55; background: rgba(0, 0, 0, 0.13); border-top: 1px solid var(--border); }
+.tool-detail { padding: 9px 12px; color: var(--legacy-text-low); font-size: 10px; line-height: 1.55; background: rgba(0, 0, 0, 0.13); border-top: 1px solid var(--border); }
 .tool-output { display: grid; gap: 6px; margin-bottom: 9px; }
-.detail-label { color: #85867e; font-size: 8.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-.content-blocks--compact .text-block { color: #a4a49b; font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 9.5px; line-height: 1.55; white-space: pre-wrap; }
-.technical-detail { width: 100%; margin-top: 4px; border-top: 1px solid rgba(255,255,255,.055); }
-.technical-detail > summary { justify-content: space-between; min-height: 29px; color: #898a82; font-size: 9px; }
-.technical-detail[open] > summary { color: #9a9b92; }
+.detail-label { color: var(--legacy-text-low); font-size: 8.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.content-blocks--compact .text-block { color: var(--legacy-text); font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 9.5px; line-height: 1.55; white-space: pre-wrap; }
+.technical-detail { width: 100%; margin-top: 4px; border-top: 1px solid color-mix(in oklab, var(--foreground) 5.5%, transparent); }
+.technical-detail > summary { justify-content: space-between; min-height: 29px; color: var(--legacy-text-low); font-size: 9px; }
+.technical-detail[open] > summary { color: var(--legacy-text-low); }
 .technical-detail pre,
 .unsupported-interaction pre {
   max-height: 280px;
   margin: 0 0 7px;
   padding: 10px;
   overflow: auto;
-  color: #9a9b92;
+  color: var(--legacy-text-low);
   font-family: "Geist Mono Variable", "Geist Mono", monospace;
   font-size: 9px;
   line-height: 1.55;
   white-space: pre-wrap;
-  background: #0b0b0b;
+  background: var(--background);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
 
 .image-block { margin: 2px 0; }
 .image-block img,
-.image-placeholder { display: block; width: min(100%, 560px); max-height: 320px; object-fit: contain; background: #0d0d0d; border: 1px solid var(--border); border-radius: 7px; }
+.image-placeholder { display: block; width: min(100%, 560px); max-height: 320px; object-fit: contain; background: var(--background); border: 1px solid var(--border); border-radius: 7px; }
 .image-block img { min-height: 56px; }
-.image-placeholder { padding: 24px; color: var(--muted); font-size: 10px; text-align: center; }
-.image-block figcaption { margin-top: 5px; color: #898a82; font-size: 9px; }
+.image-placeholder { padding: 24px; color: var(--text-muted); font-size: 10px; text-align: center; }
+.image-block figcaption { margin-top: 5px; color: var(--legacy-text-low); font-size: 9px; }
 
 .system-event,
 .interaction-event {
@@ -321,27 +321,27 @@ details[open] > summary .disclosure-icon { transform: rotate(90deg); }
   align-items: start;
   padding: 9px 10px;
   gap: 8px;
-  background: rgba(255,255,255,.018);
-  border-left: 2px solid #52534d;
+  background: color-mix(in oklab, var(--foreground) 1.8%, transparent);
+  border-left: 2px solid var(--legacy-text-faint);
   border-radius: 2px 7px 7px 2px;
 }
-.system-event--info { border-left-color: #6887a5; }
+.system-event--info { border-left-color: var(--status-info); }
 .system-event--success { border-left-color: var(--green); }
 .system-event--warning { border-left-color: var(--amber); }
 .system-event--error { border-left-color: var(--red); }
 .system-event-icon,
-.interaction-icon { display: grid; width: 24px; height: 24px; place-items: center; color: #81827a; }
-.system-event--error .system-event-icon { color: #d9666b; }
+.interaction-icon { display: grid; width: 24px; height: 24px; place-items: center; color: var(--legacy-text-low); }
+.system-event--error .system-event-icon { color: var(--red); }
 .system-event-copy,
 .interaction-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .system-event-copy strong,
-.interaction-copy strong { color: #b5b5ac; font-size: 10.5px; font-weight: 560; }
+.interaction-copy strong { color: var(--legacy-text); font-size: 10.5px; font-weight: 560; }
 .system-event-copy span,
-.interaction-copy span { color: #8f9088; font-size: 10px; line-height: 1.5; white-space: pre-wrap; }
-.system-event-copy small { overflow: hidden; color: #85867e; font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 8.5px; text-overflow: ellipsis; }
+.interaction-copy span { color: var(--legacy-text-low); font-size: 10px; line-height: 1.5; white-space: pre-wrap; }
+.system-event-copy small { overflow: hidden; color: var(--legacy-text-low); font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 8.5px; text-overflow: ellipsis; }
 .system-event > .technical-detail,
 .interaction-event > .technical-detail { grid-column: 2 / -1; }
-.event-state-label { align-self: center; color: #898a82; font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
+.event-state-label { align-self: center; color: var(--legacy-text-low); font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
 .interaction-event--pending { border-left-color: var(--amber); }
 .interaction-event--unsupported { border-left-color: var(--red); }
 
@@ -350,12 +350,12 @@ details[open] > summary .disclosure-icon { transform: rotate(90deg); }
   align-items: center;
   margin: 17px 0 0;
   gap: 8px;
-  color: #c7c7c7;
+  color: var(--legacy-text);
   font-size: 13px;
   line-height: 1.7;
 }
 .thinking-ellipsis { display: flex; width: 15px; flex: 0 0 auto; align-items: center; gap: 2px; }
-.thinking-ellipsis i { width: 3px; height: 3px; background: #85867e; border-radius: 50%; animation: thinking-dot 1.2s infinite ease-in-out; }
+.thinking-ellipsis i { width: 3px; height: 3px; background: var(--legacy-text-low); border-radius: 50%; animation: thinking-dot 1.2s infinite ease-in-out; }
 .thinking-ellipsis i:nth-child(2) { animation-delay: 140ms; }
 .thinking-ellipsis i:nth-child(3) { animation-delay: 280ms; }
 
@@ -369,4 +369,4 @@ details[open] > summary .disclosure-icon { transform: rotate(90deg); }
 }
 
 .timeline--empty { display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 40px 24px 20px; text-align: center; }
-.timeline--empty h2 { margin: 0; color: #ededed; font-size: 19px; font-weight: 590; letter-spacing: -0.025em; }
+.timeline--empty h2 { margin: 0; color: var(--legacy-text-high); font-size: 19px; font-weight: 590; letter-spacing: -0.025em; }

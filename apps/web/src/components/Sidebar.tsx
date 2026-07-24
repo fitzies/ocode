@@ -1,10 +1,42 @@
-import type { SessionStatus } from "@anvil/protocol";
-import type { AnvilClientSnapshot } from "../lib/anvilClient";
 import { sortSessionsByActivity } from "@anvil/state";
+import {
+  Add01Icon,
+  ArrowDown01Icon,
+  Delete02Icon,
+  MessageAdd01Icon,
+  Search01Icon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { memo, useEffect, useRef, useState } from "react";
-import { Icon } from "@iconify/react";
-import hamburgerMenuIcon from "@iconify-icons/solar/hamburger-menu-linear";
-import searchIcon from "@iconify-icons/solar/magnifer-linear";
+
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Progress } from "@/components/ui/progress";
+import { ProjectFavicon } from "@/components/ProjectFavicon";
+import {
+  Sidebar as SidebarPrimitive,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarInput,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import type { AnvilClientSnapshot } from "../lib/anvilClient";
 
 export type SidebarSnapshot = Pick<
   AnvilClientSnapshot,
@@ -13,9 +45,6 @@ export type SidebarSnapshot = Pick<
 
 interface SidebarProps {
   snapshot: SidebarSnapshot;
-  open: boolean;
-  mobile: boolean;
-  onClose: () => void;
   onSelectSession: (sessionId: string) => void;
   onCreateSession: (projectId: string) => void;
   onAddWorkspace: () => void;
@@ -27,9 +56,18 @@ interface SidebarProps {
   };
 }
 
-function StatusMark({ status, completedUnviewed }: { status: SessionStatus; completedUnviewed: boolean }) {
-  const label = completedUnviewed ? "completed, unviewed" : status;
-  return <span className={`session-status session-status--${completedUnviewed ? "completed-unviewed" : status}`} aria-label={label} />;
+function RunningElapsed({ since }: { since: string }) {
+  const [, setTick] = useState(0);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1_000));
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return <span>{minutes > 0 ? `${minutes}m ${remainder}s` : `${seconds}s`}</span>;
 }
 
 function usageTone(window: { usedPercent: number; resetAt?: number } | undefined, hours: number) {
@@ -49,6 +87,18 @@ function capitalizeTitle(value: string) {
   return value[0]!.toLocaleUpperCase() + value.slice(1);
 }
 
+function formatUsageReset(resetAt: number | undefined) {
+  if (!resetAt) return "Reset time unavailable";
+  const remainingMinutes = Math.max(0, Math.ceil((resetAt * 1000 - Date.now()) / 60_000));
+  if (remainingMinutes < 1) return "Resets shortly";
+  const days = Math.floor(remainingMinutes / (24 * 60));
+  const hours = Math.floor((remainingMinutes % (24 * 60)) / 60);
+  const minutes = remainingMinutes % 60;
+  if (days > 0) return `Resets in ${days}d${hours > 0 ? ` ${hours}h` : ""}`;
+  if (hours > 0) return `Resets in ${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`;
+  return `Resets in ${minutes}m`;
+}
+
 function formatUpdatedAt(value: string) {
   const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
   if (elapsedMinutes < 1) return "Now";
@@ -57,11 +107,15 @@ function formatUpdatedAt(value: string) {
   return `${Math.floor(elapsedMinutes / (24 * 60))}d`;
 }
 
+const usageIndicatorClass = {
+  success: "[&_[data-slot=progress-indicator]]:bg-[var(--green)]",
+  warning: "[&_[data-slot=progress-indicator]]:bg-amber-600 dark:[&_[data-slot=progress-indicator]]:bg-amber-400",
+  danger: "[&_[data-slot=progress-indicator]]:bg-destructive",
+  muted: "[&_[data-slot=progress-indicator]]:bg-muted-foreground/25",
+} as const;
+
 export const Sidebar = memo(function Sidebar({
   snapshot,
-  open,
-  mobile,
-  onClose,
   onSelectSession,
   onCreateSession,
   onAddWorkspace,
@@ -72,14 +126,9 @@ export const Sidebar = memo(function Sidebar({
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [settledOpen, setSettledOpen] = useState(true);
-  const [newThreadMenuOpen, setNewThreadMenuOpen] = useState(false);
   const [settlementPending, setSettlementPending] = useState<Set<string>>(new Set());
-  const [contextMenu, setContextMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const threadCreateRef = useRef<HTMLButtonElement>(null);
-  const newThreadMenuRef = useRef<HTMLDivElement>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
-  const contextTriggerRef = useRef<HTMLButtonElement>(null);
+  const { isMobile, setOpenMobile } = useSidebar();
   const normalizedQuery = query.trim().toLowerCase();
 
   useEffect(() => {
@@ -93,53 +142,8 @@ export const Sidebar = memo(function Sidebar({
     return () => window.removeEventListener("keydown", focusSearch);
   }, []);
 
-  useEffect(() => {
-    if (!newThreadMenuOpen) return;
-    requestAnimationFrame(() => newThreadMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus());
-    const close = (event: PointerEvent | KeyboardEvent) => {
-      if (event instanceof KeyboardEvent && event.key !== "Escape") return;
-      if (event instanceof PointerEvent && (
-        newThreadMenuRef.current?.contains(event.target as Node) ||
-        threadCreateRef.current?.contains(event.target as Node)
-      )) return;
-      setNewThreadMenuOpen(false);
-      if (event instanceof KeyboardEvent) requestAnimationFrame(() => threadCreateRef.current?.focus());
-    };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", close);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", close);
-    };
-  }, [newThreadMenuOpen]);
-
-  useEffect(() => {
-    if (!contextMenu) return;
-    requestAnimationFrame(() => contextMenuRef.current?.querySelector<HTMLButtonElement>("button")?.focus());
-    const close = (event: Event) => {
-      if (event.type === "keydown" && (event as KeyboardEvent).key !== "Escape") return;
-      setContextMenu(null);
-      if (event.type === "keydown") requestAnimationFrame(() => contextTriggerRef.current?.focus());
-    };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", close);
-    window.addEventListener("resize", close);
-    window.addEventListener("scroll", close, true);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", close);
-      window.removeEventListener("resize", close);
-      window.removeEventListener("scroll", close, true);
-    };
-  }, [contextMenu]);
-
-  const openSessionMenu = (sessionId: string, x: number, y: number, trigger: HTMLButtonElement) => {
-    contextTriggerRef.current = trigger;
-    setContextMenu({
-      sessionId,
-      x: Math.max(8, Math.min(x, window.innerWidth - 168)),
-      y: Math.max(8, Math.min(y, window.innerHeight - 58)),
-    });
+  const closeMobile = () => {
+    if (isMobile) setOpenMobile(false);
   };
 
   const visibleSessions = sortSessionsByActivity(snapshot.sessions.filter((session) => {
@@ -174,157 +178,147 @@ export const Sidebar = memo(function Sidebar({
     const settling = settlementPending.has(session.id);
     const displayTitle = capitalizeTitle(session.title);
     const branch = session.branch ?? "unknown";
+
     return (
-      <div className={`session-item ${settled ? "session-item--settled" : ""}`} key={session.id}>
-        <button
-          className={`session-row ${active ? "session-row--active" : ""}`}
-          data-session-id={session.id}
-          onClick={() => {
-            setContextMenu(null);
-            onSelectSession(session.id);
-            onClose();
-          }}
-          onContextMenu={(event) => {
-            event.preventDefault();
-            openSessionMenu(session.id, event.clientX, event.clientY, event.currentTarget);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
-              event.preventDefault();
-              const bounds = event.currentTarget.getBoundingClientRect();
-              openSessionMenu(session.id, bounds.right - 8, bounds.top + 8, event.currentTarget);
-            }
-          }}
-        >
-          <span className="session-copy">
-            <span className="session-project-line">
-              <span className="session-project">{project?.name.toLowerCase() ?? "unknown"}</span>
-              <span className={`session-runtime session-runtime--${session.status}`}>
-                {session.status === "running" ? "Working" : session.status === "waiting" ? "Needs you" : session.status === "failed" ? "Failed" : "Idle"}
+      <ContextMenu key={session.id}>
+        <div className={`session-item ${settled ? "session-item--settled" : ""}`}>
+          <ContextMenuTrigger asChild>
+            <button
+              className={`session-row ${active ? "session-row--active" : ""}`}
+              data-session-id={session.id}
+              onClick={() => {
+                onSelectSession(session.id);
+                closeMobile();
+              }}
+            >
+              <span className="session-copy">
+                <span className="session-project-line">
+                  <span className="session-project">{project?.name.toLowerCase() ?? "unknown"}</span>
+                  {session.status === "running" && <span className="session-spinner" role="status" aria-label="Working" />}
+                  {session.status === "waiting" && <span className="session-runtime session-runtime--waiting">Needs you</span>}
+                  {session.status === "failed" && <span className="session-runtime session-runtime--failed">Failed</span>}
+                </span>
+                <span className="session-title" title={displayTitle}>{displayTitle}</span>
+                <span className="session-meta">
+                  <span className="session-context-copy" title={`${project?.name.toLowerCase() ?? "unknown"}/${branch}`}>{project?.name.toLowerCase() ?? "unknown"}/{branch}</span>
+                  <span className={`session-recency ${completedUnviewed ? "session-recency--completed" : ""}`}>
+                    {session.status === "running"
+                      ? <RunningElapsed since={session.updatedAt} />
+                      : <span>{completedUnviewed ? "Completed" : formatUpdatedAt(session.updatedAt)}</span>}
+                  </span>
+                </span>
               </span>
-            </span>
-            <span className="session-title" title={displayTitle}>{displayTitle}</span>
-            <span className="session-meta">
-              <span className="session-context-copy" title={`${project?.name.toLowerCase() ?? "unknown"}/${branch}`}>{project?.name.toLowerCase() ?? "unknown"}/{branch}</span>
-              <span className="session-recency">
-                <StatusMark status={session.status} completedUnviewed={completedUnviewed} />
-                <span>{completedUnviewed ? "Completed" : formatUpdatedAt(session.updatedAt)}</span>
-              </span>
-            </span>
-          </span>
-        </button>
-        <button
-          type="button"
-          className="session-settle"
-          aria-label={`${settled ? "Unsettle" : "Settle"} ${displayTitle}`}
-          aria-busy={settling || undefined}
-          disabled={settling}
-          onClick={() => void toggleSettled(session.id, !settled)}
-        >
-          {settling ? "Saving" : settled ? "Unsettle" : "Settle"}
-        </button>
-      </div>
+            </button>
+          </ContextMenuTrigger>
+          {(settled || session.status !== "running") && (
+            <button
+              type="button"
+              className="session-settle"
+              aria-label={`${settled ? "Unsettle" : "Settle"} ${displayTitle}`}
+              aria-busy={settling || undefined}
+              disabled={settling}
+              onClick={() => void toggleSettled(session.id, !settled)}
+            >
+              {settling ? "Saving" : settled ? "Unsettle" : "Settle"}
+            </button>
+          )}
+        </div>
+        <ContextMenuContent className="w-40">
+          <ContextMenuItem variant="destructive" onSelect={() => onRequestDeleteSession(session.id)}>
+            <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+            Delete thread
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     );
   };
 
   return (
-    <aside
-      className={`sidebar ${open ? "sidebar--open" : ""}`}
-      aria-label="Projects and sessions"
-      aria-modal={mobile && open ? true : undefined}
-      role={mobile ? "dialog" : undefined}
-      inert={mobile && !open ? true : undefined}
-    >
-      <div className="sidebar-brand">
-        <button
-          className="icon-button sidebar-close"
-          onClick={onClose}
-          aria-label="Close sidebar"
-          autoFocus={mobile && open}
-        >
-          <Icon icon={hamburgerMenuIcon} width={18} />
-        </button>
-        <div className="brand-lockup">
-          <span className="brand-name">Anvil</span>
+    <SidebarPrimitive collapsible="offcanvas" aria-label="Projects and sessions">
+      <SidebarHeader className="gap-2 border-b border-sidebar-border p-2.5">
+        <div className="flex min-h-8 items-center gap-1">
+          <SidebarTrigger className="sidebar-close" aria-label="Close sidebar" />
+          <span className="px-1 text-xs font-medium tracking-tight text-sidebar-foreground">Anvil</span>
         </div>
-      </div>
-
-      <div className="sidebar-search-row">
-        <label className="thread-search">
-          <Icon icon={searchIcon} width={15} />
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search threads"
-            aria-label="Search all threads"
-          />
-          <kbd>⌘K</kbd>
-        </label>
-        <div className="thread-queue-actions">
-          <button
-            type="button"
-            ref={threadCreateRef}
-            className="thread-create"
-            aria-label="Create thread"
-            aria-haspopup={projectFilter ? undefined : "dialog"}
-            aria-expanded={projectFilter ? undefined : newThreadMenuOpen}
-            onClick={() => {
-              if (projectFilter) {
+        <div className="flex gap-1.5">
+          <div className="relative min-w-0 flex-1">
+            <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <SidebarInput
+              ref={searchRef}
+              className="pr-9 pl-8 text-[0.65625rem] font-normal"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search threads"
+              aria-label="Search all threads"
+            />
+            <kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 font-mono text-[0.5625rem] text-muted-foreground">⌘K</kbd>
+          </div>
+          {projectFilter ? (
+            <Button
+              variant="secondary"
+              size="icon-lg"
+              aria-label={`Create thread in ${snapshot.projects.find((project) => project.id === projectFilter)?.name ?? "filtered project"}`}
+              onClick={() => {
                 onCreateSession(projectFilter);
-                onClose();
-              } else {
-                setNewThreadMenuOpen((open) => !open);
-              }
-            }}
-          >
-            <span aria-hidden="true">+</span>
-          </button>
-          {newThreadMenuOpen && !projectFilter && (
-            <div ref={newThreadMenuRef} className="new-thread-menu" role="dialog" aria-label="Choose a project for the new thread">
-              {snapshot.projects.map((project) => (
-                <button
-                  type="button"
-                  key={project.id}
-                  onClick={() => {
-                    setNewThreadMenuOpen(false);
-                    onCreateSession(project.id);
-                    onClose();
-                  }}
-                >
-                  {project.name.toLowerCase()}
-                </button>
-              ))}
-              {snapshot.projects.length === 0 && <span>Add a project first</span>}
-            </div>
+                closeMobile();
+              }}
+            >
+              <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-4" />
+            </Button>
+          ) : (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="secondary" size="icon-lg" aria-label="Create thread">
+                  <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuLabel>New thread in</DropdownMenuLabel>
+                {snapshot.projects.map((project) => (
+                  <DropdownMenuItem
+                    key={project.id}
+                    onSelect={() => {
+                      onCreateSession(project.id);
+                      closeMobile();
+                    }}
+                  >
+                    {project.name.toLowerCase()}
+                  </DropdownMenuItem>
+                ))}
+                {snapshot.projects.length === 0 && <DropdownMenuItem disabled>Add a workspace first</DropdownMenuItem>}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
-      </div>
-
-      <div className="project-filter-wrap">
-        <div className="project-filters" role="group" aria-label="Filter threads by project">
-          <button className={`project-filter ${projectFilter === null ? "project-filter--active" : ""}`} aria-pressed={projectFilter === null} onClick={() => setProjectFilter(null)}>All</button>
-          {snapshot.projects.map((project) => (
-            <button
-              key={project.id}
-              className={`project-filter ${projectFilter === project.id ? "project-filter--active" : ""}`}
-              aria-pressed={projectFilter === project.id}
-              onClick={() => {
-                setProjectFilter(project.id);
-                setNewThreadMenuOpen(false);
-              }}
-              title={project.path}
-            >
-              {project.name.toLowerCase()}
-            </button>
-          ))}
-          <button type="button" className="project-filter-add" onClick={onAddWorkspace} aria-label="Add workspace" title="Add workspace">+</button>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto [scrollbar-width:none]" role="group" aria-label="Filter threads by project">
+            <Badge asChild variant={projectFilter === null ? "secondary" : "outline"} className="h-5 rounded-md px-2 text-[0.625rem] font-normal aria-pressed:border-foreground/15 aria-pressed:bg-foreground aria-pressed:text-background">
+              <button type="button" aria-pressed={projectFilter === null} onClick={() => setProjectFilter(null)}>All</button>
+            </Badge>
+            {snapshot.projects.map((project) => (
+              <Badge asChild variant={projectFilter === project.id ? "secondary" : "outline"} className="h-5 rounded-md px-2 text-[0.625rem] font-normal aria-pressed:border-foreground/15 aria-pressed:bg-foreground aria-pressed:text-background" key={project.id}>
+                <button
+                  type="button"
+                  className="flex max-w-24 items-center gap-1 truncate"
+                  aria-pressed={projectFilter === project.id}
+                  onClick={() => setProjectFilter((current) => current === project.id ? null : project.id)}
+                  title={project.path}
+                >
+                  <ProjectFavicon projectId={project.id} />
+                  <span className="truncate">{project.name.toLowerCase()}</span>
+                </button>
+              </Badge>
+            ))}
+          </div>
+          <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={() => { onAddWorkspace(); closeMobile(); }} aria-label="Add workspace" title="Add workspace">
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} className="size-3.5" />
+          </Button>
         </div>
-      </div>
+      </SidebarHeader>
 
-      <div className="sidebar-scroll">
-        {snapshot.projects.length === 0 && !normalizedQuery && <div className="workspace-empty-note">Add a Forge directory to begin.</div>}
-        {(normalizedQuery || projectFilter) && visibleSessions.length === 0 && <div className="search-empty">No matching threads</div>}
+      <SidebarContent className="overflow-x-hidden px-2 py-2">
+        {snapshot.projects.length === 0 && !normalizedQuery && <div className="px-2 py-3 text-xs text-muted-foreground">Add a Forge directory to begin.</div>}
+        {(normalizedQuery || projectFilter) && visibleSessions.length === 0 && <div className="px-2 py-3 text-xs text-muted-foreground">No matching threads</div>}
 
         <section className="thread-section" aria-label="Unsettled threads">
           <div className="session-list">{unsettledSessions.map((session) => renderSession(session, false))}</div>
@@ -333,53 +327,44 @@ export const Sidebar = memo(function Sidebar({
         </section>
 
         {settledSessions.length > 0 && (
-          <section className="thread-section thread-section--settled" aria-labelledby="settled-heading">
-            <button className="thread-section-heading thread-section-toggle" id="settled-heading" onClick={() => setSettledOpen((open) => !open)} aria-expanded={settledOpen}>
-              <span>{settledOpen ? "▾" : "▸"} Settled</span><span>{settledSessions.length}</span>
-            </button>
-            {settledOpen && <div className="session-list session-list--settled">{settledSessions.map((session) => renderSession(session, true))}</div>}
-          </section>
+          <Collapsible open={settledOpen} onOpenChange={setSettledOpen} className="thread-section thread-section--settled min-w-0 w-full">
+            <CollapsibleTrigger asChild>
+              <button className="thread-section-heading thread-section-toggle" id="settled-heading">
+                <span className="flex items-center gap-1">
+                  <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className={`size-3 transition-transform ${settledOpen ? "" : "-rotate-90"}`} />
+                  Settled
+                </span>
+                <span>{settledSessions.length}</span>
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="session-list session-list--settled">{settledSessions.map((session) => renderSession(session, true))}</div>
+            </CollapsibleContent>
+          </Collapsible>
         )}
-      </div>
-      {contextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="thread-context-menu"
-          role="menu"
-          aria-label="Thread actions"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onPointerDown={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="thread-context-delete"
-            onClick={() => {
-              const sessionId = contextMenu.sessionId;
-              setContextMenu(null);
-              onRequestDeleteSession(sessionId);
-            }}
-          >
-            Delete thread
-          </button>
-        </div>
-      )}
+      </SidebarContent>
 
-      <div className="sidebar-footer">
+      <SidebarFooter className="border-t border-sidebar-border p-3 pb-5">
         {usage && (usage.fiveHour || usage.weekly) && (
-          <div className="usage-limits" aria-label="Codex usage limits">
-            {([['5h', 5, usage.fiveHour], ['Weekly', 7 * 24, usage.weekly]] as const).map(([label, hours, window]) => {
+          <div className="grid gap-3.5" aria-label="Codex usage limits">
+            {([["5 hours", 5, usage.fiveHour], ["Weekly", 7 * 24, usage.weekly]] as const).map(([label, hours, window]) => {
               const tone = usageTone(window, hours);
               return (
-                <div className={`usage-limit usage-limit--${tone}`} key={label} title={window?.resetAt ? `Resets ${new Date(window.resetAt * 1000).toLocaleString()}` : undefined}>
-                  <div className="usage-limit-label"><span>{label}</span><span>{window ? `${Math.round(window.usedPercent)}%` : "—"}</span></div>
-                  <div className="usage-track"><i style={{ width: `${window ? Math.max(0, Math.min(100, window.usedPercent)) : 0}%` }} /></div>
+                <div className="grid gap-1.5" key={label} title={window?.resetAt ? `Resets ${new Date(window.resetAt * 1000).toLocaleString()}` : undefined}>
+                  <div className="flex items-center justify-between text-[0.6875rem] leading-none">
+                    <span className="text-foreground/75">{label}</span>
+                    <span className="tabular-nums text-muted-foreground">{window ? `${Math.round(window.usedPercent)}% used` : "Unavailable"}</span>
+                  </div>
+                  <Progress className={`h-1 w-full bg-foreground/8 ${usageIndicatorClass[tone]}`} value={window ? Math.max(0, Math.min(100, window.usedPercent)) : 0} />
+                  <span className="font-mono text-[0.5625rem] leading-none text-muted-foreground/70">
+                    {formatUsageReset(window?.resetAt)}
+                  </span>
                 </div>
               );
             })}
           </div>
         )}
-      </div>
-    </aside>
+      </SidebarFooter>
+    </SidebarPrimitive>
   );
 });

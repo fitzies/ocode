@@ -239,32 +239,33 @@ describe("ForgeHttpServer", () => {
     })).status).toBe(404);
   });
 
-  it("queues an owner-initiated service restart after acknowledging the request", async () => {
+  it("runs an owner-initiated web app rebuild", async () => {
     await server.close();
-    let requestRestart!: () => void;
-    const restarted = new Promise<void>((resolve) => {
-      requestRestart = resolve;
+    let rebuilt = false;
+    server = new ForgeHttpServer({
+      events,
+      artifacts,
+      requestRebuild: async () => { rebuilt = true; },
     });
-    server = new ForgeHttpServer({ events, artifacts, requestRestart, instanceId: "forge-before-restart" });
     await server.listen("127.0.0.1", 0);
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
     baseUrl = `http://127.0.0.1:${address.port}`;
 
-    const response = await fetch(`${baseUrl}/api/v1/admin/restart`, {
+    const response = await fetch(`${baseUrl}/api/v1/admin/rebuild`, {
       method: "POST",
       headers: { origin: baseUrl },
     });
 
-    expect(response.status).toBe(202);
-    expect(await response.json()).toEqual({ status: "restarting", instanceId: "forge-before-restart" });
-    await restarted;
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ status: "rebuilt" });
+    expect(rebuilt).toBe(true);
   });
 
-  it("rejects restart requests when Forge is not service-managed", async () => {
-    const response = await fetch(`${baseUrl}/api/v1/admin/restart`, { method: "POST" });
+  it("rejects rebuild requests when rebuilding is unavailable", async () => {
+    const response = await fetch(`${baseUrl}/api/v1/admin/rebuild`, { method: "POST" });
     expect(response.status).toBe(503);
-    expect(await response.json()).toMatchObject({ code: "restart_unavailable" });
+    expect(await response.json()).toMatchObject({ code: "rebuild_unavailable" });
   });
 
   it("replays and streams SSE events after a cursor", async () => {

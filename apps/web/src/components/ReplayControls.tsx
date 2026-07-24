@@ -1,11 +1,12 @@
-import { Icon } from "@iconify/react";
-import altArrowDownIcon from "@iconify-icons/solar/alt-arrow-down-linear";
-import closeCircleIcon from "@iconify-icons/solar/close-circle-linear";
-import pauseIcon from "@iconify-icons/solar/pause-bold";
-import playIcon from "@iconify-icons/solar/play-bold";
-import refreshIcon from "@iconify-icons/solar/restart-linear";
-import { useEffect, useRef, useState } from "react";
+import { Cancel01Icon, PauseIcon, PlayIcon, RefreshIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fixtures } from "../fixtures";
 import type { ReplayStatus } from "../lib/anvilClient";
 
@@ -20,48 +21,59 @@ interface ReplayControlsProps {
 
 export function ReplayControls({ replay, onFixtureChange, onInstant, onRestart, onSpeedChange, onToggle }: ReplayControlsProps) {
   const [open, setOpen] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
   const fixture = fixtures.find((candidate) => candidate.id === replay.fixtureId);
   const progress = replay.total ? Math.round((replay.cursor / replay.total) * 100) : 0;
 
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: PointerEvent) => {
-      if (!panelRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    window.addEventListener("pointerdown", close);
-    window.addEventListener("keydown", escape);
-    return () => {
-      window.removeEventListener("pointerdown", close);
-      window.removeEventListener("keydown", escape);
-    };
-  }, [open]);
-
   return (
-    <div className="replay-controls" ref={panelRef}>
-      <button className="replay-chip" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="dialog">
-        <span className={replay.playing ? "replay-dot replay-dot--active" : "replay-dot"} />
-        <span>Fixture</span>
-        <strong>{replay.cursor}/{replay.total}</strong>
-        <Icon icon={altArrowDownIcon} width={12} />
-      </button>
-      {open && (
-        <div className="replay-panel" role="dialog" aria-label="Developer fixture replay">
-          <header><span><small>Developer mode</small><strong>Pi RPC replay</strong></span><button className="icon-button" type="button" aria-label="Close replay controls" onClick={() => setOpen(false)}><Icon icon={closeCircleIcon} width={17} /></button></header>
-          <label className="replay-field"><span>Fixture</span><select value={replay.fixtureId} onChange={(event) => onFixtureChange(event.target.value)}>{fixtures.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-          <p>{fixture?.description}</p>
-          <div className="replay-progress" aria-label={`${progress}% replayed`}><span style={{ width: `${progress}%` }} /></div>
-          <div className="replay-transport">
-            <button type="button" onClick={onRestart} title="Restart and play"><Icon icon={refreshIcon} width={15} /><span>Restart</span></button>
-            <button className="replay-play" type="button" onClick={onToggle}><Icon icon={replay.playing ? pauseIcon : playIcon} width={15} /><span>{replay.playing ? "Pause" : "Play"}</span></button>
-            <button type="button" onClick={onInstant} title="Restore final state"><span>Instant</span></button>
-          </div>
-          <label className="replay-speed"><span>Playback speed</span><select value={replay.speed} onChange={(event) => onSpeedChange(Number(event.target.value))}><option value={0.5}>0.5×</option><option value={1}>1×</option><option value={2}>2×</option><option value={4}>4×</option></select></label>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" size="sm" aria-label="Open developer fixture replay">
+          <span className={`size-1.5 rounded-full ${replay.playing ? "bg-emerald-500" : "bg-muted-foreground/50"}`} />
+          Fixture
+          <span className="font-mono text-[0.625rem] text-muted-foreground">{replay.cursor}/{replay.total}</span>
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="end" className="grid w-72 gap-3">
+        <header className="flex items-start justify-between">
+          <span className="grid">
+            <small className="font-mono text-[0.625rem] uppercase tracking-wider text-muted-foreground">Developer mode</small>
+            <strong className="text-sm font-medium">Pi RPC replay</strong>
+          </span>
+          <Button variant="ghost" size="icon-sm" type="button" aria-label="Close replay controls" onClick={() => setOpen(false)}>
+            <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+          </Button>
+        </header>
+        <Field>
+          <FieldLabel>Fixture</FieldLabel>
+          <Select value={replay.fixtureId} onValueChange={onFixtureChange}>
+            <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {fixtures.map((item) => <SelectItem key={item.id} value={item.id}>{item.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </Field>
+        <p className="m-0 text-xs/relaxed text-muted-foreground">{fixture?.description}</p>
+        <Progress value={progress} aria-label={`${progress}% replayed`} />
+        <div className="grid grid-cols-3 gap-1.5">
+          <Button variant="outline" type="button" onClick={onRestart} title="Restart and play">
+            <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />Restart
+          </Button>
+          <Button type="button" onClick={onToggle}>
+            <HugeiconsIcon icon={replay.playing ? PauseIcon : PlayIcon} strokeWidth={2} />
+            {replay.playing ? "Pause" : "Play"}
+          </Button>
+          <Button variant="outline" type="button" onClick={onInstant} title="Restore final state">Instant</Button>
         </div>
-      )}
-    </div>
+        <Field orientation="horizontal" className="items-center justify-between">
+          <FieldLabel>Playback speed</FieldLabel>
+          <Select value={String(replay.speed)} onValueChange={(value) => onSpeedChange(Number(value))}>
+            <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {[0.5, 1, 2, 4].map((speed) => <SelectItem key={speed} value={String(speed)}>{speed}×</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </Field>
+      </PopoverContent>
+    </Popover>
   );
 }

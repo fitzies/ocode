@@ -17,6 +17,7 @@ import {
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
+import { resolveProjectFavicon } from "./projectFavicon.ts";
 
 const MAX_COMMAND_BYTES = 2 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -29,7 +30,7 @@ export interface ForgeHttpServerOptions {
   handleCommand?: (command: AnvilClientCommand) => Promise<AnvilCommandResponse>;
   indicators?: LiveIndicatorsService;
   searchFiles?: (sessionId: string, query: string, limit: number) => Promise<string[] | undefined>;
-  requestRestart?: () => void;
+  requestRebuild?: () => Promise<void>;
   instanceId?: string;
   ownerLogin?: string;
   webRoot?: string;
@@ -155,8 +156,8 @@ export class ForgeHttpServer {
       sendJson(response, 403, apiError("owner_rejected", "Tailscale identity is not authorized"));
       return;
     }
-    if (request.method === "POST" && url.pathname === "/api/v1/admin/restart") {
-      this.restart(request, response);
+    if (request.method === "POST" && url.pathname === "/api/v1/admin/rebuild") {
+      await this.rebuild(request, response);
       return;
     }
     const attachmentDeleteMatch = /^\/api\/v1\/sessions\/([^/]+)\/attachments\/([^/]+)$/.exec(url.pathname);
@@ -177,6 +178,11 @@ export class ForgeHttpServer {
     const artifactMatch = /^\/api\/v1\/artifacts\/([^/]+)$/.exec(url.pathname);
     if ((request.method === "GET" || request.method === "HEAD") && artifactMatch) {
       await this.artifact(request, response, artifactMatch[1]!);
+      return;
+    }
+    const projectFaviconMatch = /^\/api\/v1\/projects\/([^/]+)\/favicon$/.exec(url.pathname);
+    if ((request.method === "GET" || request.method === "HEAD") && projectFaviconMatch) {
+      await this.projectFavicon(request, response, projectFaviconMatch[1]!);
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/v1/bootstrap") {
@@ -267,20 +273,24 @@ export class ForgeHttpServer {
     return typeof login === "string" && login === this.options.ownerLogin;
   }
 
-  private restart(request: IncomingMessage, response: ServerResponse): void {
+  private async rebuild(request: IncomingMessage, response: ServerResponse): Promise<void> {
     if (!sameOrigin(request)) {
       sendJson(response, 403, apiError("origin_rejected", "Request origin is not allowed"));
       return;
     }
-    if (!this.options.requestRestart) {
-      sendJson(response, 503, apiError(
-        "restart_unavailable",
-        "Forge restart is available only when Anvil is managed by a restart-capable service",
-      ));
+    if (!this.options.requestRebuild) {
+      sendJson(response, 503, apiError("rebuild_unavailable", "Web app rebuild is unavailable"));
       return;
     }
-    sendJson(response, 202, { status: "restarting", instanceId: this.instanceId });
-    setImmediate(() => this.options.requestRestart?.());
+    try {
+      await this.options.requestRebuild();
+      sendJson(response, 200, { status: "rebuilt" });
+    } catch (error) {
+      sendJson(response, 500, apiError(
+        "rebuild_failed",
+        error instanceof Error ? error.message : String(error),
+      ));
+    }
   }
 
   private deleteAttachment(
@@ -388,6 +398,35 @@ export class ForgeHttpServer {
       return;
     }
     sendJson(response, 200, { files: paths.map((path) => ({ path })) });
+  }
+
+  private async projectFavicon(
+    request: IncomingMessage,
+    response: ServerResponse,
+    encodedProjectId: string,
+  ): Promise<void> {
+    let projectId: string;
+    try {
+      projectId = decodeURIComponent(encodedProjectId);
+    } catch {
+      sendJson(response, 400, apiError("invalid_project", "Project id is malformed"));
+      return;
+    }
+    const project = this.options.events.currentSnapshot().projects.find((candidate) => candidate.id === projectId);
+    const favicon = project ? await resolveProjectFavicon(project.path) : null;
+    if (!favicon) {
+      sendJson(response, 404, apiError("project_favicon_not_found", "Project favicon not found"));
+      return;
+    }
+
+    response.writeHead(200, {
+      "content-type": favicon.mediaType,
+      "content-length": favicon.body.length,
+      "cache-control": "private, max-age=300",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "sandbox",
+    });
+    response.end(request.method === "HEAD" ? undefined : favicon.body);
   }
 
   private async artifact(

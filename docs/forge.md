@@ -34,7 +34,16 @@ Vite proxies `/api` to `http://127.0.0.1:3210`. Without `VITE_ANVIL_TRANSPORT=fo
 
 ## Service installation
 
-Build and install Anvil at `/opt/anvil`, then adapt `deploy/anvil-forge.service` if the Forge account or paths differ:
+Build and install Anvil at `/opt/anvil`, then adapt `deploy/anvil-forge.service` if the Forge account or paths differ. Install the management command somewhere on the administrator's `PATH`:
+
+```bash
+sudo ln -sf /opt/anvil/bin/anvil /usr/local/bin/anvil
+anvil status
+```
+
+`anvil start`, `stop`, `restart`, `rebuild`, `status`, and `logs` manage the service. Status gives a compact service and Tailscale summary followed by every running Pi process on the host.
+
+Install the systemd unit:
 
 ```bash
 sudo install -m 0644 deploy/anvil-forge.service /etc/systemd/system/anvil-forge.service

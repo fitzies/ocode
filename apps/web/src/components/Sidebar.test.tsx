@@ -1,22 +1,22 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { FixtureAnvilClient, type AnvilClientSnapshot } from "../lib/anvilClient";
 import { Sidebar } from "./Sidebar";
 
 function renderSnapshot(snapshot: AnvilClientSnapshot): string {
   return renderToStaticMarkup(
-    <Sidebar
-      snapshot={snapshot}
-      open
-      mobile={false}
-      onClose={() => undefined}
-      onSelectSession={() => undefined}
-      onCreateSession={() => undefined}
-      onAddWorkspace={() => undefined}
-      onRequestDeleteSession={() => undefined}
-      onSetSessionSettled={async () => undefined}
-    />,
+    <SidebarProvider>
+      <Sidebar
+        snapshot={snapshot}
+        onSelectSession={() => undefined}
+        onCreateSession={() => undefined}
+        onAddWorkspace={() => undefined}
+        onRequestDeleteSession={() => undefined}
+        onSetSessionSettled={async () => undefined}
+      />
+    </SidebarProvider>,
   );
 }
 
@@ -43,6 +43,23 @@ describe("Sidebar thread ordering", () => {
     expect(markup).toContain(`${project.name}/feature/sidebar`);
     expect(markup).toContain('aria-label="Create thread"');
     expect(markup).not.toContain(">Unsettled<");
+  });
+
+  it("hides the settle action while a thread is running", () => {
+    const client = new FixtureAnvilClient();
+    const base = client.getSnapshot();
+    const target = base.sessions[0]!;
+    const markup = renderSnapshot({
+      ...base,
+      sessions: base.sessions.map((session) => session.id === target.id
+        ? { ...session, title: "Active task", status: "running" as const, settled: false }
+        : session),
+    });
+    const start = markup.indexOf(`data-session-id="${target.id}"`);
+    const next = markup.indexOf("data-session-id=", start + 1);
+    const card = markup.slice(start, next === -1 ? undefined : next);
+
+    expect(card).not.toContain('aria-label="Settle Active task"');
   });
 
   it("moves user-settled threads into the compact settled section", () => {
@@ -93,10 +110,10 @@ describe("Sidebar thread ordering", () => {
       const next = markup.indexOf("data-session-id=", start + 1);
       return markup.slice(start, next === -1 ? undefined : next);
     };
-    expect(targetSession(renderSnapshot(completed))).toContain("session-status--completed-unviewed");
+    expect(targetSession(renderSnapshot(completed))).toContain("session-recency--completed");
     expect(targetSession(renderSnapshot({
       ...completed,
       readThroughSequences: { ...completed.readThroughSequences, [sessionId]: 500 },
-    }))).not.toContain("session-status--completed-unviewed");
+    }))).not.toContain("session-recency--completed");
   });
 });

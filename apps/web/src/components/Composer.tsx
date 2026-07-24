@@ -8,14 +8,15 @@ import type {
   SkillDescriptor,
   ThinkingLevel,
 } from "@anvil/protocol";
-import { Icon } from "@iconify/react";
-import altArrowDownIcon from "@iconify-icons/solar/alt-arrow-down-linear";
-import arrowUpIcon from "@iconify-icons/solar/arrow-up-bold";
-import commandIcon from "@iconify-icons/solar/command-bold-duotone";
-import mentionIcon from "@iconify-icons/solar/mention-circle-linear";
-import paperclipIcon from "@iconify-icons/solar/paperclip-linear";
-import closeCircleIcon from "@iconify-icons/solar/close-circle-linear";
-import stopIcon from "@iconify-icons/solar/stop-bold";
+import {
+  ArrowUp02Icon,
+  AtIcon,
+  Attachment01Icon,
+  Cancel01Icon,
+  CommandIcon,
+  StopIcon,
+} from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import {
   type ClipboardEvent,
   type FormEvent,
@@ -26,6 +27,10 @@ import {
   useState,
 } from "react";
 
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DeliveryMode, WorkspaceFile } from "../lib/anvilClient";
 
 export interface ComposerAttachment {
@@ -73,20 +78,6 @@ type SlashItem = {
   source: "extension" | "prompt" | "skill";
 };
 
-const MODEL_ORDER = new Map([
-  ["sol", 0],
-  ["luna", 1],
-  ["terra", 2],
-]);
-
-function modelAlias(model: ModelDescriptor): string | undefined {
-  const name = model.name.trim().toLowerCase();
-  const key = MODEL_ORDER.has(name)
-    ? name
-    : model.id.toLowerCase().match(/(?:^|[-_])(sol|luna|terra)$/)?.[1];
-  return key ? `${key[0]?.toUpperCase()}${key.slice(1)}` : undefined;
-}
-
 export function updateComposerDraft(
   drafts: Record<string, string>,
   sessionId: string,
@@ -100,40 +91,16 @@ export function updateComposerDraft(
 }
 
 export function selectAnvilModels(models: ModelDescriptor[]): ModelDescriptor[] {
-  return models
-    .flatMap((candidate) => {
-      const alias = modelAlias(candidate);
-      return alias ? [{ ...candidate, name: alias }] : [];
-    })
-    .sort((a, b) => (
-      (MODEL_ORDER.get(a.name.toLowerCase()) ?? 99) -
-      (MODEL_ORDER.get(b.name.toLowerCase()) ?? 99)
-    ));
+  return models.filter((model) => model.id.includes("5.6") || model.name.includes("5.6"));
 }
 
-function handleListboxKeyDown(
-  event: KeyboardEvent<HTMLDivElement>,
-  onClose: () => void,
-) {
-  const options = Array.from(
-    event.currentTarget.querySelectorAll<HTMLButtonElement>("[role='option']:not(:disabled)"),
-  );
-  if (!options.length) return;
-  const currentIndex = Math.max(0, options.indexOf(document.activeElement as HTMLButtonElement));
-  let nextIndex: number | undefined;
-  if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % options.length;
-  if (event.key === "ArrowUp") nextIndex = (currentIndex - 1 + options.length) % options.length;
-  if (event.key === "Home") nextIndex = 0;
-  if (event.key === "End") nextIndex = options.length - 1;
-  if (event.key === "Escape") {
-    event.preventDefault();
-    onClose();
-    return;
-  }
-  if (nextIndex !== undefined) {
-    event.preventDefault();
-    options[nextIndex]?.focus();
-  }
+export function nextThinkingLevel(
+  levels: readonly ThinkingLevel[],
+  current: ThinkingLevel,
+): ThinkingLevel | undefined {
+  if (levels.length < 2) return undefined;
+  const currentIndex = levels.indexOf(current);
+  return levels[(currentIndex + 1) % levels.length];
 }
 
 function fuzzyScore(value: string, query: string): number {
@@ -217,8 +184,6 @@ export function Composer({
   onThinkingLevelChange,
   onSend,
 }: ComposerProps) {
-  const [modelPickerOpen, setModelPickerOpen] = useState(false);
-  const [reasoningPickerOpen, setReasoningPickerOpen] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
   const [cursorPosition, setCursorPosition] = useState(prompt.length);
   const [fileItems, setFileItems] = useState<WorkspaceFile[]>([]);
@@ -226,10 +191,6 @@ export function Composer({
   const [fileMenuDismissed, setFileMenuDismissed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const modelPickerRef = useRef<HTMLDivElement>(null);
-  const reasoningPickerRef = useRef<HTMLDivElement>(null);
-  const modelButtonRef = useRef<HTMLButtonElement>(null);
-  const reasoningButtonRef = useRef<HTMLButtonElement>(null);
   const running = status === "running";
   const readyAttachments = attachments.flatMap((attachment) => attachment.reference ? [attachment.reference] : []);
   const uploadsPending = attachments.some((attachment) => attachment.status === "uploading");
@@ -268,8 +229,6 @@ export function Composer({
   }, [commands, skills, slashQuery]);
 
   useEffect(() => {
-    setModelPickerOpen(false);
-    setReasoningPickerOpen(false);
     setSlashIndex(0);
     setCursorPosition(0);
     setFileItems([]);
@@ -314,35 +273,6 @@ export function Composer({
       window.clearTimeout(timer);
     };
   }, [fileMention?.query, fileMention?.start, fileMenuDismissed, onSearchFiles, sessionId]);
-
-  useEffect(() => {
-    const picker = modelPickerOpen ? modelPickerRef.current : reasoningPickerOpen ? reasoningPickerRef.current : null;
-    if (!picker) return;
-    requestAnimationFrame(() =>
-      (picker.querySelector("[role='option'][aria-selected='true']") as HTMLElement | null)?.focus(),
-    );
-  }, [modelPickerOpen, reasoningPickerOpen]);
-
-  useEffect(() => {
-    if (!modelPickerOpen && !reasoningPickerOpen) return;
-    const closeOnPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (!modelPickerRef.current?.contains(target)) setModelPickerOpen(false);
-      if (!reasoningPickerRef.current?.contains(target)) setReasoningPickerOpen(false);
-    };
-    const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setModelPickerOpen(false);
-        setReasoningPickerOpen(false);
-      }
-    };
-    window.addEventListener("pointerdown", closeOnPointerDown);
-    window.addEventListener("keydown", closeOnEscape);
-    return () => {
-      window.removeEventListener("pointerdown", closeOnPointerDown);
-      window.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [modelPickerOpen, reasoningPickerOpen]);
 
   const chooseSlashItem = (item: SlashItem) => {
     const value = `/${item.command} `;
@@ -398,6 +328,20 @@ export function Composer({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (
+      event.key === "Tab" &&
+      event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    ) {
+      const nextLevel = nextThinkingLevel(model?.supportedThinkingLevels ?? [], thinkingLevel);
+      if (nextLevel) {
+        event.preventDefault();
+        onThinkingLevelChange(nextLevel);
+        return;
+      }
+    }
     if (fileMention && fileItems.length && !fileMenuDismissed) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -491,7 +435,7 @@ export function Composer({
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => chooseFile(item)}
               >
-                <Icon icon={paperclipIcon} width={15} />
+                <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} className="size-3.5" />
                 <span className="slash-option-copy"><strong>{item.path}</strong></span>
                 <span className="slash-source">file</span>
               </button>
@@ -516,7 +460,7 @@ export function Composer({
                 onPointerDown={(event) => event.preventDefault()}
                 onClick={() => chooseSlashItem(item)}
               >
-                <Icon icon={commandIcon} width={15} />
+                <HugeiconsIcon icon={CommandIcon} strokeWidth={2} className="size-3.5" />
                 <span className="slash-option-copy">
                   <strong>/{item.command}</strong>
                   {item.description && <small>{item.description}</small>}
@@ -530,14 +474,14 @@ export function Composer({
           <div className="composer-attachments" aria-label="Attached files">
             {attachments.map((attachment) => (
               <span className={`composer-attachment composer-attachment--${attachment.status}`} key={attachment.id} title={attachment.error}>
-                <Icon icon={paperclipIcon} width={13} />
+                <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} className="size-3" />
                 <span><strong>{attachment.name}</strong><small>{attachment.status === "uploading" ? "Uploading…" : attachment.status === "failed" ? attachment.error ?? "Upload failed" : formatAttachmentSize(attachment.size)}</small></span>
-                <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => onRemoveAttachment(sessionId, attachment.id)}><Icon icon={closeCircleIcon} width={14} /></button>
+                <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => onRemoveAttachment(sessionId, attachment.id)}><HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3.5" /></button>
               </span>
             ))}
           </div>
         )}
-        <textarea
+        <Textarea
           ref={textareaRef}
           rows={1}
           value={prompt}
@@ -572,87 +516,45 @@ export function Composer({
                 event.target.value = "";
               }}
             />
-            <button type="button" className="composer-icon" aria-label="Attach file" title="Attach files from this device" onClick={() => fileInputRef.current?.click()}>
-              <Icon icon={paperclipIcon} width={17} />
-            </button>
-            <button type="button" className="composer-icon" aria-label="Tag workspace file" title="Tag a workspace file" onClick={insertMention}>
-              <Icon icon={mentionIcon} width={17} />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="ghost" size="icon-sm" className="composer-icon" aria-label="Attach file" onClick={() => fileInputRef.current?.click()}>
+                  <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Attach files from this device</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" variant="ghost" size="icon-sm" className="composer-icon" aria-label="Tag workspace file" onClick={insertMention}>
+                  <HugeiconsIcon icon={AtIcon} strokeWidth={2} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Tag a workspace file</TooltipContent>
+            </Tooltip>
             <span className="toolbar-divider" />
-            <div className="model-picker" ref={modelPickerRef}>
-              <button
-                ref={modelButtonRef}
-                type="button"
-                className="model-select"
-                onClick={() => setModelPickerOpen((open) => !open)}
-                aria-haspopup="listbox"
-                aria-expanded={modelPickerOpen}
-                disabled={visibleModels.length === 0}
-              >
-                <span>{model?.name ?? (visibleModels.length ? "Choose model" : "No Anvil models")}</span>
-                <Icon icon={altArrowDownIcon} width={13} className={modelPickerOpen ? "model-chevron--open" : undefined} />
-              </button>
-              {modelPickerOpen && (
-                <div className="model-menu" role="listbox" aria-label="Model" onKeyDown={(event) => handleListboxKeyDown(event, () => { setModelPickerOpen(false); modelButtonRef.current?.focus(); })}>
-                  <div className="model-menu-label">Model</div>
-                  {visibleModels.map((option) => (
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={option.id === modelId}
-                      tabIndex={option.id === modelId ? 0 : -1}
-                      className={`model-option ${option.id === modelId ? "model-option--selected" : ""}`}
-                      key={option.id}
-                      onClick={() => {
-                        onModelChange(option.id);
-                        setModelPickerOpen(false);
-                        requestAnimationFrame(() => modelButtonRef.current?.focus());
-                      }}
-                    >
-                      <span>{option.name}</span>
-                      {option.id === modelId && <i />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="model-picker" ref={reasoningPickerRef}>
-              <button
-                ref={reasoningButtonRef}
-                type="button"
-                className="thinking-level"
-                onClick={() => setReasoningPickerOpen((open) => !open)}
-                aria-haspopup="listbox"
-                aria-expanded={reasoningPickerOpen}
-                disabled={!model?.reasoning}
-              >
-                <span>{thinkingLevel}</span>
-                <Icon icon={altArrowDownIcon} width={13} className={reasoningPickerOpen ? "model-chevron--open" : undefined} />
-              </button>
-              {reasoningPickerOpen && model && (
-                <div className="model-menu reasoning-menu" role="listbox" aria-label="Reasoning level" onKeyDown={(event) => handleListboxKeyDown(event, () => { setReasoningPickerOpen(false); reasoningButtonRef.current?.focus(); })}>
-                  <div className="model-menu-label">Reasoning</div>
-                  {model.supportedThinkingLevels.map((level) => (
-                    <button
-                      type="button"
-                      role="option"
-                      aria-selected={level === thinkingLevel}
-                      tabIndex={level === thinkingLevel ? 0 : -1}
-                      className={`model-option ${level === thinkingLevel ? "model-option--selected" : ""}`}
-                      key={level}
-                      onClick={() => {
-                        onThinkingLevelChange(level);
-                        setReasoningPickerOpen(false);
-                        requestAnimationFrame(() => reasoningButtonRef.current?.focus());
-                      }}
-                    >
-                      <span>{level}</span>
-                      {level === thinkingLevel && <i />}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <Select value={model?.id} onValueChange={onModelChange} disabled={visibleModels.length === 0}>
+              <SelectTrigger size="sm" className="model-select max-w-32" aria-label="Model">
+                <SelectValue placeholder={visibleModels.length ? "Choose model" : "No models available"} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectLabel>Model</SelectLabel>
+                  {visibleModels.map((option) => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <Select value={thinkingLevel} onValueChange={(value) => onThinkingLevelChange(value as ThinkingLevel)} disabled={!model?.reasoning}>
+              <SelectTrigger size="sm" className="thinking-level" aria-label="Reasoning level">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent position="popper" side="top" align="start" sideOffset={6}>
+                <SelectGroup>
+                  <SelectLabel>Reasoning</SelectLabel>
+                  {model?.supportedThinkingLevels.map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
           </div>
           <div className="composer-actions">
             {contextUsage && (
@@ -664,19 +566,20 @@ export function Composer({
               </span>
             )}
             {running && !hasPrompt ? (
-              <button type="button" className="stop-button" onClick={onCancel} aria-label="Stop run" title="Stop run">
-                <Icon icon={stopIcon} width={14} />
-              </button>
+              <Button type="button" variant="secondary" size="icon-sm" className="stop-button" onClick={onCancel} aria-label="Stop run" title="Stop run">
+                <HugeiconsIcon icon={StopIcon} strokeWidth={2} />
+              </Button>
             ) : (
-              <button
+              <Button
                 type="submit"
+                size="icon-sm"
                 className="send-button"
                 disabled={!hasPrompt || uploadsPending || Boolean(creationError)}
                 aria-label={pending ? "Queue message while thread starts" : running ? "Send steering message" : "Send message"}
                 title={creationError ? "Thread creation failed" : pending ? "Queue while starting" : running ? "Steer Pi" : undefined}
               >
-                <Icon icon={arrowUpIcon} width={18} />
-              </button>
+                <HugeiconsIcon icon={ArrowUp02Icon} strokeWidth={2} />
+              </Button>
             )}
           </div>
         </div>

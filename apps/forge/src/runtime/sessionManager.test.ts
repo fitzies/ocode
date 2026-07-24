@@ -70,7 +70,6 @@ beforeEach(() => {
           send({ type: "response", id: request.id, command: request.type, success: true, data: { cancelled: true } });
         } else {
           sessionFile = request.sessionPath;
-          sessionId = "pi-session-restored";
           send({ type: "response", id: request.id, command: request.type, success: true, data: { cancelled: false } });
         }
       } else if (request.type === "get_messages") {
@@ -198,11 +197,16 @@ describe("SessionManager", () => {
     }));
   });
 
-  it("persists settlement idempotently without changing runtime state", async () => {
+  it("stops a settled runtime and lazily restores it when prompting again", async () => {
     await manager.handleCommand(command("create-settle", "session.create", null, {
       projectId: "anvil",
       sessionId: requestedSessionId,
     }));
+    await waitUntil(() => events.currentSnapshot().sessions.some(
+      (session) => session.id === requestedSessionId && session.title === "Runtime test",
+    ));
+    const runtimes = () => (manager as unknown as { runtimes: Map<string, unknown> }).runtimes;
+    expect(runtimes().has(requestedSessionId)).toBe(true);
     const settle = command("settle-1", "session.settled", requestedSessionId, { settled: true });
 
     const response = await manager.handleCommand(settle);
@@ -212,7 +216,61 @@ describe("SessionManager", () => {
     expect(duplicate).toEqual(response);
     expect(events.currentSnapshot().sessions.find((session) => session.id === requestedSessionId)?.settled).toBe(true);
     expect(database.getSession(requestedSessionId)?.session.settled).toBe(true);
+    expect(runtimes().has(requestedSessionId)).toBe(false);
     expect(database.readEventsAfter(0).filter((event) => event.type === "session.settled")).toHaveLength(1);
+
+    const prompt = await manager.handleCommand(command("prompt-after-settle", "prompt.send", requestedSessionId, {
+      content: "Continue the settled thread",
+      delivery: "prompt",
+    }));
+
+    expect(prompt.success).toBe(true);
+    expect(events.currentSnapshot().sessions.find((session) => session.id === requestedSessionId)?.settled).toBe(false);
+    expect(database.getSession(requestedSessionId)?.session.settled).toBe(false);
+    expect(runtimes().has(requestedSessionId)).toBe(true);
+  });
+
+  it("rejects settlement while the runtime is starting", async () => {
+    await manager.handleCommand(command("create-starting", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+
+    const response = await manager.handleCommand(command("settle-starting", "session.settled", requestedSessionId, {
+      settled: true,
+    }));
+
+    expect(response).toMatchObject({ success: false, error: expect.stringContaining("Wait for Pi") });
+    expect(database.getSession(requestedSessionId)?.session.settled).toBe(false);
+  });
+
+  it("rejects settlement while Pi is waiting for interaction", async () => {
+    await manager.handleCommand(command("create-waiting", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    await waitUntil(() => events.currentSnapshot().sessions.some(
+      (session) => session.id === requestedSessionId && session.title === "Runtime test",
+    ));
+    const prompt = manager.handleCommand(command("prompt-waiting", "prompt.send", requestedSessionId, {
+      content: "Open dialog",
+      delivery: "prompt",
+    }));
+    await waitUntil(() => events.currentSnapshot().pendingInteractions.some(
+      (request) => request.sessionId === requestedSessionId,
+    ));
+
+    const response = await manager.handleCommand(command("settle-waiting", "session.settled", requestedSessionId, {
+      settled: true,
+    }));
+
+    expect(response).toMatchObject({ success: false, error: expect.stringContaining("Wait for Pi") });
+    expect(database.getSession(requestedSessionId)?.session.settled).toBe(false);
+    await manager.handleCommand(command("answer-waiting", "interaction.respond", requestedSessionId, {
+      requestId: "dialog-1",
+      confirmed: true,
+    }));
+    await prompt;
   });
 
   it("resolves uploaded attachments into Pi prompt context", async () => {

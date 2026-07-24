@@ -1,40 +1,25 @@
-import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 
-function trapFocus(event: KeyboardEvent<HTMLDivElement>) {
-  if (event.key !== "Tab") return;
-  const controls = Array.from(
-    event.currentTarget.querySelectorAll<HTMLElement>(
-      "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])",
-    ),
-  );
-  if (!controls.length) return;
-  const first = controls[0];
-  const last = controls.at(-1);
-  if (event.shiftKey && document.activeElement === first) {
-    event.preventDefault();
-    last?.focus();
-  } else if (!event.shiftKey && document.activeElement === last) {
-    event.preventDefault();
-    first?.focus();
-  }
-}
-
-function useDialogLifecycle(onClose: () => void, focusRef: React.RefObject<HTMLElement | null>) {
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
-  useEffect(() => {
-    const previous = document.activeElement as HTMLElement | null;
-    requestAnimationFrame(() => focusRef.current?.focus());
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") closeRef.current();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      previous?.focus();
-    };
-  }, [focusRef]);
-}
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 
 export function AddWorkspaceDialog({
   onClose,
@@ -48,10 +33,6 @@ export function AddWorkspaceDialog({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
   const nameRef = useRef<HTMLInputElement>(null);
-  const requestClose = () => {
-    if (!pending) onClose();
-  };
-  useDialogLifecycle(requestClose, nameRef);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -59,7 +40,7 @@ export function AddWorkspaceDialog({
     setPending(true);
     setError(undefined);
     try {
-      await onCreate(name, path);
+      await onCreate(name.trim(), path.trim());
       onClose();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
@@ -68,30 +49,66 @@ export function AddWorkspaceDialog({
   };
 
   return (
-    <div className="dialog-backdrop action-backdrop" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
-      <div className="action-dialog" role="dialog" aria-modal="true" aria-labelledby="add-workspace-title" onKeyDown={trapFocus}>
-        <div className="action-dialog-head">
-          <span className="action-dialog-kicker">Workspace access</span>
-          <h2 id="add-workspace-title">Add a workspace</h2>
-          <p>Choose a directory on Forge that Pi can work inside.</p>
-        </div>
-        <form className="action-dialog-form" onSubmit={submit}>
-          <label className="action-field">
-            <span>Name</span>
-            <input ref={nameRef} value={name} onChange={(event) => setName(event.target.value)} placeholder="Anvil" maxLength={80} disabled={pending} required />
-          </label>
-          <label className="action-field">
-            <span>Path on Forge</span>
-            <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="/home/oli/code/project" spellCheck={false} disabled={pending} required />
-          </label>
-          {error && <p className="action-error" role="alert">{error}</p>}
-          <div className="action-dialog-footer">
-            <button type="button" className="action-button action-button--quiet" onClick={requestClose} disabled={pending}>Cancel</button>
-            <button type="submit" className="action-button action-button--primary" disabled={!name.trim() || !path.trim() || pending}>{pending ? "Adding…" : "Add workspace"}</button>
-          </div>
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+      <DialogContent
+        aria-describedby="add-workspace-description"
+        className="sm:max-w-md"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          nameRef.current?.focus();
+        }}
+        onEscapeKeyDown={(event) => pending && event.preventDefault()}
+        onPointerDownOutside={(event) => pending && event.preventDefault()}
+      >
+        <DialogHeader>
+          <span className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            Workspace access
+          </span>
+          <DialogTitle>Add a workspace</DialogTitle>
+          <DialogDescription id="add-workspace-description">
+            Choose a directory on Forge that Pi can work inside.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="grid gap-4" onSubmit={submit}>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="workspace-name">Name</FieldLabel>
+              <Input
+                ref={nameRef}
+                id="workspace-name"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Anvil"
+                maxLength={80}
+                disabled={pending}
+                required
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="workspace-path">Path on Forge</FieldLabel>
+              <Input
+                id="workspace-path"
+                value={path}
+                onChange={(event) => setPath(event.target.value)}
+                placeholder="/home/oli/code/project"
+                spellCheck={false}
+                disabled={pending}
+                required
+              />
+            </Field>
+          </FieldGroup>
+          {error && <FieldError role="alert">{error}</FieldError>}
+          <DialogFooter className="border-t border-border/60 pt-3">
+            <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!name.trim() || !path.trim() || pending}>
+              {pending ? "Adding…" : "Add workspace"}
+            </Button>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -106,11 +123,6 @@ export function DeleteThreadDialog({
 }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  const requestClose = () => {
-    if (!pending) onClose();
-  };
-  useDialogLifecycle(requestClose, cancelRef);
 
   const remove = async () => {
     if (pending) return;
@@ -126,21 +138,24 @@ export function DeleteThreadDialog({
   };
 
   return (
-    <div className="dialog-backdrop action-backdrop" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
-      <div className="action-dialog action-dialog--danger" role="alertdialog" aria-modal="true" aria-labelledby="delete-thread-title" aria-describedby="delete-thread-description" onKeyDown={trapFocus}>
-        <div className="action-dialog-head">
-          <span className="action-dialog-kicker">Delete thread</span>
-          <h2 id="delete-thread-title">{title}</h2>
-          <p id="delete-thread-description">This removes the conversation and its Pi session files. This cannot be undone.</p>
-        </div>
-        <div className="action-dialog-form">
-          {error && <p className="action-error" role="alert">{error}</p>}
-          <div className="action-dialog-footer">
-            <button ref={cancelRef} type="button" className="action-button action-button--quiet" onClick={requestClose} disabled={pending}>Cancel</button>
-            <button type="button" className="action-button action-button--danger" onClick={() => void remove()} disabled={pending}>{pending ? "Deleting…" : "Delete"}</button>
-          </div>
-        </div>
-      </div>
-    </div>
+    <AlertDialog open onOpenChange={(open) => !open && !pending && onClose()}>
+      <AlertDialogContent
+        onEscapeKeyDown={(event) => pending && event.preventDefault()}
+      >
+        <AlertDialogHeader>
+          <AlertDialogTitle className="max-w-full truncate">Delete “{title}”?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This removes the conversation and its Pi session files. This cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        {error && <FieldError role="alert">{error}</FieldError>}
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+          <Button variant="destructive" onClick={() => void remove()} disabled={pending}>
+            {pending ? "Deleting…" : "Delete thread"}
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

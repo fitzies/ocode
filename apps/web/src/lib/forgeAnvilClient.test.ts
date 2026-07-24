@@ -715,6 +715,108 @@ describe("ForgeAnvilClient", () => {
     expect(client.getSnapshot().clientError).toBe("Workspace path does not exist");
   });
 
+  it("updates thinking immediately and restores the confirmed level when Forge rejects it", async () => {
+    const stream = new FakeEventSource();
+    const snapshot = createEmptySnapshot({
+      projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+      sessions: [session],
+    });
+    const bodies: Array<{ id: string; type: string; payload: { level: string } }> = [];
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [], cursor: 0 }));
+      }
+      const command = JSON.parse(String(init?.body)) as (typeof bodies)[number];
+      bodies.push(command);
+      return new Response(JSON.stringify({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: "response-thinking-rejected",
+        commandId: command.id,
+        timestamp: "2026-07-23T01:00:01.000Z",
+        success: false,
+        outcome: "completed",
+        error: "Thinking level is unavailable",
+      }));
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().sessions.length === 1);
+
+    client.setThinkingLevel("high");
+    expect(client.getSnapshot().sessions[0]?.thinkingLevel).toBe("high");
+    await waitUntil(() => client.getSnapshot().clientError === "Thinking level is unavailable");
+
+    expect(bodies[0]).toMatchObject({
+      type: "thinking.set",
+      payload: { level: "high" },
+    });
+    expect(client.getSnapshot().sessions[0]?.thinkingLevel).toBe("medium");
+  });
+
+  it("rolls rapid rejected thinking changes back to the last confirmed level", async () => {
+    const stream = new FakeEventSource();
+    const snapshot = createEmptySnapshot({
+      projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+      sessions: [session],
+    });
+    const commands: Array<{ id: string }> = [];
+    const responses: Array<(response: Response) => void> = [];
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [], cursor: 0 }));
+      }
+      commands.push(JSON.parse(String(init?.body)) as { id: string });
+      return new Promise<Response>((resolve) => responses.push(resolve));
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().sessions.length === 1);
+
+    const reject = (index: number) => new Response(JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: `response-thinking-rejected-${index}`,
+      commandId: commands[index]!.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      success: false,
+      outcome: "completed",
+      error: "Thinking level is unavailable",
+    }));
+
+    client.setThinkingLevel("high");
+    client.setThinkingLevel("xhigh");
+    await waitUntil(() => commands.length === 1);
+    expect(client.getSnapshot().sessions[0]?.thinkingLevel).toBe("xhigh");
+
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-thinking-high",
+      sequence: 1,
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "session.configured",
+      payload: { thinkingLevel: "high" },
+    } satisfies AnvilEvent));
+    expect(client.getSnapshot().sessions[0]?.thinkingLevel).toBe("xhigh");
+
+    responses[0]!(new Response(JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "response-thinking-high",
+      commandId: commands[0]!.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      success: true,
+      outcome: "completed",
+    })));
+    await waitUntil(() => commands.length === 2);
+    expect(client.getSnapshot().sessions[0]?.thinkingLevel).toBe("xhigh");
+
+    responses[1]!(reject(1));
+    await waitUntil(() => client.getSnapshot().sessions[0]?.thinkingLevel === "high");
+  });
+
   it("sends typed commands to Forge", async () => {
     const stream = new FakeEventSource();
     const snapshot = createEmptySnapshot({

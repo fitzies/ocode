@@ -6,6 +6,7 @@ import {
   type ContentBlock,
   type MessageEntry,
   type ProjectSummary,
+  type SessionStatus,
   type SessionSummary,
   type TimelineEntry,
 } from "@anvil/protocol";
@@ -25,8 +26,8 @@ export function createEmptySnapshot(input?: {
     capturedAt: input?.capturedAt ?? new Date(0).toISOString(),
     connection: "connected",
     projects: input?.projects ?? [],
-    sessions,
-    activeSessionId: input?.activeSessionId ?? sessions[0]?.id ?? null,
+    sessions: sortSessionsByActivity(sessions),
+    activeSessionId: input?.activeSessionId ?? sortSessionsByActivity(sessions)[0]?.id ?? null,
     timelines: Object.fromEntries(sessions.map((session) => [session.id, []])),
     catalogs: input?.catalogs ?? Object.fromEntries(
       sessions.map((session) => [session.id, EMPTY_CATALOG]),
@@ -56,11 +57,21 @@ function replaceProject(snapshot: AnvilSnapshot, project: ProjectSummary): Proje
     : [...snapshot.projects, project];
 }
 
+export function sortSessionsByActivity(sessions: SessionSummary[]): SessionSummary[] {
+  return [...sessions].sort((left, right) => {
+    const sequenceDifference = (right.lastActivitySequence ?? 0) - (left.lastActivitySequence ?? 0);
+    if (sequenceDifference !== 0) return sequenceDifference;
+    const timestampDifference = Date.parse(right.updatedAt) - Date.parse(left.updatedAt);
+    if (Number.isFinite(timestampDifference) && timestampDifference !== 0) return timestampDifference;
+    return left.id.localeCompare(right.id);
+  });
+}
+
 function replaceSession(snapshot: AnvilSnapshot, session: SessionSummary): SessionSummary[] {
   const exists = snapshot.sessions.some((candidate) => candidate.id === session.id);
-  return exists
+  return sortSessionsByActivity(exists
     ? snapshot.sessions.map((candidate) => (candidate.id === session.id ? session : candidate))
-    : [session, ...snapshot.sessions];
+    : [session, ...snapshot.sessions]);
 }
 
 function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -86,10 +97,10 @@ function promoteSession(
 ): SessionSummary[] {
   const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
   if (!session) return snapshot.sessions;
-  return [
+  return sortSessionsByActivity([
     { ...session, ...patch },
     ...snapshot.sessions.filter((candidate) => candidate.id !== sessionId),
-  ];
+  ]);
 }
 
 function updateTimeline(
@@ -168,7 +179,10 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
     case "project.upserted":
       return { ...next, projects: replaceProject(snapshot, event.payload.project) };
     case "session.upserted": {
-      const session = event.payload.session;
+      const session = {
+        ...event.payload.session,
+        lastActivitySequence: event.payload.session.lastActivitySequence ?? event.sequence,
+      };
       const runState =
         snapshot.runStates[session.id] ??
         (session.status === "running" ? "running" : session.status === "failed" ? "failed" : "idle");
@@ -213,15 +227,28 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
         runStates: withoutKey(snapshot.runStates, sessionId),
       };
     }
+    case "session.settled": {
+      if (!event.sessionId) return next;
+      return {
+        ...next,
+        sessions: updateSession(snapshot, event.sessionId, { settled: event.payload.settled }),
+      };
+    }
     case "session.selected":
       return { ...next, activeSessionId: event.payload.sessionId };
     case "session.configured": {
       if (!event.sessionId) return next;
+      const branchOnly = event.payload.branch !== undefined &&
+        event.payload.modelId === undefined &&
+        event.payload.thinkingLevel === undefined &&
+        event.payload.title === undefined;
+      const { branch, ...configuration } = event.payload;
       return {
         ...next,
         sessions: updateSession(snapshot, event.sessionId, {
-          ...event.payload,
-          updatedAt: event.timestamp,
+          ...configuration,
+          ...(branch === undefined ? {} : { branch: branch ?? undefined }),
+          ...(branchOnly ? {} : { updatedAt: event.timestamp }),
         }),
       };
     }
@@ -230,22 +257,41 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
       const hasPendingInteraction = snapshot.pendingInteractions.some(
         (request) => request.sessionId === event.sessionId,
       );
-      const status = hasPendingInteraction ? "waiting" : event.payload.status;
+      const status: SessionStatus = hasPendingInteraction ? "waiting" : event.payload.status;
+      const terminalPatch = event.payload.outcome
+        ? {
+            lastTerminalSequence: event.sequence,
+            lastTerminalOutcome: event.payload.outcome,
+          }
+        : {};
+      const patch = {
+        status,
+        updatedAt: event.timestamp,
+        ...terminalPatch,
+        ...(
+          event.payload.status === "running" || event.payload.outcome
+            ? { lastActivitySequence: event.sequence }
+            : {}
+        ),
+      };
       return {
         ...next,
         runStates: { ...snapshot.runStates, [event.sessionId]: event.payload.status },
-        sessions: updateSession(snapshot, event.sessionId, {
-          status,
-          updatedAt: event.timestamp,
-        }),
+        sessions: event.payload.status === "running" || Boolean(event.payload.outcome)
+          ? promoteSession(snapshot, event.sessionId, patch)
+          : updateSession(snapshot, event.sessionId, patch),
       };
     }
     case "message.started": {
       if (!event.sessionId) return next;
+      const promotes = event.payload.message.role === "user" || event.payload.message.role === "assistant";
       return {
         ...next,
-        sessions: event.payload.message.role === "user"
-          ? promoteSession(snapshot, event.sessionId, { updatedAt: event.timestamp })
+        sessions: promotes
+          ? promoteSession(snapshot, event.sessionId, {
+              updatedAt: event.timestamp,
+              lastActivitySequence: event.sequence,
+            })
           : snapshot.sessions,
         timelines: updateTimeline(snapshot, event.sessionId, (entries) =>
           upsertEntry(entries, event.payload.message),
@@ -263,15 +309,21 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
           );
           const message = existing ?? fallbackMessage(event, event.payload.messageId);
           const modelId = event.payload.modelId ?? message.modelId;
+          const content = event.payload.artifact
+            ? [
+                ...message.content.filter((block) => block.id !== event.payload.artifact!.id),
+                event.payload.artifact,
+              ]
+            : upsertTextBlock(
+                message.content,
+                event.payload.blockId,
+                event.payload.delta,
+              );
           const replacement: MessageEntry = {
             ...message,
             status: "streaming",
             ...(modelId === undefined ? {} : { modelId }),
-            content: upsertTextBlock(
-              message.content,
-              event.payload.blockId,
-              event.payload.delta,
-            ),
+            content,
           };
           return upsertEntry(entries, replacement);
         }),
@@ -472,9 +524,10 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
       };
       return {
         ...next,
-        sessions: updateSession(snapshot, request.sessionId, {
+        sessions: promoteSession(snapshot, request.sessionId, {
           status: "waiting",
           updatedAt: event.timestamp,
+          lastActivitySequence: event.sequence,
         }),
         pendingInteractions: [
           ...snapshot.pendingInteractions.filter((item) => item.id !== request.id),

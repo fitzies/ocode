@@ -1,4 +1,5 @@
 import type {
+  ArtifactReference,
   CommandDescriptor,
   ExtensionWidget,
   ModelDescriptor,
@@ -13,6 +14,7 @@ import arrowUpIcon from "@iconify-icons/solar/arrow-up-bold";
 import commandIcon from "@iconify-icons/solar/command-bold-duotone";
 import mentionIcon from "@iconify-icons/solar/mention-circle-linear";
 import paperclipIcon from "@iconify-icons/solar/paperclip-linear";
+import closeCircleIcon from "@iconify-icons/solar/close-circle-linear";
 import stopIcon from "@iconify-icons/solar/stop-bold";
 import {
   type FormEvent,
@@ -23,7 +25,17 @@ import {
   useState,
 } from "react";
 
-import type { DeliveryMode } from "../lib/anvilClient";
+import type { DeliveryMode, WorkspaceFile } from "../lib/anvilClient";
+
+export interface ComposerAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  status: "uploading" | "ready" | "failed";
+  reference?: ArtifactReference;
+  error?: string;
+}
 
 interface ComposerProps {
   sessionId: string;
@@ -39,12 +51,17 @@ interface ComposerProps {
   pending?: boolean;
   creationError?: string;
   widgets: ExtensionWidget[];
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+  attachments: ComposerAttachment[];
+  onAttachFiles: (sessionId: string, files: File[]) => void;
+  onRemoveAttachment: (sessionId: string, attachmentId: string) => void;
+  onSearchFiles: (sessionId: string, query: string) => Promise<WorkspaceFile[]>;
   onCancel: () => void;
   onDraftConsumed: (sessionId: string) => void;
   onPromptChange: (sessionId: string, prompt: string) => void;
   onModelChange: (modelId: string) => void;
   onThinkingLevelChange: (level: ThinkingLevel) => void;
-  onSend: (prompt: string, mode: DeliveryMode) => void;
+  onSend: (prompt: string, mode: DeliveryMode, attachments: ArtifactReference[]) => void;
 }
 
 type SlashItem = {
@@ -134,6 +151,27 @@ function fuzzyScore(value: string, query: string): number {
   return score;
 }
 
+export function activeFileMention(text: string, cursor: number): { start: number; query: string } | undefined {
+  const beforeCursor = text.slice(0, cursor);
+  const match = /(^|[\s([{=:])@(?:"([^"]*)|([^\s@"']*))$/.exec(beforeCursor);
+  if (!match) return undefined;
+  const token = match[0].slice(match[1]?.length ?? 0);
+  return {
+    start: cursor - token.length,
+    query: match[2] ?? match[3] ?? "",
+  };
+}
+
+function mentionValue(path: string): string {
+  return path.includes(" ") ? `@"${path}"` : `@${path}`;
+}
+
+function formatAttachmentSize(bytes: number): string {
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_024 * 1_024) return `${Math.round(bytes / 1_024)} KB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
+}
+
 function Widget({ widget }: { widget: ExtensionWidget }) {
   return (
     <aside className="extension-widget" aria-label={`Extension widget ${widget.key}`}>
@@ -157,6 +195,11 @@ export function Composer({
   pending = false,
   creationError,
   widgets,
+  contextUsage,
+  attachments,
+  onAttachFiles,
+  onRemoveAttachment,
+  onSearchFiles,
   onCancel,
   onDraftConsumed,
   onPromptChange,
@@ -167,18 +210,26 @@ export function Composer({
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   const [reasoningPickerOpen, setReasoningPickerOpen] = useState(false);
   const [slashIndex, setSlashIndex] = useState(0);
+  const [cursorPosition, setCursorPosition] = useState(prompt.length);
+  const [fileItems, setFileItems] = useState<WorkspaceFile[]>([]);
+  const [fileIndex, setFileIndex] = useState(0);
+  const [fileMenuDismissed, setFileMenuDismissed] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const modelPickerRef = useRef<HTMLDivElement>(null);
   const reasoningPickerRef = useRef<HTMLDivElement>(null);
   const modelButtonRef = useRef<HTMLButtonElement>(null);
   const reasoningButtonRef = useRef<HTMLButtonElement>(null);
   const running = status === "running";
-  const hasPrompt = Boolean(prompt.trim());
+  const readyAttachments = attachments.flatMap((attachment) => attachment.reference ? [attachment.reference] : []);
+  const uploadsPending = attachments.some((attachment) => attachment.status === "uploading");
+  const hasPrompt = Boolean(prompt.trim()) || readyAttachments.length > 0;
   const visibleModels = useMemo(() => selectAnvilModels(models), [models]);
   const model = visibleModels.find((candidate) => candidate.id === modelId);
   const queueCount = queue.steering.length + queue.followUp.length;
   const aboveWidgets = widgets.filter((widget) => widget.placement === "aboveEditor");
   const belowWidgets = widgets.filter((widget) => widget.placement === "belowEditor");
+  const fileMention = activeFileMention(prompt, cursorPosition);
 
   const slashQuery = prompt.match(/^\/([^\s]*)$/)?.[1];
   const slashItems = useMemo<SlashItem[]>(() => {
@@ -210,6 +261,10 @@ export function Composer({
     setModelPickerOpen(false);
     setReasoningPickerOpen(false);
     setSlashIndex(0);
+    setCursorPosition(0);
+    setFileItems([]);
+    setFileIndex(0);
+    setFileMenuDismissed(false);
   }, [sessionId]);
 
   useEffect(() => {
@@ -227,6 +282,28 @@ export function Composer({
   }, [prompt]);
 
   useEffect(() => setSlashIndex(0), [slashQuery]);
+
+  useEffect(() => {
+    setFileIndex(0);
+    setFileMenuDismissed(false);
+  }, [fileMention?.query, fileMention?.start]);
+
+  useEffect(() => {
+    if (!fileMention || fileMenuDismissed) {
+      setFileItems([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void onSearchFiles(sessionId, fileMention.query).then((files) => {
+        if (!cancelled) setFileItems(files);
+      });
+    }, 90);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [fileMention?.query, fileMention?.start, fileMenuDismissed, onSearchFiles, sessionId]);
 
   useEffect(() => {
     const picker = modelPickerOpen ? modelPickerRef.current : reasoningPickerOpen ? reasoningPickerRef.current : null;
@@ -258,19 +335,75 @@ export function Composer({
   }, [modelPickerOpen, reasoningPickerOpen]);
 
   const chooseSlashItem = (item: SlashItem) => {
-    onPromptChange(sessionId, `/${item.command} `);
+    const value = `/${item.command} `;
+    onPromptChange(sessionId, value);
+    setCursorPosition(value.length);
     setSlashIndex(0);
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
+  const chooseFile = (item: WorkspaceFile) => {
+    if (!fileMention) return;
+    const value = `${mentionValue(item.path)} `;
+    const next = `${prompt.slice(0, fileMention.start)}${value}${prompt.slice(cursorPosition)}`;
+    const nextCursor = fileMention.start + value.length;
+    onPromptChange(sessionId, next);
+    setCursorPosition(nextCursor);
+    setFileItems([]);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+
+  const insertMention = () => {
+    const textarea = textareaRef.current;
+    const start = textarea?.selectionStart ?? prompt.length;
+    const end = textarea?.selectionEnd ?? start;
+    const prefix = start > 0 && !/\s/.test(prompt[start - 1] ?? "") ? " @" : "@";
+    const next = `${prompt.slice(0, start)}${prefix}${prompt.slice(end)}`;
+    const nextCursor = start + prefix.length;
+    onPromptChange(sessionId, next);
+    setCursorPosition(nextCursor);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+
   const submit = (event?: FormEvent) => {
     event?.preventDefault();
-    if (!prompt.trim() || pending || creationError) return;
-    onSend(prompt, running ? "steer" : "prompt");
+    if (!hasPrompt || uploadsPending || creationError) return;
+    onSend(prompt, running ? "steer" : "prompt", readyAttachments);
     onPromptChange(sessionId, "");
+    setCursorPosition(0);
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (fileMention && fileItems.length && !fileMenuDismissed) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setFileIndex((index) => (index + 1) % fileItems.length);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setFileIndex((index) => (index - 1 + fileItems.length) % fileItems.length);
+        return;
+      }
+      if (event.key === "Tab" || event.key === "Enter") {
+        event.preventDefault();
+        const item = fileItems[fileIndex];
+        if (item) chooseFile(item);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setFileMenuDismissed(true);
+        setFileItems([]);
+        return;
+      }
+    }
     if (slashItems.length) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -322,6 +455,31 @@ export function Composer({
         </div>
       )}
       <form className="composer" onSubmit={submit}>
+        {fileMention && fileItems.length > 0 && !fileMenuDismissed && (
+          <div id="file-mention-menu" className="slash-menu file-menu" role="listbox" aria-label="Workspace files">
+            <div className="slash-menu-heading">
+              <span>Workspace files</span>
+              <kbd>↑↓ navigate · ↵ tag</kbd>
+            </div>
+            {fileItems.map((item, index) => (
+              <button
+                id={`file-option-${index}`}
+                type="button"
+                role="option"
+                aria-selected={index === fileIndex}
+                tabIndex={-1}
+                className={index === fileIndex ? "slash-option slash-option--active" : "slash-option"}
+                key={item.path}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => chooseFile(item)}
+              >
+                <Icon icon={paperclipIcon} width={15} />
+                <span className="slash-option-copy"><strong>{item.path}</strong></span>
+                <span className="slash-source">file</span>
+              </button>
+            ))}
+          </div>
+        )}
         {slashQuery !== undefined && slashItems.length > 0 && (
           <div id="slash-command-menu" className="slash-menu" role="listbox" aria-label="Commands and skills">
             <div className="slash-menu-heading">
@@ -350,26 +508,55 @@ export function Composer({
             ))}
           </div>
         )}
+        {attachments.length > 0 && (
+          <div className="composer-attachments" aria-label="Attached files">
+            {attachments.map((attachment) => (
+              <span className={`composer-attachment composer-attachment--${attachment.status}`} key={attachment.id} title={attachment.error}>
+                <Icon icon={paperclipIcon} width={13} />
+                <span><strong>{attachment.name}</strong><small>{attachment.status === "uploading" ? "Uploading…" : attachment.status === "failed" ? "Upload failed" : formatAttachmentSize(attachment.size)}</small></span>
+                <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => onRemoveAttachment(sessionId, attachment.id)}><Icon icon={closeCircleIcon} width={14} /></button>
+              </span>
+            ))}
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           rows={1}
           value={prompt}
-          onChange={(event) => onPromptChange(sessionId, event.target.value)}
+          onChange={(event) => {
+            onPromptChange(sessionId, event.target.value);
+            setCursorPosition(event.target.selectionStart);
+          }}
+          onSelect={(event) => setCursorPosition(event.currentTarget.selectionStart)}
+          onClick={(event) => setCursorPosition(event.currentTarget.selectionStart)}
+          onKeyUp={(event) => setCursorPosition(event.currentTarget.selectionStart)}
           onKeyDown={onKeyDown}
           placeholder={running ? "Steer Pi…" : "Message Pi…"}
           aria-label="Message Pi"
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={slashItems.length > 0}
-          aria-controls={slashItems.length ? "slash-command-menu" : undefined}
-          aria-activedescendant={slashItems.length ? `slash-option-${slashIndex}` : undefined}
+          aria-expanded={(fileMention && fileItems.length > 0 && !fileMenuDismissed) || slashItems.length > 0}
+          aria-controls={fileMention && fileItems.length > 0 && !fileMenuDismissed ? "file-mention-menu" : slashItems.length ? "slash-command-menu" : undefined}
+          aria-activedescendant={fileMention && fileItems.length > 0 && !fileMenuDismissed ? `file-option-${fileIndex}` : slashItems.length ? `slash-option-${slashIndex}` : undefined}
         />
         <div className="composer-toolbar">
           <div className="composer-tools">
-            <button type="button" className="composer-icon" aria-label="Attach file" disabled title="Coming soon">
+            <input
+              ref={fileInputRef}
+              className="sr-only"
+              type="file"
+              multiple
+              tabIndex={-1}
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                if (files.length) onAttachFiles(sessionId, files);
+                event.target.value = "";
+              }}
+            />
+            <button type="button" className="composer-icon" aria-label="Attach file" title="Attach files from this device" onClick={() => fileInputRef.current?.click()}>
               <Icon icon={paperclipIcon} width={17} />
             </button>
-            <button type="button" className="composer-icon" aria-label="Mention context" disabled title="Coming soon">
+            <button type="button" className="composer-icon" aria-label="Tag workspace file" title="Tag a workspace file" onClick={insertMention}>
               <Icon icon={mentionIcon} width={17} />
             </button>
             <span className="toolbar-divider" />
@@ -449,7 +636,14 @@ export function Composer({
             </div>
           </div>
           <div className="composer-actions">
-            {!running && <span className="send-hint">{creationError ? "Not created" : pending ? "Starting…" : "↵ Send"}</span>}
+            {contextUsage && (
+              <span
+                className={`composer-context ${(contextUsage.percent ?? 0) >= 70 ? "composer-context--high" : ""}`}
+                title={`${contextUsage.tokens?.toLocaleString() ?? "Unknown"} of ${contextUsage.contextWindow.toLocaleString()} context tokens`}
+              >
+                ctx {contextUsage.percent === null ? "?" : Math.round(contextUsage.percent)}%
+              </span>
+            )}
             {running && !hasPrompt ? (
               <button type="button" className="stop-button" onClick={onCancel} aria-label="Stop run" title="Stop run">
                 <Icon icon={stopIcon} width={14} />
@@ -458,9 +652,9 @@ export function Composer({
               <button
                 type="submit"
                 className="send-button"
-                disabled={!hasPrompt || pending || Boolean(creationError)}
-                aria-label={running ? "Send steering message" : "Send message"}
-                title={creationError ? "Thread creation failed" : pending ? "Starting thread…" : running ? "Steer Pi" : undefined}
+                disabled={!hasPrompt || uploadsPending || Boolean(creationError)}
+                aria-label={pending ? "Queue message while thread starts" : running ? "Send steering message" : "Send message"}
+                title={creationError ? "Thread creation failed" : pending ? "Queue while starting" : running ? "Steer Pi" : undefined}
               >
                 <Icon icon={arrowUpIcon} width={18} />
               </button>

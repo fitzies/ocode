@@ -10,6 +10,7 @@ export interface ForgeConfig {
   port: number;
   databasePath: string;
   sessionDir: string;
+  artifactDir: string;
   piExecutable: string;
   ownerLogin?: string;
   webRoot: string;
@@ -73,6 +74,7 @@ export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): F
     port,
     databasePath: resolve(environment.ANVIL_DATABASE ?? join(stateDirectory, "forge.sqlite")),
     sessionDir: resolve(environment.ANVIL_SESSION_DIR ?? join(stateDirectory, "pi-sessions")),
+    artifactDir: resolve(environment.ANVIL_ARTIFACT_DIR ?? join(stateDirectory, "artifacts")),
     piExecutable,
     ownerLogin: allowUnauthenticated
       ? undefined

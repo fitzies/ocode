@@ -1,0 +1,303 @@
+import {
+  ANVIL_PROTOCOL_VERSION,
+  isAnvilSessionDetail,
+  isAnvilSummaryBootstrap,
+  type AnvilClientCommand,
+  type AnvilSessionDetail,
+  type AnvilSummaryBootstrap,
+} from "@anvil/protocol";
+
+const DATABASE_NAME = "anvil-thread-cache";
+const DATABASE_VERSION = 1;
+const DETAIL_STORE = "details";
+const META_STORE = "meta";
+const MAX_MEMORY_THREADS = 8;
+const MAX_MEMORY_BYTES = 32 * 1024 * 1024;
+const MEMORY_TTL_MS = 5 * 60_000;
+const MAX_PERSISTED_THREADS = 50;
+const MAX_PERSISTED_BYTES = 200 * 1024 * 1024;
+
+interface DetailRecord {
+  sessionId: string;
+  detail: AnvilSessionDetail;
+  persistedAt: number;
+  lastAccessedAt: number;
+  bytes: number;
+}
+
+interface ShellRecord {
+  key: "shell";
+  bootstrap: AnvilSummaryBootstrap;
+  activeSessionId: string | null;
+  persistedAt: number;
+}
+
+interface ReadRecord {
+  key: string;
+  sequence: number;
+}
+
+export interface PersistedQueuedPrompt {
+  command: Extract<AnvilClientCommand, { type: "prompt.send" }>;
+  content: string;
+}
+
+interface OutboxRecord {
+  key: "prompt-outbox";
+  prompts: PersistedQueuedPrompt[];
+}
+
+interface MemoryRecord {
+  detail: AnvilSessionDetail;
+  lastAccessedAt: number;
+  bytes: number;
+}
+
+function estimateBytes(value: unknown): number {
+  try {
+    return new Blob([JSON.stringify(value)]).size;
+  } catch {
+    return 0;
+  }
+}
+
+function requestValue<T>(request: IDBRequest<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
+  });
+}
+
+function transactionDone(transaction: IDBTransaction): Promise<void> {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"));
+    transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
+  });
+}
+
+export class ThreadCache {
+  private databasePromise?: Promise<IDBDatabase | undefined>;
+  private readonly memory = new Map<string, MemoryRecord>();
+
+  async readShell(): Promise<{ bootstrap: AnvilSummaryBootstrap; activeSessionId: string | null } | undefined> {
+    const database = await this.database();
+    if (!database) return undefined;
+    try {
+      const transaction = database.transaction(META_STORE, "readonly");
+      const record = await requestValue(transaction.objectStore(META_STORE).get("shell")) as ShellRecord | undefined;
+      if (!record || !isAnvilSummaryBootstrap(record.bootstrap)) return undefined;
+      return { bootstrap: record.bootstrap, activeSessionId: record.activeSessionId };
+    } catch {
+      return undefined;
+    }
+  }
+
+  async writeShell(bootstrap: AnvilSummaryBootstrap, activeSessionId: string | null): Promise<void> {
+    if (!isAnvilSummaryBootstrap(bootstrap)) return;
+    const database = await this.database();
+    if (!database) return;
+    try {
+      const transaction = database.transaction(META_STORE, "readwrite");
+      transaction.objectStore(META_STORE).put({
+        key: "shell",
+        bootstrap,
+        activeSessionId,
+        persistedAt: Date.now(),
+      } satisfies ShellRecord);
+      await transactionDone(transaction);
+    } catch {
+      // Cache persistence must never block Forge.
+    }
+  }
+
+  async readDetail(sessionId: string): Promise<AnvilSessionDetail | undefined> {
+    const now = Date.now();
+    const memory = this.memory.get(sessionId);
+    if (memory && now - memory.lastAccessedAt <= MEMORY_TTL_MS) {
+      memory.lastAccessedAt = now;
+      this.memory.delete(sessionId);
+      this.memory.set(sessionId, memory);
+      return structuredClone(memory.detail);
+    }
+    if (memory) this.memory.delete(sessionId);
+
+    const database = await this.database();
+    if (!database) return undefined;
+    try {
+      const transaction = database.transaction(DETAIL_STORE, "readwrite");
+      const store = transaction.objectStore(DETAIL_STORE);
+      const record = await requestValue(store.get(sessionId)) as DetailRecord | undefined;
+      if (!record || !isAnvilSessionDetail(record.detail)) {
+        if (record) store.delete(sessionId);
+        await transactionDone(transaction);
+        return undefined;
+      }
+      record.lastAccessedAt = now;
+      store.put(record);
+      await transactionDone(transaction);
+      this.remember(record.detail, record.bytes, now);
+      return structuredClone(record.detail);
+    } catch {
+      return undefined;
+    }
+  }
+
+  async writeDetail(detail: AnvilSessionDetail): Promise<void> {
+    if (!isAnvilSessionDetail(detail) || detail.runState === "running") return;
+    const now = Date.now();
+    const bytes = estimateBytes(detail);
+    this.remember(detail, bytes, now);
+    const database = await this.database();
+    if (!database) return;
+    try {
+      const transaction = database.transaction(DETAIL_STORE, "readwrite");
+      transaction.objectStore(DETAIL_STORE).put({
+        sessionId: detail.sessionId,
+        detail,
+        persistedAt: now,
+        lastAccessedAt: now,
+        bytes,
+      } satisfies DetailRecord);
+      await transactionDone(transaction);
+      await this.prunePersistent(database);
+    } catch {
+      // Quota/private-mode failures fall back to the bounded memory cache.
+    }
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    this.memory.delete(sessionId);
+    const database = await this.database();
+    if (!database) return;
+    try {
+      const transaction = database.transaction([DETAIL_STORE, META_STORE], "readwrite");
+      transaction.objectStore(DETAIL_STORE).delete(sessionId);
+      transaction.objectStore(META_STORE).delete(`read:${sessionId}`);
+      await transactionDone(transaction);
+    } catch {
+      // Best-effort invalidation.
+    }
+  }
+
+  async readPromptOutbox(): Promise<PersistedQueuedPrompt[]> {
+    const database = await this.database();
+    if (!database) return [];
+    try {
+      const transaction = database.transaction(META_STORE, "readonly");
+      const record = await requestValue(transaction.objectStore(META_STORE).get("prompt-outbox")) as OutboxRecord | undefined;
+      return record?.prompts ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async writePromptOutbox(prompts: PersistedQueuedPrompt[]): Promise<void> {
+    const database = await this.database();
+    if (!database) return;
+    try {
+      const transaction = database.transaction(META_STORE, "readwrite");
+      const store = transaction.objectStore(META_STORE);
+      if (prompts.length > 0) store.put({ key: "prompt-outbox", prompts } satisfies OutboxRecord);
+      else store.delete("prompt-outbox");
+      await transactionDone(transaction);
+    } catch {
+      // The in-memory outbox remains available for this tab.
+    }
+  }
+
+  async readThrough(sessionId: string): Promise<number | undefined> {
+    const database = await this.database();
+    if (!database) return undefined;
+    try {
+      const transaction = database.transaction(META_STORE, "readonly");
+      const record = await requestValue(transaction.objectStore(META_STORE).get(`read:${sessionId}`)) as ReadRecord | undefined;
+      return Number.isSafeInteger(record?.sequence) ? record!.sequence : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async writeReadThrough(sessionId: string, sequence: number): Promise<void> {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) return;
+    const database = await this.database();
+    if (!database) return;
+    try {
+      const transaction = database.transaction(META_STORE, "readwrite");
+      transaction.objectStore(META_STORE).put({ key: `read:${sessionId}`, sequence } satisfies ReadRecord);
+      await transactionDone(transaction);
+    } catch {
+      // Read state gracefully becomes tab-local when IndexedDB is unavailable.
+    }
+  }
+
+  private remember(detail: AnvilSessionDetail, bytes: number, now: number): void {
+    this.memory.delete(detail.sessionId);
+    this.memory.set(detail.sessionId, { detail: structuredClone(detail), bytes, lastAccessedAt: now });
+    for (const [sessionId, record] of this.memory) {
+      if (now - record.lastAccessedAt > MEMORY_TTL_MS) this.memory.delete(sessionId);
+    }
+    let totalBytes = [...this.memory.values()].reduce((total, record) => total + record.bytes, 0);
+    while (this.memory.size > MAX_MEMORY_THREADS || totalBytes > MAX_MEMORY_BYTES) {
+      const oldest = this.memory.entries().next().value as [string, MemoryRecord] | undefined;
+      if (!oldest) break;
+      this.memory.delete(oldest[0]);
+      totalBytes -= oldest[1].bytes;
+    }
+  }
+
+  private async database(): Promise<IDBDatabase | undefined> {
+    if (typeof indexedDB === "undefined") return undefined;
+    if (!this.databasePromise) {
+      this.databasePromise = new Promise((resolve) => {
+        const request = indexedDB.open(DATABASE_NAME, DATABASE_VERSION);
+        request.onupgradeneeded = () => {
+          const database = request.result;
+          if (!database.objectStoreNames.contains(DETAIL_STORE)) {
+            database.createObjectStore(DETAIL_STORE, { keyPath: "sessionId" });
+          }
+          if (!database.objectStoreNames.contains(META_STORE)) {
+            database.createObjectStore(META_STORE, { keyPath: "key" });
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(undefined);
+        request.onblocked = () => resolve(undefined);
+      });
+    }
+    return this.databasePromise;
+  }
+
+  private async prunePersistent(database: IDBDatabase): Promise<void> {
+    const transaction = database.transaction(DETAIL_STORE, "readwrite");
+    const store = transaction.objectStore(DETAIL_STORE);
+    const records = await requestValue(store.getAll()) as DetailRecord[];
+    records.sort((left, right) => right.lastAccessedAt - left.lastAccessedAt);
+    let retainedBytes = 0;
+    for (let index = 0; index < records.length; index++) {
+      const record = records[index]!;
+      retainedBytes += record.bytes;
+      if (index >= MAX_PERSISTED_THREADS || retainedBytes > MAX_PERSISTED_BYTES) {
+        store.delete(record.sessionId);
+      }
+    }
+    await transactionDone(transaction);
+  }
+}
+
+export function summaryBootstrapFromSnapshot(
+  capturedAt: string,
+  connection: AnvilSummaryBootstrap["connection"],
+  projects: AnvilSummaryBootstrap["projects"],
+  sessions: AnvilSummaryBootstrap["sessions"],
+  cursor: number,
+): AnvilSummaryBootstrap {
+  return {
+    protocolVersion: ANVIL_PROTOCOL_VERSION,
+    capturedAt,
+    connection,
+    projects,
+    sessions,
+    cursor,
+  };
+}

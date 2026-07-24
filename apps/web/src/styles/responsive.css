@@ -16,11 +16,44 @@
 }
 
 @media (hover: none) {
-  .workspace-add,
-  .project-new-session,
-  .session-delete {
+  .project-filter,
+  .project-filter-add,
+  .thread-section-toggle,
+  .new-thread-menu button {
+    min-height: 44px;
+  }
+
+  .thread-create {
+    width: 44px;
+    height: 44px;
+  }
+
+  .new-thread-menu {
+    top: 49px;
+  }
+
+  .project-filter-add {
+    width: 44px;
+  }
+
+  .session-settle {
+    min-height: 44px;
+    padding-right: 9px;
+    padding-left: 9px;
     opacity: 1;
     pointer-events: auto;
+  }
+
+  .session-recency {
+    opacity: 0;
+  }
+
+  .session-item--settled .session-row {
+    height: 48px;
+  }
+
+  .session-item--settled .session-settle {
+    bottom: 2px;
   }
 }
 
@@ -134,6 +167,15 @@
   .dialog-backdrop {
     align-items: end;
     padding: 0;
+  }
+
+  .interaction-panel-wrap {
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .interaction-panel {
+    max-height: 54dvh;
   }
 
   .interaction-dialog,

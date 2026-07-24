@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
+import { delimiter, join } from "node:path";
 
 import { JsonlDecoder } from "./jsonl.ts";
 
@@ -26,6 +27,18 @@ export class RpcProcessError extends Error {
     super(message, options);
     this.name = "RpcProcessError";
   }
+}
+
+function subprocessEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const home = environment.HOME;
+  if (!home) return environment;
+  const userBin = join(home, ".local", "bin");
+  const currentPath = environment.PATH ?? "";
+  if (currentPath.split(delimiter).includes(userBin)) return environment;
+  return {
+    ...environment,
+    PATH: currentPath ? `${userBin}${delimiter}${currentPath}` : userBin,
+  };
 }
 
 export class RpcSubprocess extends EventEmitter {
@@ -55,7 +68,7 @@ export class RpcSubprocess extends EventEmitter {
 
     const child = spawn(this.options.executable, this.options.args, {
       cwd: this.options.cwd,
-      env: this.options.env ?? process.env,
+      env: subprocessEnvironment(this.options.env ?? process.env),
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
     });

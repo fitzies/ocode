@@ -35,7 +35,11 @@ describe("loadForgeConfig", () => {
     const { directory, configPath } = fixture("owner@example.com");
     try {
       const config = loadForgeConfig({ ANVIL_CONFIG: configPath, ANVIL_DATA_DIR: directory });
-      expect(config).toMatchObject({ ownerLogin: "owner@example.com", host: "127.0.0.1" });
+      expect(config).toMatchObject({
+        ownerLogin: "owner@example.com",
+        host: "127.0.0.1",
+        artifactDir: join(directory, "artifacts"),
+      });
       expect(config.projects[0]?.path).toBe(directory);
       expect(() => loadForgeConfig({
         ANVIL_CONFIG: configPath,

@@ -9,9 +9,9 @@ import altArrowLeftIcon from "@iconify-icons/solar/alt-arrow-left-linear";
 import altArrowRightIcon from "@iconify-icons/solar/alt-arrow-right-linear";
 import closeCircleIcon from "@iconify-icons/solar/close-circle-linear";
 import questionCircleIcon from "@iconify-icons/solar/question-circle-bold-duotone";
-import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
 
-interface InteractionDialogProps {
+interface InteractionPanelProps {
   requests: InteractionRequest[];
   onRespond: (response: InteractionResponse) => void;
 }
@@ -234,68 +234,37 @@ function InteractionForm({
   );
 }
 
-export function InteractionDialog({ requests, onRespond }: InteractionDialogProps) {
+export function InteractionPanel({ requests, onRespond }: InteractionPanelProps) {
   const [index, setIndex] = useState(0);
-  const dialogRef = useRef<HTMLDivElement>(null);
   const request = requests[Math.min(index, requests.length - 1)];
 
   useEffect(() => setIndex((current) => Math.min(current, Math.max(0, requests.length - 1))), [requests.length]);
 
-  useEffect(() => {
-    if (!request) return;
-    const previousFocus = document.activeElement as HTMLElement | null;
-    const dialog = dialogRef.current;
-    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [tabindex]:not([tabindex='-1'])") ?? []);
-    requestAnimationFrame(() => focusable()[0]?.focus());
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onRespond({ requestId: request.id, cancelled: true });
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const elements = focusable();
-      if (!elements.length) return;
-      const first = elements[0]!;
-      const last = elements[elements.length - 1]!;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      previousFocus?.focus();
-    };
-  }, [request, onRespond]);
-
   if (!request) return null;
+  const titleId = `interaction-title-${request.id}`;
+  const messageId = `interaction-message-${request.id}`;
 
   return (
-    <div className="dialog-backdrop">
-      <div ref={dialogRef} className="interaction-dialog" role="dialog" aria-modal="true" aria-labelledby="interaction-title" aria-describedby={request.message ? "interaction-message" : undefined}>
+    <section className="interaction-panel-wrap" aria-labelledby={titleId} aria-describedby={request.message ? messageId : undefined}>
+      <div className="interaction-panel">
         <header className="interaction-dialog-header">
           <span className="dialog-symbol"><Icon icon={questionCircleIcon} width={20} /></span>
           <span className="dialog-heading-copy">
-            <small>{requestDescription(request)}</small>
-            <h2 id="interaction-title">{request.title}</h2>
+            <small>{requestDescription(request)} · this thread</small>
+            <h2 id={titleId}>{request.title}</h2>
           </span>
           <button className="icon-button" type="button" aria-label="Cancel interaction" onClick={() => onRespond({ requestId: request.id, cancelled: true })}><Icon icon={closeCircleIcon} width={19} /></button>
         </header>
-        {request.message && <p className="interaction-message" id="interaction-message">{request.message}</p>}
+        {request.message && <p className="interaction-message" id={messageId}>{request.message}</p>}
         <div className="interaction-dialog-body"><InteractionForm key={request.id} request={request} onRespond={onRespond} /></div>
         {requests.length > 1 && (
           <footer className="dialog-queue-nav">
             <button type="button" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0} aria-label="Previous pending request"><Icon icon={altArrowLeftIcon} width={15} /></button>
-            <span>{index + 1} of {requests.length} pending</span>
+            <span>{index + 1} of {requests.length} pending in this thread</span>
             <button type="button" onClick={() => setIndex((current) => Math.min(requests.length - 1, current + 1))} disabled={index >= requests.length - 1} aria-label="Next pending request"><Icon icon={altArrowRightIcon} width={15} /></button>
           </footer>
         )}
       </div>
-    </div>
+    </section>
   );
 }

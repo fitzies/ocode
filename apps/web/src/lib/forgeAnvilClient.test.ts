@@ -84,6 +84,159 @@ describe("ForgeAnvilClient", () => {
     });
   });
 
+  it("renders a detail newer than bootstrap without duplicating its later SSE events", async () => {
+    const stream = new FakeEventSource();
+    const fetcher = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({
+          protocolVersion: ANVIL_PROTOCOL_VERSION,
+          capturedAt: session.updatedAt,
+          connection: "connected",
+          projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+          sessions: [session],
+          cursor: 0,
+        }));
+      }
+      if (url.includes("/detail")) {
+        return new Response(JSON.stringify({
+          protocolVersion: ANVIL_PROTOCOL_VERSION,
+          mode: "reset",
+          detail: {
+            protocolVersion: ANVIL_PROTOCOL_VERSION,
+            sessionId: session.id,
+            throughSequence: 2,
+            timeline: [{
+              id: "assistant-1",
+              kind: "message",
+              role: "assistant",
+              content: [{ id: "text-1", type: "text", text: "Hello" }],
+              status: "streaming",
+              createdAt: session.updatedAt,
+            }],
+            catalog: { models: [], commands: [], skills: [] },
+            pendingInteractions: [],
+            extensionStatuses: [],
+            widgets: [],
+            queue: { steering: [], followUp: [] },
+            composerDraft: "",
+            runState: "running",
+          },
+        }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().timelines[session.id]?.length === 1);
+
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-message-start",
+      sequence: 1,
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "message.started",
+      payload: {
+        message: {
+          id: "assistant-1",
+          kind: "message",
+          role: "assistant",
+          content: [],
+          status: "streaming",
+          createdAt: session.updatedAt,
+        },
+      },
+    }));
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-message-delta",
+      sequence: 2,
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:02.000Z",
+      type: "message.delta",
+      payload: { messageId: "assistant-1", blockId: "text-1", delta: "Hello" },
+    }));
+
+    expect(client.getSnapshot().timelines[session.id]?.[0]).toMatchObject({
+      content: [{ text: "Hello" }],
+    });
+  });
+
+  it("ignores an obsolete detail response after a newer bootstrap", async () => {
+    const stream = new FakeEventSource();
+    let bootstrapCount = 0;
+    let detailCount = 0;
+    let resolveOldDetail!: (response: Response) => void;
+    const oldDetail = new Promise<Response>((resolve) => {
+      resolveOldDetail = resolve;
+    });
+    const detailResponse = (text: string, throughSequence: number) => new Response(JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      mode: "reset",
+      detail: {
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        sessionId: session.id,
+        throughSequence,
+        timeline: [{
+          id: "assistant-1",
+          kind: "message",
+          role: "assistant",
+          content: [{ id: "text-1", type: "text", text }],
+          status: "complete",
+          createdAt: session.updatedAt,
+        }],
+        catalog: { models: [], commands: [], skills: [] },
+        pendingInteractions: [],
+        extensionStatuses: [],
+        widgets: [],
+        queue: { steering: [], followUp: [] },
+        composerDraft: "",
+        runState: "idle",
+      },
+    }));
+    const fetcher = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/bootstrap")) {
+        bootstrapCount++;
+        return new Response(JSON.stringify({
+          protocolVersion: ANVIL_PROTOCOL_VERSION,
+          capturedAt: session.updatedAt,
+          connection: "connected",
+          projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+          sessions: [session],
+          cursor: bootstrapCount === 1 ? 0 : 10,
+        }));
+      }
+      if (url.includes("/detail")) {
+        detailCount++;
+        return detailCount === 1 ? oldDetail : detailResponse("New", 10);
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => detailCount === 1);
+    expect(client.getSnapshot().hydratingSessionIds).toContain(session.id);
+
+    stream.emit("reset", "{}");
+    await waitUntil(() => bootstrapCount === 2 && detailCount === 2);
+    await waitUntil(() => {
+      const entry = client.getSnapshot().timelines[session.id]?.[0];
+      return entry?.kind === "message" && entry.content[0]?.type === "text" && entry.content[0].text === "New";
+    });
+
+    resolveOldDetail(detailResponse("Old", 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(client.getSnapshot().timelines[session.id]?.[0]).toMatchObject({
+      content: [{ text: "New" }],
+    });
+  });
+
   it("promotes the active session immediately when a prompt is sent", async () => {
     const stream = new FakeEventSource();
     const olderSession = { ...session, id: "session-older", title: "Older session" };
@@ -119,6 +272,13 @@ describe("ForgeAnvilClient", () => {
       olderSession.id,
     ]);
     expect(client.getSnapshot().sessions[0]?.updatedAt).not.toBe(session.updatedAt);
+    expect(client.getSnapshot().timelines[session.id]?.at(-1)).toMatchObject({
+      id: expect.stringMatching(/^optimistic-/),
+      kind: "message",
+      role: "user",
+      status: "streaming",
+      content: [{ type: "text", text: "Move this thread to the top" }],
+    });
   });
 
   it("creates a session in the explicitly selected project", async () => {
@@ -168,6 +328,112 @@ describe("ForgeAnvilClient", () => {
       sessionId: null,
       payload: { projectId: "other", sessionId: expect.any(String) },
     });
+  });
+
+  it("queues an immediate prompt until a new thread is acknowledged", async () => {
+    const stream = new FakeEventSource();
+    const project = { id: "anvil", name: "Anvil", path: "/repo" };
+    const snapshot = createEmptySnapshot({ projects: [project], sessions: [session] });
+    const commands: Array<{ id: string; type: string; sessionId: string | null; payload: Record<string, string> }> = [];
+    let resolveCreate!: (response: Response) => void;
+    const createResponse = new Promise<Response>((resolve) => {
+      resolveCreate = resolve;
+    });
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [], cursor: 0 }));
+      }
+      const sent = JSON.parse(String(init?.body)) as (typeof commands)[number];
+      commands.push(sent);
+      if (sent.type === "session.create") return createResponse;
+      return new Response(JSON.stringify({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: "response-prompt-after-create",
+        commandId: sent.id,
+        timestamp: "2026-07-23T01:00:02.000Z",
+        success: true,
+        outcome: "completed",
+      }));
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().sessions.length === 1);
+
+    client.createSession(project.id);
+    await waitUntil(() => commands.length === 1);
+    const sessionId = commands[0]!.payload.sessionId!;
+    client.sendPrompt("Start immediately");
+    expect(commands.map((command) => command.type)).toEqual(["session.create"]);
+
+    resolveCreate(new Response(JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "response-create-before-prompt",
+      commandId: commands[0]!.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      success: true,
+      outcome: "completed",
+      data: { sessionId },
+    })));
+    await waitUntil(() => commands.length === 2);
+
+    expect(commands[1]).toMatchObject({
+      type: "prompt.send",
+      sessionId,
+      payload: { content: "Start immediately", delivery: "prompt" },
+    });
+  });
+
+  it("drains multiple prompts in FIFO order", async () => {
+    const stream = new FakeEventSource();
+    const snapshot = createEmptySnapshot({
+      projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+      sessions: [session],
+      activeSessionId: session.id,
+    });
+    const prompts: Array<{ id: string; payload: { content: string } }> = [];
+    let resolveFirst!: (response: Response) => void;
+    const firstResponse = new Promise<Response>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [], cursor: 0 }));
+      }
+      const sent = JSON.parse(String(init?.body)) as (typeof prompts)[number];
+      prompts.push(sent);
+      if (prompts.length === 1) return firstResponse;
+      return new Response(JSON.stringify({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: "response-second-prompt",
+        commandId: sent.id,
+        timestamp: "2026-07-23T01:00:02.000Z",
+        success: true,
+        outcome: "completed",
+      }));
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().sessions.length === 1);
+
+    client.sendPrompt("First");
+    client.sendPrompt("Second");
+    await waitUntil(() => prompts.length === 1);
+    expect(prompts.map((prompt) => prompt.payload.content)).toEqual(["First"]);
+
+    resolveFirst(new Response(JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "response-first-prompt",
+      commandId: prompts[0]!.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      success: true,
+      outcome: "completed",
+    })));
+    await waitUntil(() => prompts.length === 2);
+    expect(prompts.map((prompt) => prompt.payload.content)).toEqual(["First", "Second"]);
   });
 
   it("does not let a delayed create response override a newer thread selection", async () => {
@@ -381,7 +647,7 @@ describe("ForgeAnvilClient", () => {
     expect(client.getSnapshot().activeSessionId).toBe(session.id);
   });
 
-  it("sends workspace creation and session deletion commands", async () => {
+  it("sends workspace creation, settlement, and session deletion commands", async () => {
     const stream = new FakeEventSource();
     const snapshot = createEmptySnapshot({
       projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
@@ -410,11 +676,13 @@ describe("ForgeAnvilClient", () => {
     await waitUntil(() => client.getSnapshot().sessions.length === 1);
 
     client.createProject("Tools", "/home/oli/code/tools");
+    client.setSessionSettled(session.id, true);
     client.deleteSession(session.id);
-    await waitUntil(() => bodies.length === 2);
+    await waitUntil(() => bodies.length === 3);
 
     expect(bodies).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "project.create", sessionId: null, payload: { name: "Tools", path: "/home/oli/code/tools" } }),
+      expect.objectContaining({ type: "session.settled", sessionId: session.id, payload: { settled: true } }),
       expect.objectContaining({ type: "session.delete", sessionId: null, payload: { sessionId: session.id } }),
     ]));
   });

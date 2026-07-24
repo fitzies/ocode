@@ -1,4 +1,4 @@
-export const ANVIL_PROTOCOL_VERSION = 2 as const;
+export const ANVIL_PROTOCOL_VERSION = 5 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
 
 export type JsonPrimitive = string | number | boolean | null;
@@ -6,6 +6,7 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 
 export type ConnectionState = "connected" | "reconnecting" | "offline";
 export type SessionStatus = "idle" | "running" | "waiting" | "failed";
+export type RunOutcome = "completed" | "failed" | "cancelled";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type EntryStatus = "streaming" | "complete" | "failed" | "cancelled";
 export type ToolStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
@@ -25,6 +26,13 @@ export interface SessionSummary {
   modelId: string;
   thinkingLevel: ThinkingLevel;
   branch?: string;
+  /** User-controlled resolution state. Missing on legacy sessions means unsettled. */
+  settled?: boolean;
+  /** Global Forge event sequence for the latest meaningful lifecycle activity. */
+  lastActivitySequence?: number;
+  /** Global Forge event sequence for the latest terminal run transition. */
+  lastTerminalSequence?: number;
+  lastTerminalOutcome?: RunOutcome;
 }
 
 export interface ModelDescriptor {
@@ -98,12 +106,33 @@ export interface UnknownContentBlock {
   raw: JsonValue;
 }
 
+export interface ArtifactContentBlock {
+  id: string;
+  type: "artifact";
+  artifactId: string;
+  url: string;
+  mediaType: string;
+  byteLength: number;
+  name?: string;
+  preview?: string;
+}
+
+export interface ArtifactReference {
+  type: "artifactReference";
+  artifactId: string;
+  url: string;
+  mediaType: string;
+  byteLength: number;
+  name?: string;
+}
+
 export type ContentBlock =
   | TextContentBlock
   | ImageContentBlock
   | DataContentBlock
   | ToolCallContentBlock
-  | UnknownContentBlock;
+  | UnknownContentBlock
+  | ArtifactContentBlock;
 
 interface TimelineEntryBase {
   id: string;
@@ -323,6 +352,45 @@ export interface AnvilBootstrap {
   cursor: number;
 }
 
+/** Lightweight bootstrap used by live clients. Thread details are loaded separately. */
+export interface AnvilSummaryBootstrap {
+  protocolVersion: ProtocolVersion;
+  capturedAt: string;
+  connection: ConnectionState;
+  projects: ProjectSummary[];
+  sessions: SessionSummary[];
+  cursor: number;
+}
+
+export interface AnvilSessionDetail {
+  protocolVersion: ProtocolVersion;
+  sessionId: string;
+  throughSequence: number;
+  timeline: TimelineEntry[];
+  catalog: CapabilityCatalog;
+  pendingInteractions: InteractionRequest[];
+  extensionStatuses: ExtensionStatus[];
+  widgets: ExtensionWidget[];
+  queue: SessionQueue;
+  composerDraft: string;
+  runState: DurableRunState;
+}
+
+export type AnvilSessionDetailSync =
+  | {
+      protocolVersion: ProtocolVersion;
+      mode: "reset";
+      detail: AnvilSessionDetail;
+    }
+  | {
+      protocolVersion: ProtocolVersion;
+      mode: "delta";
+      sessionId: string;
+      fromSequence: number;
+      throughSequence: number;
+      events: AnvilEvent[];
+    };
+
 export interface AnvilStreamReset {
   protocolVersion: ProtocolVersion;
   reason: "cursor_invalid" | "cursor_expired" | "server_reset";
@@ -354,16 +422,23 @@ export type AnvilEvent =
   | AnvilEventBase<"project.upserted", { project: ProjectSummary }>
   | AnvilEventBase<"session.upserted", { session: SessionSummary }>
   | AnvilEventBase<"session.deleted", { sessionId: string }>
+  | AnvilEventBase<"session.settled", { settled: boolean }>
   | AnvilEventBase<"session.selected", { sessionId: string }>
   | AnvilEventBase<
       "session.configured",
-      { modelId?: string; thinkingLevel?: ThinkingLevel; title?: string }
+      { modelId?: string; thinkingLevel?: ThinkingLevel; title?: string; branch?: string | null }
     >
-  | AnvilEventBase<"run.status", { status: DurableRunState; message?: string }>
+  | AnvilEventBase<"run.status", { status: DurableRunState; message?: string; outcome?: RunOutcome }>
   | AnvilEventBase<"message.started", { message: MessageEntry }>
   | AnvilEventBase<
       "message.delta",
-      { messageId: string; blockId: string; delta: string; modelId?: string }
+      {
+        messageId: string;
+        blockId: string;
+        delta: string;
+        modelId?: string;
+        artifact?: ArtifactContentBlock;
+      }
     >
   | AnvilEventBase<
       "message.completed",
@@ -433,9 +508,15 @@ export type AnvilClientCommand =
   | AnvilCommandBase<"session.select", { sessionId: string }>
   | AnvilCommandBase<"session.create", { projectId: string; sessionId: string; parentSessionId?: string }>
   | AnvilCommandBase<"session.delete", { sessionId: string }>
+  | AnvilCommandBase<"session.settled", { settled: boolean }>
   | AnvilCommandBase<
       "prompt.send",
-      { content: string; delivery: PromptDelivery; images?: ImageContentBlock[] }
+      {
+        content: string;
+        delivery: PromptDelivery;
+        images?: ImageContentBlock[];
+        attachments?: ArtifactReference[];
+      }
     >
   | AnvilCommandBase<"run.cancel", Record<string, never>>
   | AnvilCommandBase<"model.set", { modelId: string }>
@@ -467,6 +548,7 @@ const ANVIL_EVENT_TYPES = new Set<AnvilEvent["type"]>([
   "project.upserted",
   "session.upserted",
   "session.deleted",
+  "session.settled",
   "session.selected",
   "session.configured",
   "run.status",
@@ -502,6 +584,16 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+function isArtifactReference(value: unknown): value is ArtifactReference {
+  return isRecord(value) &&
+    value.type === "artifactReference" &&
+    hasStrings(value, "artifactId", "url", "mediaType") &&
+    value.url === `/api/v1/artifacts/${String(value.artifactId)}` &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value.artifactId)) &&
+    Number.isSafeInteger(value.byteLength) && Number(value.byteLength) >= 0 &&
+    (value.name === undefined || typeof value.name === "string");
+}
+
 function isContentBlock(value: unknown): boolean {
   if (!isRecord(value) || !hasStrings(value, "id", "type")) return false;
   switch (value.type) {
@@ -517,6 +609,14 @@ function isContentBlock(value: unknown): boolean {
       return hasStrings(value, "toolCallId", "name") && isJsonValue(value.arguments);
     case "unknown":
       return typeof value.contentType === "string" && isJsonValue(value.raw);
+    case "artifact":
+      return hasStrings(value, "artifactId", "url", "mediaType") &&
+        /^\/[a-z0-9/_-]+$/i.test(String(value.url)) &&
+        value.url === `/api/v1/artifacts/${String(value.artifactId)}` &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value.artifactId)) &&
+        Number.isSafeInteger(value.byteLength) && Number(value.byteLength) >= 0 &&
+        (value.name === undefined || typeof value.name === "string") &&
+        (value.preview === undefined || typeof value.preview === "string");
     default:
       return false;
   }
@@ -543,7 +643,11 @@ function isSessionSummary(value: unknown): boolean {
   return isRecord(value) &&
     hasStrings(value, "id", "projectId", "title", "updatedAt", "status", "modelId", "thinkingLevel") &&
     ["idle", "running", "waiting", "failed"].includes(String(value.status)) &&
-    ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(String(value.thinkingLevel));
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(String(value.thinkingLevel)) &&
+    (value.settled === undefined || typeof value.settled === "boolean") &&
+    (value.lastActivitySequence === undefined || (Number.isSafeInteger(value.lastActivitySequence) && Number(value.lastActivitySequence) >= 0)) &&
+    (value.lastTerminalSequence === undefined || (Number.isSafeInteger(value.lastTerminalSequence) && Number(value.lastTerminalSequence) > 0)) &&
+    (value.lastTerminalOutcome === undefined || ["completed", "failed", "cancelled"].includes(String(value.lastTerminalOutcome)));
 }
 
 function isInteractionOption(value: unknown): boolean {
@@ -560,6 +664,54 @@ function isInteractionRequest(value: unknown): boolean {
   return true;
 }
 
+function isTimelineEntry(value: unknown): boolean {
+  if (!isRecord(value) || !hasStrings(value, "id", "kind", "createdAt")) return false;
+  if (value.raw !== undefined && !isJsonValue(value.raw)) return false;
+  switch (value.kind) {
+    case "message":
+      return hasStrings(value, "role", "status") &&
+        ["user", "assistant", "system", "extension"].includes(String(value.role)) &&
+        ["streaming", "complete", "failed", "cancelled"].includes(String(value.status)) &&
+        Array.isArray(value.content) && value.content.every(isContentBlock) &&
+        (value.error === undefined || typeof value.error === "string");
+    case "reasoning":
+      return hasStrings(value, "messageId", "content", "status") &&
+        ["streaming", "complete", "failed", "cancelled"].includes(String(value.status));
+    case "tool":
+      return hasStrings(value, "toolCallId", "name", "summary", "status") &&
+        ["queued", "running", "completed", "failed", "cancelled"].includes(String(value.status)) &&
+        isJsonValue(value.arguments) &&
+        Array.isArray(value.output) && value.output.every(isContentBlock) &&
+        (value.details === undefined || isJsonValue(value.details));
+    case "event":
+      return hasStrings(value, "category", "tone", "title") &&
+        ["notification", "status", "widget", "lifecycle", "error", "unknown"].includes(String(value.category)) &&
+        ["neutral", "info", "success", "warning", "error"].includes(String(value.tone)) &&
+        (value.details === undefined || isJsonValue(value.details));
+    case "interaction":
+      return hasStrings(value, "requestId", "method", "title", "status") &&
+        ["select", "multiSelect", "confirm", "input", "editor", "unknown"].includes(String(value.method)) &&
+        ["pending", "answered", "cancelled", "unsupported"].includes(String(value.status));
+    default:
+      return false;
+  }
+}
+
+function isExtensionStatus(value: unknown): boolean {
+  return isRecord(value) && hasStrings(value, "sessionId", "key", "text", "updatedAt") &&
+    (value.source === undefined || typeof value.source === "string");
+}
+
+function isExtensionWidget(value: unknown): boolean {
+  return isRecord(value) && hasStrings(value, "sessionId", "key", "placement", "updatedAt") &&
+    ["aboveEditor", "belowEditor"].includes(String(value.placement)) &&
+    isStringArray(value.lines);
+}
+
+function isSessionQueue(value: unknown): boolean {
+  return isRecord(value) && isStringArray(value.steering) && isStringArray(value.followUp);
+}
+
 function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
   if (!isRecord(value)) return false;
   switch (type) {
@@ -573,18 +725,27 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
       return isSessionSummary(value.session);
     case "session.deleted":
       return hasStrings(value, "sessionId");
+    case "session.settled":
+      return typeof value.settled === "boolean";
     case "session.selected":
       return hasStrings(value, "sessionId");
     case "session.configured":
-      return true;
+      return (value.modelId === undefined || typeof value.modelId === "string") &&
+        (value.thinkingLevel === undefined || ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(String(value.thinkingLevel))) &&
+        (value.title === undefined || typeof value.title === "string") &&
+        (value.branch === undefined || value.branch === null || typeof value.branch === "string");
     case "run.status":
-      return ["idle", "running", "failed"].includes(String(value.status));
+      return ["idle", "running", "failed"].includes(String(value.status)) &&
+        (value.outcome === undefined || ["completed", "failed", "cancelled"].includes(String(value.outcome)));
     case "message.started":
       return isRecord(value.message) && value.message.kind === "message" &&
         hasStrings(value.message, "id", "role", "status", "createdAt") &&
         Array.isArray(value.message.content) && value.message.content.every(isContentBlock);
     case "message.delta":
-      return hasStrings(value, "messageId", "blockId", "delta");
+      return hasStrings(value, "messageId", "blockId", "delta") &&
+        (value.artifact === undefined || (
+          isRecord(value.artifact) && isContentBlock(value.artifact) && value.artifact.type === "artifact"
+        ));
     case "message.completed":
       return hasStrings(value, "messageId") &&
         (value.content === undefined || (Array.isArray(value.content) && value.content.every(isContentBlock)));
@@ -690,13 +851,17 @@ export function isAnvilClientCommand(value: unknown): value is AnvilClientComman
         (payload.parentSessionId === undefined || typeof payload.parentSessionId === "string");
     case "session.delete":
       return value.sessionId === null && hasStrings(payload, "sessionId");
+    case "session.settled":
+      return typeof value.sessionId === "string" && typeof payload.settled === "boolean";
     case "prompt.send":
       return typeof value.sessionId === "string" &&
         hasStrings(payload, "content", "delivery") &&
         ["prompt", "steer", "followUp"].includes(String(payload.delivery)) &&
         (payload.images === undefined ||
           (Array.isArray(payload.images) &&
-            payload.images.every((image) => isRecord(image) && image.type === "image" && isContentBlock(image))));
+            payload.images.every((image) => isRecord(image) && image.type === "image" && isContentBlock(image)))) &&
+        (payload.attachments === undefined ||
+          (Array.isArray(payload.attachments) && payload.attachments.every(isArtifactReference)));
     case "run.cancel":
       return typeof value.sessionId === "string" && Object.keys(payload).length === 0;
     case "model.set":
@@ -725,15 +890,19 @@ export function isAnvilSnapshot(value: unknown): value is AnvilSnapshot {
     value.projects.every((project) => isRecord(project) && hasStrings(project, "id", "name", "path")) &&
     Array.isArray(value.sessions) && value.sessions.every(isSessionSummary) &&
     (value.activeSessionId === null || typeof value.activeSessionId === "string") &&
-    isRecord(value.timelines) &&
+    isRecord(value.timelines) && Object.values(value.timelines).every(
+      (timeline) => Array.isArray(timeline) && timeline.every(isTimelineEntry)
+    ) &&
     isRecord(value.catalogs) &&
     Object.values(value.catalogs).every(isCapabilityCatalog) &&
     Array.isArray(value.pendingInteractions) && value.pendingInteractions.every(isInteractionRequest) &&
-    Array.isArray(value.extensionStatuses) &&
-    Array.isArray(value.widgets) &&
-    isRecord(value.queues) &&
-    isRecord(value.composerDrafts) &&
-    isRecord(value.runStates) &&
+    Array.isArray(value.extensionStatuses) && value.extensionStatuses.every(isExtensionStatus) &&
+    Array.isArray(value.widgets) && value.widgets.every(isExtensionWidget) &&
+    isRecord(value.queues) && Object.values(value.queues).every(isSessionQueue) &&
+    isRecord(value.composerDrafts) && Object.values(value.composerDrafts).every((draft) => typeof draft === "string") &&
+    isRecord(value.runStates) && Object.values(value.runStates).every(
+      (state) => ["idle", "running", "failed"].includes(String(state))
+    ) &&
     Number.isSafeInteger(value.lastSequence) && Number(value.lastSequence) >= 0 &&
     (value.sequenceGap === null ||
       (isRecord(value.sequenceGap) &&
@@ -760,4 +929,47 @@ export function isAnvilBootstrap(value: unknown): value is AnvilBootstrap {
     value.events.every((event) =>
       event.sequence > snapshot.lastSequence && event.sequence <= cursor
     );
+}
+
+export function isAnvilSummaryBootstrap(value: unknown): value is AnvilSummaryBootstrap {
+  return isRecord(value) &&
+    value.protocolVersion === ANVIL_PROTOCOL_VERSION &&
+    typeof value.capturedAt === "string" &&
+    ["connected", "reconnecting", "offline"].includes(String(value.connection)) &&
+    Array.isArray(value.projects) &&
+    value.projects.every((project) => isRecord(project) && hasStrings(project, "id", "name", "path")) &&
+    Array.isArray(value.sessions) && value.sessions.every(isSessionSummary) &&
+    Number.isSafeInteger(value.cursor) && Number(value.cursor) >= 0;
+}
+
+export function isAnvilSessionDetail(value: unknown): value is AnvilSessionDetail {
+  if (!isRecord(value) || !isJsonValue(value) || typeof value.sessionId !== "string") return false;
+  const sessionId = value.sessionId;
+  return value.protocolVersion === ANVIL_PROTOCOL_VERSION &&
+    Number.isSafeInteger(value.throughSequence) && Number(value.throughSequence) >= 0 &&
+    Array.isArray(value.timeline) && value.timeline.every(isTimelineEntry) &&
+    isCapabilityCatalog(value.catalog) &&
+    Array.isArray(value.pendingInteractions) && value.pendingInteractions.every(
+      (request) => isRecord(request) && isInteractionRequest(request) && request.sessionId === sessionId
+    ) &&
+    Array.isArray(value.extensionStatuses) && value.extensionStatuses.every(
+      (status) => isRecord(status) && isExtensionStatus(status) && status.sessionId === sessionId
+    ) &&
+    Array.isArray(value.widgets) && value.widgets.every(
+      (widget) => isRecord(widget) && isExtensionWidget(widget) && widget.sessionId === sessionId
+    ) &&
+    isSessionQueue(value.queue) &&
+    typeof value.composerDraft === "string" &&
+    ["idle", "running", "failed"].includes(String(value.runState));
+}
+
+export function isAnvilSessionDetailSync(value: unknown): value is AnvilSessionDetailSync {
+  if (!isRecord(value) || value.protocolVersion !== ANVIL_PROTOCOL_VERSION) return false;
+  if (value.mode === "reset") return isAnvilSessionDetail(value.detail);
+  return value.mode === "delta" &&
+    typeof value.sessionId === "string" &&
+    Number.isSafeInteger(value.fromSequence) && Number(value.fromSequence) >= 0 &&
+    Number.isSafeInteger(value.throughSequence) && Number(value.throughSequence) >= Number(value.fromSequence) &&
+    Array.isArray(value.events) && value.events.every(isAnvilEvent) &&
+    value.events.every((event) => event.sessionId === value.sessionId && event.sequence > Number(value.fromSequence) && event.sequence <= Number(value.throughSequence));
 }

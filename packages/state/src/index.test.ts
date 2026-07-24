@@ -30,6 +30,23 @@ function event<T extends AnvilEvent["type"]>(
 }
 
 describe("Anvil event reducer", () => {
+  it("updates branch metadata without changing thread activity", () => {
+    let snapshot = createEmptySnapshot({ sessions: [session] });
+    snapshot = applyAnvilEvent(snapshot, event(1, "session.configured", { branch: "feature/sidebar" }));
+
+    expect(snapshot.sessions[0]).toMatchObject({ branch: "feature/sidebar", updatedAt: session.updatedAt });
+  });
+
+  it("settles a session without changing its activity order or timestamp", () => {
+    const otherSession = { ...session, id: "session-2", title: "Other" };
+    let snapshot = createEmptySnapshot({ sessions: [session, otherSession] });
+
+    snapshot = applyAnvilEvent(snapshot, event(1, "session.settled", { settled: true }));
+
+    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([session.id, otherSession.id]);
+    expect(snapshot.sessions[0]).toMatchObject({ settled: true, updatedAt: session.updatedAt });
+  });
+
   it("reconciles streaming deltas and ignores replayed sequences", () => {
     let snapshot = createEmptySnapshot({ sessions: [session] });
     snapshot = applyAnvilEvent(
@@ -123,13 +140,24 @@ describe("Anvil event reducer", () => {
     expect(snapshot.sessions[0]?.updatedAt).toBe("2026-07-21T09:00:01.000Z");
   });
 
-  it("does not promote a background session when its run status changes", () => {
-    const otherSession = { ...session, id: "session-2", title: "Recent session" };
-    let snapshot = createEmptySnapshot({ sessions: [otherSession, session] });
+  it("promotes meaningful run transitions but not a passive idle sync", () => {
+    const background = { ...session, lastActivitySequence: 1 };
+    const otherSession = { ...session, id: "session-2", title: "Recent session", lastActivitySequence: 2 };
+    let snapshot = createEmptySnapshot({ sessions: [otherSession, background] });
 
     snapshot = applyAnvilEvent(snapshot, event(1, "run.status", { status: "idle" }));
-
     expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([otherSession.id, session.id]);
+
+    snapshot = applyAnvilEvent(snapshot, event(2, "run.status", { status: "running" }));
+    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([session.id, otherSession.id]);
+
+    snapshot = applyAnvilEvent(snapshot, event(3, "run.status", { status: "idle", outcome: "completed" }));
+    expect(snapshot.sessions[0]).toMatchObject({
+      id: session.id,
+      lastActivitySequence: 3,
+      lastTerminalSequence: 3,
+      lastTerminalOutcome: "completed",
+    });
   });
 
   it("restores the underlying run state after the last pending dialog resolves", () => {

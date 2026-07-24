@@ -21,7 +21,7 @@ import {
 const sqliteModuleName = "node:sqlite";
 const { DatabaseSync } = await import(sqliteModuleName) as typeof import("node:sqlite");
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 6;
 
 function parseJson(value: unknown): unknown {
   if (typeof value !== "string") throw new Error("Expected persisted JSON text");
@@ -37,6 +37,16 @@ export interface RuntimeSessionRecord {
   session: SessionSummary;
   piSessionId?: string;
   piSessionFile?: string;
+}
+
+export interface ArtifactRecord {
+  id: string;
+  sessionId: string;
+  mediaType: string;
+  byteLength: number;
+  name?: string;
+  purpose: "output" | "upload" | "input";
+  createdAt: string;
 }
 
 export class ForgeDatabase {
@@ -132,12 +142,35 @@ export class ForgeDatabase {
     }
   }
 
+  setSessionSettledWithEvent(
+    sessionId: string,
+    settled: boolean,
+    event: UnsequencedAnvilEvent,
+  ): AnvilEvent {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const updated = this.database.prepare("UPDATE sessions SET settled = ? WHERE id = ?").run(
+        settled ? 1 : 0,
+        sessionId,
+      );
+      if (Number(updated.changes) !== 1) throw new Error("Session not found");
+      const [committed] = this.insertEvents([event]);
+      if (!committed) throw new Error("Session settlement did not produce an event");
+      this.database.exec("COMMIT");
+      return committed;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   updateSession(session: SessionSummary, piState?: { sessionId?: string; sessionFile?: string }): void {
     this.database.prepare(`
       UPDATE sessions SET
         pi_session_id = COALESCE(?, pi_session_id),
         pi_session_file = COALESCE(?, pi_session_file),
-        title = ?, model_id = ?, thinking_level = ?, status = ?, updated_at = ?
+        title = ?, model_id = ?, thinking_level = ?, status = ?, settled = ?, branch = ?, updated_at = ?,
+        last_activity_sequence = ?, last_terminal_sequence = ?, last_terminal_outcome = ?
       WHERE id = ?
     `).run(
       piState?.sessionId ?? null,
@@ -146,7 +179,12 @@ export class ForgeDatabase {
       session.modelId,
       session.thinkingLevel,
       session.status,
+      session.settled ? 1 : 0,
+      session.branch ?? null,
       session.updatedAt,
+      session.lastActivitySequence ?? 0,
+      session.lastTerminalSequence ?? null,
+      session.lastTerminalOutcome ?? null,
       session.id,
     );
   }
@@ -176,7 +214,8 @@ export class ForgeDatabase {
 
   getSession(id: string): RuntimeSessionRecord | undefined {
     const row = this.database.prepare(`
-      SELECT id, project_id, title, model_id, thinking_level, status, updated_at,
+      SELECT id, project_id, title, model_id, thinking_level, status, settled, branch, updated_at,
+             last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
              pi_session_id, pi_session_file
       FROM sessions WHERE id = ?
     `).get(id) as Record<string, unknown> | undefined;
@@ -189,7 +228,12 @@ export class ForgeDatabase {
         modelId: String(row.model_id),
         thinkingLevel: String(row.thinking_level) as SessionSummary["thinkingLevel"],
         status: String(row.status) as SessionSummary["status"],
+        settled: Boolean(row.settled),
+        ...(typeof row.branch === "string" ? { branch: row.branch } : {}),
         updatedAt: String(row.updated_at),
+        lastActivitySequence: Number(row.last_activity_sequence ?? 0),
+        ...(row.last_terminal_sequence === null ? {} : { lastTerminalSequence: Number(row.last_terminal_sequence) }),
+        ...(row.last_terminal_outcome === null ? {} : { lastTerminalOutcome: String(row.last_terminal_outcome) as NonNullable<SessionSummary["lastTerminalOutcome"]> }),
       },
       piSessionId: typeof row.pi_session_id === "string" ? row.pi_session_id : undefined,
       piSessionFile: typeof row.pi_session_file === "string" ? row.pi_session_file : undefined,
@@ -220,10 +264,28 @@ export class ForgeDatabase {
     );
   }
 
-  appendEvents(events: readonly UnsequencedAnvilEvent[]): AnvilEvent[] {
-    if (events.length === 0) return [];
+  appendEvents(
+    events: readonly UnsequencedAnvilEvent[],
+    artifacts: readonly ArtifactRecord[] = [],
+  ): AnvilEvent[] {
+    if (events.length === 0 && artifacts.length === 0) return [];
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      const insertArtifact = this.database.prepare(`
+        INSERT INTO artifacts (id, session_id, media_type, byte_length, name, purpose, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `);
+      for (const artifact of artifacts) {
+        insertArtifact.run(
+          artifact.id,
+          artifact.sessionId,
+          artifact.mediaType,
+          artifact.byteLength,
+          artifact.name ?? null,
+          artifact.purpose,
+          artifact.createdAt,
+        );
+      }
       const committed = this.insertEvents(events);
       this.database.exec("COMMIT");
       return committed;
@@ -231,6 +293,80 @@ export class ForgeDatabase {
       this.database.exec("ROLLBACK");
       throw error;
     }
+  }
+
+  getArtifact(id: string): ArtifactRecord | undefined {
+    const row = this.database.prepare(`
+      SELECT id, session_id, media_type, byte_length, name, purpose, created_at
+      FROM artifacts WHERE id = ?
+    `).get(id) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    return {
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      mediaType: String(row.media_type),
+      byteLength: Number(row.byte_length),
+      ...(row.name === null ? {} : { name: String(row.name) }),
+      purpose: String(row.purpose) as ArtifactRecord["purpose"],
+      createdAt: String(row.created_at),
+    };
+  }
+
+  listArtifactIds(): string[] {
+    return (this.database.prepare("SELECT id FROM artifacts").all() as Array<Record<string, unknown>>)
+      .map((row) => String(row.id));
+  }
+
+  listArtifacts(): ArtifactRecord[] {
+    const rows = this.database.prepare(`
+      SELECT id, session_id, media_type, byte_length, name, purpose, created_at
+      FROM artifacts ORDER BY created_at ASC, id ASC
+    `).all() as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      sessionId: String(row.session_id),
+      mediaType: String(row.media_type),
+      byteLength: Number(row.byte_length),
+      ...(row.name === null ? {} : { name: String(row.name) }),
+      purpose: String(row.purpose) as ArtifactRecord["purpose"],
+      createdAt: String(row.created_at),
+    }));
+  }
+
+  consumeUploadedArtifacts(sessionId: string, ids: readonly string[]): void {
+    const consume = this.database.prepare(`
+      UPDATE artifacts SET purpose = 'input'
+      WHERE id = ? AND session_id = ? AND purpose = 'upload'
+    `);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      for (const id of ids) consume.run(id, sessionId);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  deleteUploadedArtifact(sessionId: string, id: string): boolean {
+    return Number(this.database.prepare(`
+      DELETE FROM artifacts WHERE id = ? AND session_id = ? AND purpose = 'upload'
+    `).run(id, sessionId).changes) > 0;
+  }
+
+  deleteStaleUploads(before: string): string[] {
+    const ids = (this.database.prepare(`
+      SELECT id FROM artifacts WHERE purpose = 'upload' AND created_at < ?
+    `).all(before) as Array<Record<string, unknown>>).map((row) => String(row.id));
+    if (ids.length > 0) {
+      this.database.prepare(`DELETE FROM artifacts WHERE purpose = 'upload' AND created_at < ?`).run(before);
+    }
+    return ids;
+  }
+
+  artifactIdsForSession(sessionId: string): string[] {
+    return (this.database.prepare("SELECT id FROM artifacts WHERE session_id = ?").all(sessionId) as Array<Record<string, unknown>>)
+      .map((row) => String(row.id));
   }
 
   readEventsAfter(sequence: number, limit = 1_000): AnvilEvent[] {
@@ -243,23 +379,35 @@ export class ForgeDatabase {
       ORDER BY sequence ASC
       LIMIT ?
     `).all(sequence, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.eventFromRow(row));
+  }
 
-    return rows.map((row) => {
-      const candidate = {
-        protocolVersion: ANVIL_PROTOCOL_VERSION,
-        sequence: Number(row.sequence),
-        id: row.id,
-        sessionId: row.session_id,
-        timestamp: row.timestamp,
-        type: row.type,
-        payload: parseJson(row.payload_json),
-        ...(row.raw_json === null ? {} : { raw: parseJson(row.raw_json) }),
-      };
-      if (!isAnvilEvent(candidate)) {
-        throw new Error(`Persisted event ${String(row.sequence)} failed protocol validation`);
-      }
-      return candidate;
-    });
+  readSessionEventsAfter(
+    sessionId: string,
+    sequence: number,
+    throughSequence: number,
+    limit = 10_000,
+  ): AnvilEvent[] {
+    if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error("Invalid event cursor");
+    if (!Number.isSafeInteger(throughSequence) || throughSequence < sequence) throw new Error("Invalid detail cursor");
+    if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 10_000) throw new Error("Invalid event limit");
+    const rows = this.database.prepare(`
+      SELECT sequence, id, session_id, timestamp, type, payload_json, raw_json
+      FROM events
+      WHERE session_id = ? AND sequence > ? AND sequence <= ?
+      ORDER BY sequence ASC
+      LIMIT ?
+    `).all(sessionId, sequence, throughSequence, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.eventFromRow(row));
+  }
+
+  commandOutcome(commandId: string): AnvilCommandResponse | "pending" | "unknown" | undefined {
+    const row = this.database.prepare(
+      "SELECT status, response_json FROM commands WHERE id = ?",
+    ).get(commandId) as Record<string, unknown> | undefined;
+    if (!row) return undefined;
+    if (typeof row.response_json === "string") return parseJson(row.response_json) as AnvilCommandResponse;
+    return row.status === "pending" ? "pending" : "unknown";
   }
 
   listPendingInteractions(): InteractionRequest[] {
@@ -286,6 +434,10 @@ export class ForgeDatabase {
         captured_at = excluded.captured_at,
         snapshot_json = excluded.snapshot_json
     `).run(snapshot.lastSequence, snapshot.capturedAt, JSON.stringify(snapshot));
+    this.database.prepare(`
+      DELETE FROM snapshots
+      WHERE cursor NOT IN (SELECT cursor FROM snapshots ORDER BY cursor DESC LIMIT 3)
+    `).run();
   }
 
   latestSnapshot(): StoredSnapshot | undefined {
@@ -293,6 +445,7 @@ export class ForgeDatabase {
       SELECT cursor, snapshot_json
       FROM snapshots
       ORDER BY cursor DESC
+      LIMIT 3
     `).all() as Array<Record<string, unknown>>;
     for (const row of rows) {
       try {
@@ -305,11 +458,30 @@ export class ForgeDatabase {
     return undefined;
   }
 
+  private eventFromRow(row: Record<string, unknown>): AnvilEvent {
+    const candidate = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      sequence: Number(row.sequence),
+      id: row.id,
+      sessionId: row.session_id,
+      timestamp: row.timestamp,
+      type: row.type,
+      payload: parseJson(row.payload_json),
+      ...(row.raw_json === null ? {} : { raw: parseJson(row.raw_json) }),
+    };
+    if (!isAnvilEvent(candidate)) {
+      throw new Error(`Persisted event ${String(row.sequence)} failed protocol validation`);
+    }
+    return candidate;
+  }
+
   private insertSession(session: SessionSummary): void {
     this.database.prepare(`
       INSERT INTO sessions (
-        id, project_id, title, model_id, thinking_level, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        id, project_id, title, model_id, thinking_level, status, settled, branch,
+        last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.projectId,
@@ -317,6 +489,11 @@ export class ForgeDatabase {
       session.modelId,
       session.thinkingLevel,
       session.status,
+      session.settled ? 1 : 0,
+      session.branch ?? null,
+      session.lastActivitySequence ?? 0,
+      session.lastTerminalSequence ?? null,
+      session.lastTerminalOutcome ?? null,
       session.updatedAt,
       session.updatedAt,
     );
@@ -390,7 +567,7 @@ export class ForgeDatabase {
     }
     if (version === SCHEMA_VERSION) return;
 
-    this.database.exec(`
+    if (version === 0) this.database.exec(`
       BEGIN IMMEDIATE;
 
       CREATE TABLE IF NOT EXISTS projects (
@@ -453,5 +630,61 @@ export class ForgeDatabase {
       PRAGMA user_version = 1;
       COMMIT;
     `);
+
+    if (version < 2) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ALTER TABLE sessions ADD COLUMN last_activity_sequence INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE sessions ADD COLUMN last_terminal_sequence INTEGER;
+        ALTER TABLE sessions ADD COLUMN last_terminal_outcome TEXT;
+        PRAGMA user_version = 2;
+        COMMIT;
+      `);
+    }
+
+    if (version < 3) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE artifacts (
+          id TEXT PRIMARY KEY,
+          session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          media_type TEXT NOT NULL,
+          byte_length INTEGER NOT NULL,
+          name TEXT,
+          created_at TEXT NOT NULL
+        );
+        CREATE INDEX artifacts_session_id ON artifacts(session_id);
+        PRAGMA user_version = 3;
+        COMMIT;
+      `);
+    }
+
+    if (version < 4) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ALTER TABLE artifacts ADD COLUMN purpose TEXT NOT NULL DEFAULT 'output';
+        CREATE INDEX artifacts_pending_uploads ON artifacts(purpose, created_at);
+        PRAGMA user_version = 4;
+        COMMIT;
+      `);
+    }
+
+    if (version < 5) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ALTER TABLE sessions ADD COLUMN settled INTEGER NOT NULL DEFAULT 0;
+        PRAGMA user_version = 5;
+        COMMIT;
+      `);
+    }
+
+    if (version < 6) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ALTER TABLE sessions ADD COLUMN branch TEXT;
+        PRAGMA user_version = 6;
+        COMMIT;
+      `);
+    }
   }
 }

@@ -50,14 +50,44 @@ describe("Timeline markdown", () => {
     expect(html).not.toContain("**Phase 3 goal:**");
   });
 
+  it("renders externalized content as an artifact download", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          content: [{
+            id: "artifact-1",
+            type: "artifact",
+            artifactId: "01959f7e-7d64-7000-8000-000000000001",
+            url: "/api/v1/artifacts/01959f7e-7d64-7000-8000-000000000001",
+            mediaType: "text/plain; charset=utf-8",
+            byteLength: 524288,
+            name: "tool-output.txt",
+            preview: "Output preview",
+          }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Output preview");
+    expect(html).toContain("tool-output.txt");
+    expect(html).toContain("512 KB");
+    expect(html).toContain("/api/v1/artifacts/01959f7e-7d64-7000-8000-000000000001");
+  });
+
   it("renders reasoning Markdown as semantic HTML", () => {
     const html = renderToStaticMarkup(
       <Timeline session={session} entries={[reasoning]} onSuggestion={() => undefined} />,
     );
 
+    expect(html).toContain('<div class="thinking-event thinking-event--complete">');
+    expect(html).toContain('<span class="thinking-label">Thinking:</span>');
     expect(html).toContain("<strong>Checking:</strong>");
     expect(html).toContain("<ol>");
     expect(html).toContain("<li>Types</li>");
+    expect(html).not.toContain("<details");
     expect(html).not.toContain("**Checking:**");
   });
 });

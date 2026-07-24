@@ -1,5 +1,7 @@
+import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 
 import {
@@ -16,12 +18,19 @@ import {
   type JsonValue,
   type ProjectSummary,
   type SessionSummary,
+  type ToolEntry,
 } from "@anvil/protocol";
 
 import type { ForgeConfig } from "../config.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { ForgeDatabase, type RuntimeSessionRecord } from "../store/database.ts";
 import { createPiRpcProcess, type RpcRecord, type RpcSubprocess } from "../rpc/subprocess.ts";
+import { WorkspaceFileIndex } from "./workspaceFiles.ts";
+
+interface SessionManagerOptions {
+  defaultToolTimeoutMs?: number;
+  defaultBashTimeoutMs?: number;
+}
 
 interface ManagedSession {
   rpc: RpcSubprocess;
@@ -31,6 +40,7 @@ interface ManagedSession {
   failureReported: boolean;
   commandTail: Promise<unknown>;
   suppressedResponseIds: Set<string>;
+  toolTimers: Map<string, NodeJS.Timeout>;
 }
 
 function commandResponse(
@@ -75,6 +85,48 @@ function rpcData(record: RpcRecord): Record<string, unknown> {
     : {};
 }
 
+function escapeFileAttribute(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function isTextMediaType(mediaType: string): boolean {
+  return mediaType.startsWith("text/") || /^(application\/(json|xml|javascript|typescript|x-sh|yaml|toml))$/i.test(mediaType);
+}
+
+const PI_IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const MAX_INLINE_TEXT_ATTACHMENT_BYTES = 512 * 1024;
+const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+
+function gitBranch(cwd: string): string | undefined {
+  try {
+    const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+      cwd,
+      encoding: "utf8",
+      timeout: 2_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (branch && branch !== "HEAD") return branch;
+    const commit = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd,
+      encoding: "utf8",
+      timeout: 2_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return commit ? `detached-${commit}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function detectedImageMediaType(bytes: Buffer): string | undefined {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  const prefix = bytes.subarray(0, 6).toString("ascii");
+  if (prefix === "GIF87a" || prefix === "GIF89a") return "image/gif";
+  if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
+  return undefined;
+}
+
 export class SessionManager {
   private readonly projects = new Map<string, ProjectSummary>();
   private readonly runtimes = new Map<string, ManagedSession>();
@@ -82,15 +134,18 @@ export class SessionManager {
   private readonly inFlightCommands = new Map<string, Promise<AnvilCommandResponse>>();
   private readonly interactionTimers = new Map<string, NodeJS.Timeout>();
   private readonly deleting = new Set<string>();
+  private readonly workspaceFiles = new WorkspaceFileIndex();
   private shuttingDown = false;
 
   constructor(
     private readonly config: ForgeConfig,
     private readonly database: ForgeDatabase,
     private readonly events: ForgeEventService,
+    private readonly options: SessionManagerOptions = {},
   ) {
     const restored = events.currentSnapshot();
     for (const project of restored.projects) this.projects.set(project.id, project);
+    for (const project of restored.projects) this.refreshProjectBranch(project.id);
     this.cleanupOrphanSessionDirectories(new Set(restored.sessions.map((session) => session.id)));
     const staleInteractions = restored.pendingInteractions;
     const interruptedSessionIds = new Set(
@@ -109,11 +164,14 @@ export class SessionManager {
           { requestId: request.id, status: "cancelled" },
           request.sessionId,
         )),
-        ...[...interruptedSessionIds].map((sessionId) => domainEvent(
-          "run.status",
-          { status: "failed", message: "Interrupted by Forge restart" },
-          sessionId,
-        )),
+        ...[...interruptedSessionIds].flatMap((sessionId) => [
+          ...this.toolFailureEvents(sessionId, "Interrupted by Forge restart"),
+          domainEvent(
+            "run.status",
+            { status: "failed", outcome: "failed", message: "Interrupted by Forge restart" },
+            sessionId,
+          ),
+        ]),
       ]);
       for (const sessionId of interruptedSessionIds) this.syncSession(sessionId);
     }
@@ -148,11 +206,20 @@ export class SessionManager {
     return execution;
   };
 
+  searchFiles = async (sessionId: string, query: string, limit: number): Promise<string[] | undefined> => {
+    const stored = this.database.getSession(sessionId);
+    if (!stored) return undefined;
+    const project = this.projects.get(stored.session.projectId);
+    if (!project) return undefined;
+    return this.workspaceFiles.search(project.path, query, limit);
+  };
+
   async stopAll(): Promise<void> {
     this.shuttingDown = true;
     const runtimes = [...this.runtimes.values()];
     for (const runtime of runtimes) {
       runtime.stopping = true;
+      this.clearToolTimers(runtime);
       runtime.rpc.stop();
     }
     await Promise.all(runtimes.map(async (runtime) => {
@@ -181,6 +248,7 @@ export class SessionManager {
     if (command.type === "session.select") return commandResponse(command, true);
     if (command.type === "session.create") return this.createSession(command);
     if (command.type === "session.delete") return this.deleteSession(command);
+    if (command.type === "session.settled") return this.setSessionSettled(command);
     if (!command.sessionId) return commandResponse(command, false, { error: "A session is required" });
 
     const stored = this.database.getSession(command.sessionId);
@@ -204,7 +272,15 @@ export class SessionManager {
     const runtime = await this.ensureRuntime(stored);
 
     if (command.type === "run.cancel") {
-      const response = await this.sendRpc(command, runtime, { type: "abort" });
+      const previousOutcome = runtime.adapter.terminalOutcomeInCurrentRun;
+      runtime.adapter.terminalOutcomeInCurrentRun = "cancelled";
+      let response: AnvilCommandResponse;
+      try {
+        response = await this.sendRpc(command, runtime, { type: "abort" });
+      } catch (error) {
+        runtime.adapter.terminalOutcomeInCurrentRun = previousOutcome;
+        throw error;
+      }
       if (response.success) {
         const pending = this.events.currentSnapshot().pendingInteractions.filter(
           (request) => request.sessionId === command.sessionId,
@@ -222,9 +298,11 @@ export class SessionManager {
             { requestId: request.id, status: "cancelled" },
             command.sessionId,
           )),
-          domainEvent("run.status", { status: "idle" }, command.sessionId),
+          domainEvent("run.status", { status: "idle", outcome: "cancelled" }, command.sessionId),
         ]);
         this.syncSession(command.sessionId);
+      } else {
+        runtime.adapter.terminalOutcomeInCurrentRun = previousOutcome;
       }
       return response;
     }
@@ -257,15 +335,55 @@ export class SessionManager {
         const images = command.payload.images?.map((image) => {
           if (!image.data) throw new Error("Live Pi prompts require inline image data");
           return { type: "image", data: image.data, mimeType: image.mimeType };
-        });
+        }) ?? [];
+        const attachmentContext: string[] = [];
+        for (const attachment of command.payload.attachments ?? []) {
+          const metadata = this.events.artifact(attachment.artifactId);
+          const path = this.events.artifactPath(attachment.artifactId);
+          if (!metadata || metadata.sessionId !== command.sessionId || !path) {
+            throw new Error(`Attachment is unavailable: ${attachment.name ?? attachment.artifactId}`);
+          }
+          const name = metadata.name ?? attachment.name ?? attachment.artifactId;
+          if (PI_IMAGE_MEDIA_TYPES.has(metadata.mediaType)) {
+            if (metadata.byteLength > MAX_IMAGE_ATTACHMENT_BYTES) {
+              throw new Error(`Image attachment exceeds 8 MB: ${name}`);
+            }
+            const bytes = await readFile(path);
+            const detectedMediaType = detectedImageMediaType(bytes);
+            if (detectedMediaType !== metadata.mediaType) {
+              throw new Error(`Image attachment content does not match its media type: ${name}`);
+            }
+            images.push({
+              type: "image",
+              data: bytes.toString("base64"),
+              mimeType: detectedMediaType,
+            });
+            attachmentContext.push(`<file name="${escapeFileAttribute(name)}"></file>`);
+          } else if (isTextMediaType(metadata.mediaType) && metadata.byteLength <= MAX_INLINE_TEXT_ATTACHMENT_BYTES) {
+            const text = await readFile(path, "utf8");
+            attachmentContext.push(`<file name="${escapeFileAttribute(name)}">\n${text}\n</file>`);
+          } else {
+            attachmentContext.push(`<file name="${escapeFileAttribute(path)}">Uploaded as ${escapeFileAttribute(name)}. Inspect this file with the available tools.</file>`);
+          }
+        }
+        const message = attachmentContext.length
+          ? `${command.payload.content}${command.payload.content ? "\n\n" : ""}${attachmentContext.join("\n")}`
+          : command.payload.content;
         const type = command.payload.delivery === "followUp"
           ? "follow_up"
           : command.payload.delivery === "steer" ? "steer" : "prompt";
-        return this.sendRpc(command, runtime, {
+        const response = await this.sendRpc(command, runtime, {
           type,
-          message: command.payload.content,
-          ...(images?.length ? { images } : {}),
+          message,
+          ...(images.length ? { images } : {}),
         });
+        if (response.success && command.payload.attachments?.length) {
+          this.events.consumeAttachments(
+            stored.session.id,
+            command.payload.attachments.map((attachment) => attachment.artifactId),
+          );
+        }
+        return response;
       }
       if (command.type === "model.set") {
         const separator = command.payload.modelId.indexOf("/");
@@ -396,6 +514,8 @@ export class SessionManager {
       status: "idle",
       modelId: "unknown",
       thinkingLevel: "off",
+      settled: false,
+      branch: gitBranch(project.path),
     };
     this.events.createSession(
       session,
@@ -410,7 +530,7 @@ export class SessionManager {
       );
       if (current && current.status !== "failed") {
         this.events.append([
-          domainEvent("run.status", { status: "failed", message }, session.id),
+          domainEvent("run.status", { status: "failed", outcome: "failed", message }, session.id),
         ]);
         this.syncSession(session.id);
       }
@@ -418,6 +538,20 @@ export class SessionManager {
     });
 
     return commandResponse(command, true, { data: { sessionId: session.id } });
+  }
+
+  private setSessionSettled(
+    command: Extract<AnvilClientCommand, { type: "session.settled" }>,
+  ): AnvilCommandResponse {
+    if (!command.sessionId || !this.database.getSession(command.sessionId)) {
+      return commandResponse(command, false, { error: "Session not found" });
+    }
+    this.events.setSessionSettled(
+      command.sessionId,
+      command.payload.settled,
+      domainEvent("session.settled", { settled: command.payload.settled }, command.sessionId),
+    );
+    return commandResponse(command, true);
   }
 
   private async deleteSession(
@@ -480,6 +614,38 @@ export class SessionManager {
     }
   }
 
+  async getIndicatorSource(sessionId: string): Promise<{
+    projectPath: string;
+    context?: { tokens: number | null; contextWindow: number; percent: number | null };
+  } | undefined> {
+    const stored = this.database.getSession(sessionId);
+    if (!stored) return undefined;
+    const project = this.projects.get(stored.session.projectId);
+    if (!project) return undefined;
+    const runtime = this.runtimes.get(sessionId);
+    if (!runtime?.rpc.running) return { projectPath: project.path };
+    let response: RpcRecord;
+    try {
+      response = await this.sendSuppressedRequest(runtime, { type: "get_session_stats" });
+    } catch {
+      return { projectPath: project.path };
+    }
+    if (rpcFailure(response)) return { projectPath: project.path };
+    const context = rpcData(response).contextUsage;
+    const item = context && typeof context === "object" && !Array.isArray(context)
+      ? context as Record<string, unknown>
+      : undefined;
+    const contextWindow = typeof item?.contextWindow === "number" ? item.contextWindow : undefined;
+    return {
+      projectPath: project.path,
+      context: contextWindow === undefined ? undefined : {
+        tokens: typeof item?.tokens === "number" ? item.tokens : null,
+        contextWindow,
+        percent: typeof item?.percent === "number" ? item.percent : null,
+      },
+    };
+  }
+
   private async ensureRuntime(stored: RuntimeSessionRecord): Promise<ManagedSession> {
     const existing = this.runtimes.get(stored.session.id);
     if (existing?.rpc.running) return existing;
@@ -515,6 +681,7 @@ export class SessionManager {
       failureReported: false,
       commandTail: Promise.resolve(),
       suppressedResponseIds: new Set(),
+      toolTimers: new Map(),
     };
     this.runtimes.set(stored.session.id, runtime);
 
@@ -571,7 +738,7 @@ export class SessionManager {
       if (!this.shuttingDown && !this.deleting.has(stored.session.id)) {
         const message = error instanceof Error ? error.message : String(error);
         this.events.append([
-          domainEvent("run.status", { status: "failed", message }, stored.session.id),
+          domainEvent("run.status", { status: "failed", outcome: "failed", message }, stored.session.id),
         ]);
         this.syncSession(stored.session.id);
       }
@@ -587,7 +754,18 @@ export class SessionManager {
     try {
       const at = Math.max(0, Date.now() - runtime.baseTimestamp);
       this.events.append(normalizePiRpcRecord(runtime.adapter, record, at));
+      if (record.type === "tool_execution_start") this.armToolTimer(sessionId, runtime, record);
+      if (record.type === "tool_execution_end" && typeof record.toolCallId === "string") {
+        this.clearToolTimer(runtime, record.toolCallId);
+      }
+      if (record.type === "agent_settled") {
+        const session = this.events.currentSnapshot().sessions.find((candidate) => candidate.id === sessionId);
+        if (session) this.refreshProjectBranch(session.projectId);
+      }
       this.syncSession(sessionId);
+      if (record.type === "agent_settled" && this.runningTools(sessionId).length > 0) {
+        this.failRuntime(sessionId, runtime, "Pi settled without reporting a result for a running tool");
+      }
     } catch (error) {
       const message = `Failed to persist RPC record: ${error instanceof Error ? error.message : String(error)}`;
       process.stderr.write(`[pi:${sessionId}] ${message}\n`);
@@ -604,6 +782,7 @@ export class SessionManager {
   private failRuntime(sessionId: string, runtime: ManagedSession, message: string): void {
     if (runtime.failureReported) return;
     runtime.failureReported = true;
+    this.clearToolTimers(runtime);
     const pending = this.events.currentSnapshot().pendingInteractions.filter(
       (request) => request.sessionId === sessionId,
     );
@@ -614,7 +793,8 @@ export class SessionManager {
           { requestId: request.id, status: "cancelled" },
           sessionId,
         )),
-        domainEvent("run.status", { status: "failed", message }, sessionId),
+        ...this.toolFailureEvents(sessionId, message),
+        domainEvent("run.status", { status: "failed", outcome: "failed", message }, sessionId),
       ]);
       this.syncSession(sessionId);
     } catch (error) {
@@ -623,6 +803,81 @@ export class SessionManager {
       );
     }
     if (runtime.rpc.running) runtime.rpc.stop("SIGKILL");
+  }
+
+  private runningTools(sessionId: string): ToolEntry[] {
+    return (this.events.currentSnapshot().timelines[sessionId] ?? []).filter(
+      (entry): entry is ToolEntry => entry.kind === "tool" && (entry.status === "running" || entry.status === "queued"),
+    );
+  }
+
+  private toolFailureEvents(sessionId: string, message: string): UnsequencedAnvilEvent[] {
+    return this.runningTools(sessionId).map((tool) => domainEvent("tool.completed", {
+      toolCallId: tool.toolCallId,
+      output: [{ id: `${tool.id}-failure`, type: "text", text: message }],
+      details: { error: message },
+      status: "failed",
+    }, sessionId));
+  }
+
+  private armToolTimer(sessionId: string, runtime: ManagedSession, record: RpcRecord): void {
+    if (typeof record.toolCallId !== "string") return;
+    const args = record.args && typeof record.args === "object" && !Array.isArray(record.args)
+      ? record.args as Record<string, unknown>
+      : {};
+    const declaredTimeoutMs = record.toolName === "bash" && typeof args.timeout === "number"
+      ? args.timeout * 1_000
+      : typeof args.timeoutMs === "number" ? args.timeoutMs : undefined;
+    const timeoutMs = declaredTimeoutMs ?? (record.toolName === "bash"
+      ? this.options.defaultBashTimeoutMs ?? 10 * 60_000
+      : this.options.defaultToolTimeoutMs ?? 30 * 60_000);
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
+
+    this.clearToolTimer(runtime, record.toolCallId);
+    const graceMs = declaredTimeoutMs === undefined
+      ? 0
+      : Math.min(5_000, Math.max(100, timeoutMs * 0.1));
+    const timer = setTimeout(() => {
+      runtime.toolTimers.delete(record.toolCallId as string);
+      this.failRuntime(
+        sessionId,
+        runtime,
+        `${String(record.toolName ?? "Tool")} exceeded its ${Math.round(timeoutMs / 1_000)}s timeout without reporting completion`,
+      );
+    }, Math.min(timeoutMs + graceMs, 2_147_483_647));
+    timer.unref();
+    runtime.toolTimers.set(record.toolCallId, timer);
+  }
+
+  private clearToolTimer(runtime: ManagedSession, toolCallId: string): void {
+    const timer = runtime.toolTimers.get(toolCallId);
+    if (timer) clearTimeout(timer);
+    runtime.toolTimers.delete(toolCallId);
+  }
+
+  private clearToolTimers(runtime: ManagedSession): void {
+    for (const timer of runtime.toolTimers.values()) clearTimeout(timer);
+    runtime.toolTimers.clear();
+  }
+
+  private refreshProjectBranch(projectId: string): void {
+    const project = this.projects.get(projectId);
+    if (!project) return;
+    const branch = gitBranch(project.path);
+    const affected = this.events.currentSnapshot().sessions.filter(
+      (session) => session.projectId === projectId && session.branch !== branch,
+    );
+    if (affected.length === 0) return;
+    this.events.append(affected.map((session) => domainEvent(
+      "session.configured",
+      { branch: branch ?? null },
+      session.id,
+    )));
+    const snapshot = this.events.currentSnapshot();
+    for (const previous of affected) {
+      const session = snapshot.sessions.find((candidate) => candidate.id === previous.id);
+      if (session) this.database.updateSession(session);
+    }
   }
 
   private syncSession(sessionId: string, piState?: { sessionId?: string; sessionFile?: string }): void {

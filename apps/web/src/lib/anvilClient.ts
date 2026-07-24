@@ -2,10 +2,14 @@ import {
   ANVIL_PROTOCOL_VERSION,
   decodeAnvilEvent,
   isAnvilBootstrap,
+  isAnvilSessionDetailSync,
+  isAnvilSummaryBootstrap,
   type AnvilClientCommand,
   type AnvilCommandResponse,
   type AnvilEvent,
+  type AnvilSessionDetail,
   type AnvilSnapshot,
+  type ArtifactReference,
   type InteractionResponse,
   type JsonValue,
   type SessionSummary,
@@ -25,11 +29,18 @@ import {
   createEmptySnapshot,
   reconcileSnapshotAndTail,
   resetSessionState,
+  sortSessionsByActivity,
 } from "@anvil/state";
 
+import { PromptOutbox } from "./promptOutbox";
+import { ThreadCache, summaryBootstrapFromSnapshot } from "./threadCache";
 import { fixtureById, fixtureCatalog, fixtures, type FixtureDefinition } from "../fixtures";
 
 export type DeliveryMode = "prompt" | "steer" | "followUp";
+
+export interface WorkspaceFile {
+  path: string;
+}
 
 export interface ReplayStatus {
   fixtureId: string;
@@ -42,6 +53,8 @@ export interface ReplayStatus {
 export interface AnvilClientSnapshot extends AnvilSnapshot {
   replay: ReplayStatus;
   clientError?: string;
+  readThroughSequences: Record<string, number>;
+  hydratingSessionIds: string[];
 }
 
 interface PendingSessionCreate {
@@ -63,7 +76,12 @@ export interface AnvilClient {
   createProject(name: string, path: string): Promise<void>;
   createSession(projectId: string): void;
   deleteSession(sessionId: string): Promise<void>;
-  sendPrompt(content: string, mode?: DeliveryMode): void;
+  setSessionSettled(sessionId: string, settled: boolean): Promise<void>;
+  sendPrompt(content: string, mode?: DeliveryMode, attachments?: ArtifactReference[]): Promise<boolean>;
+  uploadAttachment(sessionId: string, file: File): Promise<ArtifactReference>;
+  deleteAttachment(sessionId: string, artifactId: string): Promise<void>;
+  searchFiles(sessionId: string, query: string): Promise<WorkspaceFile[]>;
+  restartForge(): Promise<void>;
   cancelActiveRun(): void;
   setModel(modelId: string): void;
   setThinkingLevel(level: ThinkingLevel): void;
@@ -71,6 +89,7 @@ export interface AnvilClient {
   clearComposerDraft(sessionId: string): void;
   isSessionPending(sessionId: string): boolean;
   getSessionCreationError(sessionId: string): string | undefined;
+  markSessionRead(sessionId: string): void;
   cycleConnectionState(): void;
   selectReplayFixture(fixtureId: string): void;
   toggleReplay(): void;
@@ -97,10 +116,14 @@ function promoteSession(
   if (!session) return snapshot;
   return {
     ...snapshot,
-    sessions: [
-      { ...session, updatedAt: timestamp() },
+    sessions: sortSessionsByActivity([
+      {
+        ...session,
+        updatedAt: timestamp(),
+        lastActivitySequence: Math.max(session.lastActivitySequence ?? 0, snapshot.lastSequence + 1),
+      },
       ...snapshot.sessions.filter((candidate) => candidate.id !== sessionId),
-    ],
+    ]),
   };
 }
 
@@ -131,6 +154,59 @@ function withoutSessionKey<T>(record: Record<string, T>, sessionId: string): Rec
   return next;
 }
 
+const optimisticMessageId = (commandId: string) => `optimistic-${commandId}`;
+
+function addOptimisticPrompt(
+  snapshot: AnvilClientSnapshot,
+  sessionId: string,
+  commandId: string,
+  content: string,
+): AnvilClientSnapshot {
+  const id = optimisticMessageId(commandId);
+  if ((snapshot.timelines[sessionId] ?? []).some((entry) => entry.id === id)) return snapshot;
+  return {
+    ...snapshot,
+    timelines: {
+      ...snapshot.timelines,
+      [sessionId]: [
+        ...(snapshot.timelines[sessionId] ?? []),
+        {
+          id,
+          kind: "message",
+          role: "user",
+          content: [{ id: `${id}-text`, type: "text", text: content }],
+          status: "streaming",
+          createdAt: timestamp(),
+        },
+      ],
+    },
+  };
+}
+
+function settleOptimisticPrompt(
+  snapshot: AnvilClientSnapshot,
+  sessionId: string,
+  error?: string,
+  expectedContent?: string,
+): AnvilClientSnapshot {
+  const timeline = snapshot.timelines[sessionId] ?? [];
+  const index = timeline.findIndex((entry) =>
+    entry.kind === "message" &&
+    entry.status === "streaming" &&
+    entry.id.startsWith("optimistic-") &&
+    (expectedContent === undefined || entry.content.some((block) => block.type === "text" && expectedContent.startsWith(block.text))),
+  );
+  if (index < 0) return snapshot;
+  const next = [...timeline];
+  if (error) {
+    const entry = next[index]!;
+    next[index] = entry.kind === "message" ? { ...entry, status: "failed", error } : entry;
+  } else {
+    next.splice(index, 1);
+  }
+  return { ...snapshot, timelines: { ...snapshot.timelines, [sessionId]: next } };
+}
+
 function removeOptimisticSession(
   snapshot: AnvilClientSnapshot,
   sessionId: string,
@@ -153,6 +229,87 @@ function removeOptimisticSession(
     composerDrafts: withoutSessionKey(snapshot.composerDrafts, sessionId),
     runStates: withoutSessionKey(snapshot.runStates, sessionId),
   };
+}
+
+function mergeSessionDetail<TSnapshot extends AnvilSnapshot>(
+  snapshot: TSnapshot,
+  detail: AnvilSessionDetail,
+): TSnapshot {
+  return {
+    ...snapshot,
+    timelines: { ...snapshot.timelines, [detail.sessionId]: detail.timeline },
+    catalogs: { ...snapshot.catalogs, [detail.sessionId]: detail.catalog },
+    pendingInteractions: [
+      ...snapshot.pendingInteractions.filter((request) => request.sessionId !== detail.sessionId),
+      ...detail.pendingInteractions,
+    ],
+    extensionStatuses: [
+      ...snapshot.extensionStatuses.filter((status) => status.sessionId !== detail.sessionId),
+      ...detail.extensionStatuses,
+    ],
+    widgets: [
+      ...snapshot.widgets.filter((widget) => widget.sessionId !== detail.sessionId),
+      ...detail.widgets,
+    ],
+    queues: { ...snapshot.queues, [detail.sessionId]: detail.queue },
+    composerDrafts: { ...snapshot.composerDrafts, [detail.sessionId]: detail.composerDraft },
+    runStates: { ...snapshot.runStates, [detail.sessionId]: detail.runState },
+  } as TSnapshot;
+}
+
+function withoutSessionDetail<TSnapshot extends AnvilSnapshot>(
+  snapshot: TSnapshot,
+  sessionId: string,
+): TSnapshot {
+  return {
+    ...snapshot,
+    timelines: withoutSessionKey(snapshot.timelines, sessionId),
+    catalogs: withoutSessionKey(snapshot.catalogs, sessionId),
+    pendingInteractions: snapshot.pendingInteractions.filter((request) => request.sessionId !== sessionId),
+    extensionStatuses: snapshot.extensionStatuses.filter((status) => status.sessionId !== sessionId),
+    widgets: snapshot.widgets.filter((widget) => widget.sessionId !== sessionId),
+    queues: withoutSessionKey(snapshot.queues, sessionId),
+    composerDrafts: withoutSessionKey(snapshot.composerDrafts, sessionId),
+  } as TSnapshot;
+}
+
+function detailFromSnapshot(
+  snapshot: AnvilSnapshot,
+  sessionId: string,
+  throughSequence: number,
+): AnvilSessionDetail {
+  return {
+    protocolVersion: ANVIL_PROTOCOL_VERSION,
+    sessionId,
+    throughSequence,
+    timeline: snapshot.timelines[sessionId] ?? [],
+    catalog: snapshot.catalogs[sessionId] ?? { models: [], commands: [], skills: [] },
+    pendingInteractions: snapshot.pendingInteractions.filter((request) => request.sessionId === sessionId),
+    extensionStatuses: snapshot.extensionStatuses.filter((status) => status.sessionId === sessionId),
+    widgets: snapshot.widgets.filter((widget) => widget.sessionId === sessionId),
+    queue: snapshot.queues[sessionId] ?? { steering: [], followUp: [] },
+    composerDraft: snapshot.composerDrafts[sessionId] ?? "",
+    runState: snapshot.runStates[sessionId] ?? "idle",
+  };
+}
+
+function applyDetailDelta(
+  detail: AnvilSessionDetail,
+  session: SessionSummary,
+  events: AnvilEvent[],
+  throughSequence: number,
+): AnvilSessionDetail {
+  let temporary = mergeSessionDetail(
+    { ...createEmptySnapshot({ sessions: [session], activeSessionId: session.id }), lastSequence: detail.throughSequence },
+    detail,
+  );
+  for (const event of events) {
+    temporary = applyAnvilEvent(
+      { ...temporary, lastSequence: event.sequence - 1, sequenceGap: null },
+      event,
+    );
+  }
+  return detailFromSnapshot(temporary, session.id, throughSequence);
 }
 
 function textBlock(id: string, text: string) {
@@ -210,6 +367,12 @@ export class FixtureAnvilClient implements AnvilClient {
     const initialFixture = fixtures[0]!;
     this.snapshot = {
       ...base,
+      readThroughSequences: Object.fromEntries(
+        base.sessions.flatMap((session) => session.lastTerminalSequence
+          ? [[session.id, session.lastTerminalSequence] as const]
+          : []),
+      ),
+      hydratingSessionIds: [],
       replay: {
         fixtureId: initialFixture.id,
         playing: false,
@@ -241,8 +404,11 @@ export class FixtureAnvilClient implements AnvilClient {
       case "session.delete":
         this.deleteSession(command.payload.sessionId);
         break;
+      case "session.settled":
+        if (command.sessionId) this.setSessionSettled(command.sessionId, command.payload.settled);
+        break;
       case "prompt.send":
-        this.sendPrompt(command.payload.content, command.payload.delivery);
+        this.sendPrompt(command.payload.content, command.payload.delivery, command.payload.attachments);
         break;
       case "run.cancel":
         this.cancelActiveRun();
@@ -304,6 +470,7 @@ export class FixtureAnvilClient implements AnvilClient {
       modelId: model?.id ?? "unknown",
       thinkingLevel: model?.supportedThinkingLevels.includes("high") ? "high" : "off",
       branch: "main",
+      lastActivitySequence: this.snapshot.lastSequence + 1,
     };
     this.snapshot = {
       ...this.snapshot,
@@ -324,10 +491,15 @@ export class FixtureAnvilClient implements AnvilClient {
     this.applyLocal("session.deleted", { sessionId }, sessionId);
   };
 
-  sendPrompt = (content: string, mode: DeliveryMode = "prompt") => {
-    const prompt = content.trim();
+  setSessionSettled = async (sessionId: string, settled: boolean) => {
+    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
+    this.applyLocal("session.settled", { settled }, sessionId);
+  };
+
+  sendPrompt = (content: string, mode: DeliveryMode = "prompt", attachments: ArtifactReference[] = []): Promise<boolean> => {
+    const prompt = content.trim() || (attachments.length ? "Review the attached files." : "");
     const session = this.activeSession();
-    if (!prompt || !session) return;
+    if (!prompt || !session) return Promise.resolve(false);
 
     this.snapshot = promoteSession(this.snapshot, session.id);
     this.emit();
@@ -354,7 +526,7 @@ export class FixtureAnvilClient implements AnvilClient {
         },
         session.id,
       );
-      return;
+      return Promise.resolve(true);
     }
 
     const runId = `${Date.now()}-${++this.localId}`;
@@ -480,10 +652,45 @@ export class FixtureAnvilClient implements AnvilClient {
           { messageId: `local-assistant-${runId}`, status: "complete" },
           session.id,
         );
-        this.applyLocal("run.status", { status: "idle" }, session.id);
+        this.applyLocal("run.status", { status: "idle", outcome: "completed" }, session.id);
         this.simulationTimers.delete(session.id);
       }, 1_420),
     );
+    return Promise.resolve(true);
+  };
+
+  uploadAttachment = async (_sessionId: string, file: File): Promise<ArtifactReference> => {
+    const artifactId = crypto.randomUUID();
+    return {
+      type: "artifactReference",
+      artifactId,
+      url: `/api/v1/artifacts/${artifactId}`,
+      mediaType: file.type || "application/octet-stream",
+      byteLength: file.size,
+      name: file.name,
+    };
+  };
+
+  deleteAttachment = async () => undefined;
+
+  searchFiles = async (_sessionId: string, query: string): Promise<WorkspaceFile[]> => [
+    "AGENTS.md",
+    "apps/web/src/components/Composer.tsx",
+    "apps/forge/src/runtime/sessionManager.ts",
+    "packages/protocol/src/index.ts",
+  ].filter((path) => {
+    let cursor = 0;
+    const target = path.toLowerCase();
+    return [...query.toLowerCase()].every((character) => {
+      const index = target.indexOf(character, cursor);
+      if (index < 0) return false;
+      cursor = index + 1;
+      return true;
+    });
+  }).map((path) => ({ path }));
+
+  restartForge = async (): Promise<void> => {
+    throw new Error("Forge restart is unavailable while replaying fixtures");
   };
 
   cancelActiveRun = () => {
@@ -524,7 +731,7 @@ export class FixtureAnvilClient implements AnvilClient {
         );
       }
     }
-    this.applyLocal("run.status", { status: "idle" }, session.id, false);
+    this.applyLocal("run.status", { status: "idle", outcome: "cancelled" }, session.id, false);
     this.applyLocal(
       "timeline.event",
       {
@@ -586,6 +793,16 @@ export class FixtureAnvilClient implements AnvilClient {
   isSessionPending = () => false;
   getSessionCreationError = () => undefined;
 
+  markSessionRead = (sessionId: string) => {
+    const sequence = this.snapshot.sessions.find((session) => session.id === sessionId)?.lastTerminalSequence;
+    if (!sequence || (this.snapshot.readThroughSequences[sessionId] ?? 0) >= sequence) return;
+    this.snapshot = {
+      ...this.snapshot,
+      readThroughSequences: { ...this.snapshot.readThroughSequences, [sessionId]: sequence },
+    };
+    this.emit();
+  };
+
   clearComposerDraft = (sessionId: string) => {
     if (!this.snapshot.composerDrafts[sessionId]) return;
     this.snapshot = {
@@ -634,6 +851,8 @@ export class FixtureAnvilClient implements AnvilClient {
     this.snapshot = {
       ...resetSessionState(this.snapshot, fixture.session.id),
       activeSessionId: fixture.session.id,
+      readThroughSequences: this.snapshot.readThroughSequences,
+      hydratingSessionIds: [],
       replay: {
         ...this.snapshot.replay,
         fixtureId: fixture.id,
@@ -672,6 +891,8 @@ export class FixtureAnvilClient implements AnvilClient {
     this.snapshot = {
       ...rebuilt,
       activeSessionId: fixture.session.id,
+      readThroughSequences: this.snapshot.readThroughSequences,
+      hydratingSessionIds: [],
       replay: {
         ...this.snapshot.replay,
         fixtureId: fixture.id,
@@ -757,6 +978,8 @@ export class FixtureAnvilClient implements AnvilClient {
       const nextCursor = cursor + 1;
       this.snapshot = {
         ...base,
+        readThroughSequences: this.snapshot.readThroughSequences,
+        hydratingSessionIds: this.snapshot.hydratingSessionIds,
         replay: {
           ...this.snapshot.replay,
           cursor: nextCursor,
@@ -806,7 +1029,12 @@ export class FixtureAnvilClient implements AnvilClient {
       payload,
     } as AnvilEvent;
     const replay = this.snapshot.replay;
-    this.snapshot = { ...applyAnvilEvent(this.snapshot, event), replay };
+    this.snapshot = {
+      ...applyAnvilEvent(this.snapshot, event),
+      replay,
+      readThroughSequences: this.snapshot.readThroughSequences,
+      hydratingSessionIds: this.snapshot.hydratingSessionIds,
+    };
     if (emit) this.emit();
   }
 
@@ -825,6 +1053,8 @@ export class ForgeAnvilClient implements AnvilClient {
   private snapshot: AnvilClientSnapshot = {
     ...createEmptySnapshot(),
     connection: "reconnecting",
+    readThroughSequences: {},
+    hydratingSessionIds: [],
     replay: { fixtureId: "live", playing: false, cursor: 0, total: 0, speed: 1 },
   };
   private readonly listeners = new Set<() => void>();
@@ -835,6 +1065,34 @@ export class ForgeAnvilClient implements AnvilClient {
   private retryDelay = 1_000;
   private bootstrapPromise?: Promise<void>;
   private readonly pendingCreates = new Map<string, PendingSessionCreate>();
+  private readonly cache = new ThreadCache();
+  private readonly promptOutbox = new PromptOutbox({
+    cache: this.cache,
+    send: (command) => this.sendCommand(command),
+    onRejected: (sessionId, prompt, response) => {
+      const existingDraft = this.snapshot.composerDrafts[sessionId];
+      this.snapshot = settleOptimisticPrompt(
+        this.snapshot,
+        sessionId,
+        response.error ?? "Message could not be sent",
+      );
+      this.snapshot = {
+        ...this.snapshot,
+        composerDrafts: {
+          ...this.snapshot.composerDrafts,
+          [sessionId]: existingDraft ? `${existingDraft}\n\n${prompt.content}` : prompt.content,
+        },
+      };
+      this.emit();
+    },
+  });
+  private readonly hydratedThrough = new Map<string, number>();
+  private readonly hydrationBuffers = new Map<string, AnvilEvent[]>();
+  private readonly hydrationTokens = new Map<string, symbol>();
+  private bootstrapGeneration = 0;
+  private readonly persistTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly detailAccess = new Map<string, number>();
+  private detailApiEnabled = false;
 
   constructor(options: ForgeAnvilClientOptions = {}) {
     this.fetcher = options.fetch ?? fetch.bind(globalThis);
@@ -865,6 +1123,9 @@ export class ForgeAnvilClient implements AnvilClient {
     if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
     this.snapshot = { ...this.snapshot, activeSessionId: sessionId };
     this.emit();
+    if (this.detailApiEnabled) void this.hydrateSession(sessionId);
+    this.touchDetail(sessionId);
+    void this.persistShell();
   };
 
   createProject = async (name: string, path: string) => {
@@ -897,6 +1158,7 @@ export class ForgeAnvilClient implements AnvilClient {
         status: "idle" as const,
         modelId: "unknown",
         thinkingLevel: "off" as const,
+        lastActivitySequence: this.snapshot.lastSequence + 1,
       },
       command,
       previousActiveSessionId: this.snapshot.activeSessionId,
@@ -909,6 +1171,11 @@ export class ForgeAnvilClient implements AnvilClient {
     this.snapshot = addOptimisticSession(this.snapshot, pending.session);
     this.emit();
     void this.sendCommand(command, false, pending);
+  };
+
+  setSessionSettled = async (sessionId: string, settled: boolean) => {
+    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
+    await this.sendCommand(this.command("session.settled", sessionId, { settled }), true);
   };
 
   deleteSession = async (sessionId: string) => {
@@ -944,20 +1211,110 @@ export class ForgeAnvilClient implements AnvilClient {
     }
   };
 
-  sendPrompt = (content: string, delivery: DeliveryMode = "prompt") => {
-    const prompt = content.trim();
+  sendPrompt = (content: string, delivery: DeliveryMode = "prompt", attachments: ArtifactReference[] = []): Promise<boolean> => {
+    const prompt = content.trim() || (attachments.length ? "Review the attached files." : "");
     const sessionId = this.snapshot.activeSessionId;
-    if (
-      !prompt ||
-      !sessionId ||
-      (this.pendingCreates.get(sessionId)?.state ?? "acknowledged") !== "acknowledged"
-    ) return;
-    this.snapshot = promoteSession(this.snapshot, sessionId);
-    this.emit();
-    void this.sendCommand(this.command("prompt.send", sessionId, {
+    if (!prompt || !sessionId) return Promise.resolve(false);
+    const command = this.command("prompt.send", sessionId, {
       content: prompt,
       delivery,
-    }));
+      ...(attachments.length ? { attachments } : {}),
+    }) as Extract<AnvilClientCommand, { type: "prompt.send" }>;
+    this.snapshot = addOptimisticPrompt(promoteSession(this.snapshot, sessionId), sessionId, command.id, prompt);
+    this.emit();
+
+    const accepted = this.promptOutbox.enqueue({ command, content: prompt });
+    const pending = this.pendingCreates.get(sessionId);
+    if (pending?.state === "creating") return accepted;
+    if (pending?.state === "failed") {
+      this.restoreQueuedPrompt(sessionId);
+      this.emit();
+      return accepted;
+    }
+    this.promptOutbox.drain(sessionId);
+    return accepted;
+  };
+
+  uploadAttachment = async (sessionId: string, file: File): Promise<ArtifactReference> => {
+    const response = await this.fetcher(`/api/v1/sessions/${encodeURIComponent(sessionId)}/attachments`, {
+      method: "POST",
+      headers: {
+        "content-type": file.type || "application/octet-stream",
+        "x-anvil-file-name": encodeURIComponent(file.name),
+      },
+      body: file,
+    });
+    if (!response.ok) throw new Error(`Attachment upload failed with HTTP ${response.status}`);
+    return await response.json() as ArtifactReference;
+  };
+
+  deleteAttachment = async (sessionId: string, artifactId: string): Promise<void> => {
+    const response = await this.fetcher(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/attachments/${encodeURIComponent(artifactId)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok && response.status !== 404) {
+      throw new Error(`Attachment deletion failed with HTTP ${response.status}`);
+    }
+  };
+
+  restartForge = async (): Promise<void> => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    try {
+      const response = await this.fetcher("/api/v1/admin/restart", {
+        method: "POST",
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+      const restart = await response.json().catch(() => undefined) as {
+        message?: string;
+        instanceId?: string;
+      } | undefined;
+      if (!response.ok) {
+        throw new Error(restart?.message ?? `Forge restart failed with HTTP ${response.status}`);
+      }
+
+      this.stream?.close();
+      this.setConnection("reconnecting");
+      while (!controller.signal.aborted) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        try {
+          const health = await this.fetcher("/api/v1/health/ready", {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (!health.ok) continue;
+          const ready = await health.json() as { instanceId?: string };
+          if (restart?.instanceId && ready.instanceId === restart.instanceId) continue;
+          void this.bootstrap();
+          return;
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          // Brief connection failures are expected while systemd restarts Forge.
+        }
+      }
+      throw new Error("Forge did not become ready within 30 seconds");
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error("Forge did not become ready within 30 seconds");
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  };
+
+  searchFiles = async (sessionId: string, query: string): Promise<WorkspaceFile[]> => {
+    const response = await this.fetcher(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/files?q=${encodeURIComponent(query)}`,
+      { headers: { accept: "application/json" } },
+    );
+    if (!response.ok) return [];
+    const value = await response.json() as { files?: unknown };
+    return Array.isArray(value.files)
+      ? value.files.filter((item): item is WorkspaceFile => (
+          Boolean(item) && typeof item === "object" && typeof (item as WorkspaceFile).path === "string"
+        ))
+      : [];
   };
 
   cancelActiveRun = () => {
@@ -997,12 +1354,32 @@ export class ForgeAnvilClient implements AnvilClient {
     return pending?.state === "failed" ? pending.error : undefined;
   };
 
+  markSessionRead = (sessionId: string) => {
+    const sequence = this.snapshot.sessions.find((session) => session.id === sessionId)?.lastTerminalSequence;
+    if (!sequence || (this.snapshot.readThroughSequences[sessionId] ?? 0) >= sequence) return;
+    this.snapshot = {
+      ...this.snapshot,
+      readThroughSequences: { ...this.snapshot.readThroughSequences, [sessionId]: sequence },
+    };
+    this.emit();
+    void this.cache.writeReadThrough(sessionId, sequence);
+  };
+
   cycleConnectionState = () => undefined;
   selectReplayFixture = () => undefined;
   toggleReplay = () => undefined;
   restartReplay = () => undefined;
   instantReplay = () => undefined;
   setReplaySpeed = () => undefined;
+
+  private restoreQueuedPrompt(sessionId: string): void {
+    const content = this.promptOutbox.rejectSession(sessionId);
+    if (!content) return;
+    this.snapshot = {
+      ...this.snapshot,
+      composerDrafts: { ...this.snapshot.composerDrafts, [sessionId]: content },
+    };
+  }
 
   private bootstrap(): Promise<void> {
     if (this.bootstrapPromise) return this.bootstrapPromise;
@@ -1014,54 +1391,296 @@ export class ForgeAnvilClient implements AnvilClient {
   }
 
   private async loadBootstrap(): Promise<void> {
+    this.bootstrapGeneration++;
+    this.detailApiEnabled = false;
+    this.stream?.close();
+    this.hydrationTokens.clear();
+    this.hydrationBuffers.clear();
+    this.snapshot = { ...this.snapshot, hydratingSessionIds: [] };
     this.setConnection("reconnecting");
     try {
+      await this.restoreCachedShell();
       const response = await this.fetcher("/api/v1/bootstrap", {
-        headers: { accept: "application/json" },
+        headers: { accept: "application/vnd.anvil.summary+json, application/json" },
       });
       if (!response.ok) throw new Error(`Forge bootstrap failed with HTTP ${response.status}`);
       const value: unknown = await response.json();
-      if (!isAnvilBootstrap(value)) throw new Error("Forge returned an invalid bootstrap payload");
+      await this.promptOutbox.restore();
       const previousActiveSessionId = this.snapshot.activeSessionId;
       const createsToRetry: PendingSessionCreate[] = [];
-      let restored = reconcileSnapshotAndTail(this.snapshot, value.snapshot, value.events);
+      let cursor: number;
+
+      if (isAnvilBootstrap(value)) {
+        this.detailApiEnabled = false;
+        const restored = reconcileSnapshotAndTail(this.snapshot, value.snapshot, value.events);
+        this.snapshot = {
+          ...restored,
+          readThroughSequences: this.snapshot.readThroughSequences,
+          hydratingSessionIds: [],
+          replay: this.snapshot.replay,
+        };
+        cursor = value.cursor;
+        for (const session of restored.sessions) this.hydratedThrough.set(session.id, cursor);
+      } else if (isAnvilSummaryBootstrap(value)) {
+        this.detailApiEnabled = true;
+        cursor = value.cursor;
+        const sessionIds = new Set(value.sessions.map((session) => session.id));
+        this.snapshot = {
+          ...this.snapshot,
+          protocolVersion: value.protocolVersion,
+          capturedAt: value.capturedAt,
+          connection: value.connection,
+          projects: value.projects,
+          sessions: sortSessionsByActivity(value.sessions),
+          timelines: Object.fromEntries(Object.entries(this.snapshot.timelines).filter(([id]) => sessionIds.has(id))),
+          catalogs: Object.fromEntries(Object.entries(this.snapshot.catalogs).filter(([id]) => sessionIds.has(id))),
+          pendingInteractions: this.snapshot.pendingInteractions.filter((request) => sessionIds.has(request.sessionId)),
+          extensionStatuses: this.snapshot.extensionStatuses.filter((status) => sessionIds.has(status.sessionId)),
+          widgets: this.snapshot.widgets.filter((widget) => sessionIds.has(widget.sessionId)),
+          queues: Object.fromEntries(Object.entries(this.snapshot.queues).filter(([id]) => sessionIds.has(id))),
+          composerDrafts: Object.fromEntries(Object.entries(this.snapshot.composerDrafts).filter(([id]) => sessionIds.has(id))),
+          runStates: Object.fromEntries(Object.entries(this.snapshot.runStates).filter(([id]) => sessionIds.has(id))),
+          lastSequence: cursor,
+          sequenceGap: null,
+          hydratingSessionIds: [],
+        };
+      } else {
+        throw new Error("Forge returned an invalid bootstrap payload");
+      }
+
+      let restored = this.snapshot;
       for (const [sessionId, pending] of this.pendingCreates) {
         if (restored.sessions.some((session) => session.id === sessionId)) {
           pending.state = "acknowledged";
           pending.requestInFlight = false;
           pending.resolveSettled(true);
           this.pendingCreates.delete(sessionId);
+          this.promptOutbox.drain(sessionId);
         } else {
           restored = addOptimisticSession(restored, pending.session);
-          if (pending.state === "creating" && !pending.requestInFlight) {
-            createsToRetry.push(pending);
-          }
+          if (pending.state === "creating" && !pending.requestInFlight) createsToRetry.push(pending);
         }
       }
-      const preferredSessionId = [
-        previousActiveSessionId,
-        restored.activeSessionId,
-      ].find((sessionId) => sessionId && restored.sessions.some((session) => session.id === sessionId)) ??
+      for (const prompt of this.promptOutbox.queued()) {
+        if (prompt.command.sessionId) {
+          restored = addOptimisticPrompt(restored, prompt.command.sessionId, prompt.command.id, prompt.content);
+        }
+      }
+      const preferredSessionId = [previousActiveSessionId, restored.activeSessionId]
+        .find((sessionId) => sessionId && restored.sessions.some((session) => session.id === sessionId)) ??
         restored.sessions[0]?.id ?? null;
       this.snapshot = {
         ...restored,
         activeSessionId: preferredSessionId,
         connection: "connected",
-        replay: this.snapshot.replay,
         clientError: undefined,
       };
       this.retryDelay = 1_000;
       this.emit();
-      this.startStream(value.cursor);
-      for (const pending of createsToRetry) {
-        void this.sendCommand(pending.command, false, pending);
+      this.startStream(cursor);
+      void this.loadReadState(this.snapshot.sessions.map((session) => ({
+        sessionId: session.id,
+        terminalSequenceAtBootstrap: session.lastTerminalSequence ?? 0,
+      })));
+      void this.persistShell();
+      if (this.detailApiEnabled && preferredSessionId) void this.hydrateSession(preferredSessionId);
+      for (const session of this.snapshot.sessions) {
+        if (this.pendingCreates.get(session.id)?.state !== "creating") this.promptOutbox.drain(session.id);
       }
+      for (const pending of createsToRetry) void this.sendCommand(pending.command, false, pending);
     } catch (error) {
       console.error(error);
       this.setConnection(typeof navigator !== "undefined" && !navigator.onLine ? "offline" : "reconnecting");
       this.retryTimer = setTimeout(() => void this.bootstrap(), this.retryDelay);
       this.retryDelay = Math.min(this.retryDelay * 2, 30_000);
     }
+  }
+
+  private async restoreCachedShell(): Promise<void> {
+    if (this.snapshot.sessions.length > 0) return;
+    const cached = await this.cache.readShell();
+    if (!cached) return;
+    const activeSessionId = cached.activeSessionId && cached.bootstrap.sessions.some(
+      (session) => session.id === cached.activeSessionId,
+    ) ? cached.activeSessionId : cached.bootstrap.sessions[0]?.id ?? null;
+    this.snapshot = {
+      ...this.snapshot,
+      capturedAt: cached.bootstrap.capturedAt,
+      projects: cached.bootstrap.projects,
+      sessions: sortSessionsByActivity(cached.bootstrap.sessions),
+      activeSessionId,
+      connection: "reconnecting",
+      lastSequence: 0,
+    };
+    if (activeSessionId) {
+      const detail = await this.cache.readDetail(activeSessionId);
+      if (detail) {
+        this.snapshot = mergeSessionDetail(this.snapshot, detail);
+        this.hydratedThrough.set(activeSessionId, detail.throughSequence);
+        this.touchDetail(activeSessionId);
+      }
+    }
+    this.emit();
+  }
+
+  private touchDetail(sessionId: string): void {
+    this.detailAccess.delete(sessionId);
+    this.detailAccess.set(sessionId, Date.now());
+    this.evictDetails();
+  }
+
+  private evictDetails(): void {
+    const now = Date.now();
+    const candidates = [...this.detailAccess.entries()];
+    for (const [sessionId, accessedAt] of candidates) {
+      const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+      const protectedSession = sessionId === this.snapshot.activeSessionId ||
+        session?.status === "running" || session?.status === "waiting" ||
+        this.hydrationBuffers.has(sessionId);
+      const overLimit = this.detailAccess.size > 8;
+      const expired = now - accessedAt > 5 * 60_000;
+      if (protectedSession || (!overLimit && !expired)) continue;
+      const throughSequence = this.hydratedThrough.get(sessionId);
+      if (throughSequence !== undefined && this.snapshot.runStates[sessionId] !== "running") {
+        void this.cache.writeDetail(detailFromSnapshot(this.snapshot, sessionId, throughSequence));
+      }
+      this.snapshot = withoutSessionDetail(this.snapshot, sessionId);
+      this.hydratedThrough.delete(sessionId);
+      this.detailAccess.delete(sessionId);
+    }
+  }
+
+  private async hydrateSession(sessionId: string): Promise<void> {
+    if (!this.detailApiEnabled || this.hydrationTokens.has(sessionId)) return;
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) return;
+
+    const generation = this.bootstrapGeneration;
+    const token = Symbol(sessionId);
+    const isCurrent = () => this.bootstrapGeneration === generation &&
+      this.hydrationTokens.get(sessionId) === token;
+    this.hydrationTokens.set(sessionId, token);
+    this.hydrationBuffers.set(sessionId, []);
+    this.snapshot = {
+      ...this.snapshot,
+      hydratingSessionIds: [...new Set([...this.snapshot.hydratingSessionIds, sessionId])],
+    };
+    this.emit();
+
+    try {
+      let baseline = this.hydratedThrough.get(sessionId);
+      let cachedDetail: AnvilSessionDetail | undefined;
+      if (baseline === undefined) {
+        cachedDetail = await this.cache.readDetail(sessionId);
+        if (!isCurrent()) return;
+        if (cachedDetail && this.snapshot.sessions.some((candidate) => candidate.id === sessionId)) {
+          baseline = cachedDetail.throughSequence;
+          this.hydratedThrough.set(sessionId, baseline);
+          this.snapshot = mergeSessionDetail(this.snapshot, cachedDetail);
+          this.touchDetail(sessionId);
+          this.emit();
+        }
+      } else {
+        cachedDetail = detailFromSnapshot(this.snapshot, sessionId, baseline);
+      }
+
+      const suffix = baseline === undefined ? "" : `?after=${baseline}`;
+      let response = await this.fetcher(`/api/v1/sessions/${encodeURIComponent(sessionId)}/detail${suffix}`, {
+        headers: { accept: "application/json" },
+      });
+      if (!isCurrent()) return;
+      if (!response.ok) throw new Error(`Forge detail failed with HTTP ${response.status}`);
+      let value: unknown = await response.json();
+      if (!isCurrent()) return;
+      if (!isAnvilSessionDetailSync(value)) throw new Error("Forge returned an invalid session detail");
+
+      if (value.mode === "delta" && !cachedDetail) {
+        response = await this.fetcher(`/api/v1/sessions/${encodeURIComponent(sessionId)}/detail`, {
+          headers: { accept: "application/json" },
+        });
+        if (!isCurrent()) return;
+        if (!response.ok) throw new Error(`Forge detail reset failed with HTTP ${response.status}`);
+        value = await response.json();
+        if (!isCurrent()) return;
+        if (!isAnvilSessionDetailSync(value) || value.mode !== "reset") {
+          throw new Error("Forge did not return a full session detail");
+        }
+      }
+
+      const currentSession = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+      if (!currentSession || !isCurrent()) return;
+      let detail = value.mode === "reset"
+        ? value.detail
+        : applyDetailDelta(cachedDetail!, currentSession, value.events, value.throughSequence);
+      const buffered = (this.hydrationBuffers.get(sessionId) ?? [])
+        .filter((event) => event.sequence > detail.throughSequence);
+      if (buffered.length > 0) {
+        detail = applyDetailDelta(detail, currentSession, buffered, this.snapshot.lastSequence);
+      } else {
+        detail = { ...detail, throughSequence: Math.max(detail.throughSequence, this.snapshot.lastSequence) };
+      }
+      if (!isCurrent()) return;
+      this.snapshot = mergeSessionDetail(this.snapshot, detail);
+      this.hydratedThrough.set(sessionId, detail.throughSequence);
+      this.touchDetail(sessionId);
+      this.schedulePersist(sessionId);
+    } catch (error) {
+      if (!isCurrent()) return;
+      console.error(error);
+      this.snapshot = {
+        ...this.snapshot,
+        clientError: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      if (this.hydrationTokens.get(sessionId) !== token) return;
+      this.hydrationTokens.delete(sessionId);
+      this.hydrationBuffers.delete(sessionId);
+      this.snapshot = {
+        ...this.snapshot,
+        hydratingSessionIds: this.snapshot.hydratingSessionIds.filter((id) => id !== sessionId),
+      };
+      this.emit();
+    }
+  }
+
+  private async loadReadState(
+    sessions: Array<{ sessionId: string; terminalSequenceAtBootstrap: number }>,
+  ): Promise<void> {
+    const entries = await Promise.all(sessions.map(async (session) => ({
+      ...session,
+      persistedSequence: await this.cache.readThrough(session.sessionId),
+    })));
+    const readThroughSequences = { ...this.snapshot.readThroughSequences };
+    for (const { sessionId, terminalSequenceAtBootstrap, persistedSequence } of entries) {
+      const sequence = persistedSequence ?? terminalSequenceAtBootstrap;
+      if (sequence > (readThroughSequences[sessionId] ?? 0)) readThroughSequences[sessionId] = sequence;
+      if (persistedSequence === undefined) void this.cache.writeReadThrough(sessionId, sequence);
+    }
+    this.snapshot = { ...this.snapshot, readThroughSequences };
+    this.emit();
+  }
+
+  private async persistShell(): Promise<void> {
+    await this.cache.writeShell(summaryBootstrapFromSnapshot(
+      this.snapshot.capturedAt,
+      this.snapshot.connection,
+      this.snapshot.projects,
+      this.snapshot.sessions,
+      this.snapshot.lastSequence,
+    ), this.snapshot.activeSessionId);
+  }
+
+  private schedulePersist(sessionId: string): void {
+    const existing = this.persistTimers.get(sessionId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      this.persistTimers.delete(sessionId);
+      const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+      const throughSequence = this.hydratedThrough.get(sessionId);
+      if (!session || throughSequence === undefined || this.snapshot.runStates[sessionId] === "running") return;
+      void this.cache.writeDetail(detailFromSnapshot(this.snapshot, sessionId, throughSequence));
+    }, 750);
+    this.persistTimers.set(sessionId, timer);
   }
 
   private startStream(cursor: number): void {
@@ -1077,9 +1696,61 @@ export class ForgeAnvilClient implements AnvilClient {
         const event = decodeAnvilEvent(JSON.parse((message as MessageEvent<string>).data));
         if (!event) throw new Error("Forge streamed an invalid event");
         const replay = this.snapshot.replay;
-        const next = applyAnvilEvent(this.snapshot, event);
+        const previousSnapshot = this.snapshot;
+        if (event.sessionId && this.hydrationBuffers.has(event.sessionId)) {
+          this.hydrationBuffers.get(event.sessionId)!.push(event);
+        }
+        const confirmedPrompt = event.type === "message.started" && event.payload.message.role === "user"
+          ? event.payload.message.content.find((block) => block.type === "text")?.text
+          : undefined;
+        const snapshotForEvent = event.type === "message.started" && event.sessionId && event.payload.message.role === "user"
+          ? settleOptimisticPrompt(this.snapshot, event.sessionId, undefined, confirmedPrompt)
+          : this.snapshot;
+        let next = applyAnvilEvent(snapshotForEvent, event);
+        const detailWatermark = event.sessionId ? this.hydratedThrough.get(event.sessionId) : undefined;
+        if (
+          event.sessionId &&
+          detailWatermark !== undefined &&
+          event.sequence <= detailWatermark &&
+          !this.hydrationBuffers.has(event.sessionId)
+        ) {
+          next = mergeSessionDetail(next, detailFromSnapshot(previousSnapshot, event.sessionId, detailWatermark));
+        }
         const eventApplied = next.lastSequence === event.sequence;
-        this.snapshot = { ...next, connection: "connected", replay };
+        this.snapshot = {
+          ...next,
+          connection: "connected",
+          replay,
+          readThroughSequences: this.snapshot.readThroughSequences,
+          hydratingSessionIds: this.snapshot.hydratingSessionIds,
+        };
+        if (
+          eventApplied &&
+          this.detailApiEnabled &&
+          event.sessionId &&
+          event.sessionId !== this.snapshot.activeSessionId &&
+          !this.hydratedThrough.has(event.sessionId) &&
+          !this.hydrationBuffers.has(event.sessionId)
+        ) {
+          this.snapshot = withoutSessionDetail(this.snapshot, event.sessionId);
+        }
+        if (eventApplied) {
+          for (const sessionId of this.hydratedThrough.keys()) {
+            if (!this.hydrationBuffers.has(sessionId)) {
+              this.hydratedThrough.set(sessionId, Math.max(this.hydratedThrough.get(sessionId) ?? 0, event.sequence));
+            }
+          }
+          if (event.type === "run.status" && event.sessionId && event.payload.outcome) {
+            this.schedulePersist(event.sessionId);
+          }
+          if (event.type === "session.deleted") {
+            this.hydratedThrough.delete(event.payload.sessionId);
+            void this.cache.deleteSession(event.payload.sessionId);
+          }
+          if (["session.upserted", "session.deleted", "session.settled", "run.status", "message.started", "interaction.requested"].includes(event.type)) {
+            void this.persistShell();
+          }
+        }
         if (eventApplied && event.type === "session.upserted") {
           const pending = this.pendingCreates.get(event.payload.session.id);
           if (pending) {
@@ -1087,6 +1758,7 @@ export class ForgeAnvilClient implements AnvilClient {
             pending.requestInFlight = false;
             pending.resolveSettled(true);
             this.pendingCreates.delete(event.payload.session.id);
+            this.promptOutbox.drain(event.payload.session.id);
           }
         } else if (eventApplied && event.type === "session.deleted") {
           const pending = this.pendingCreates.get(event.payload.sessionId);
@@ -1113,6 +1785,7 @@ export class ForgeAnvilClient implements AnvilClient {
     pendingCreate?: PendingSessionCreate,
   ): Promise<AnvilCommandResponse | undefined> {
     let definitiveFailure = false;
+    let receivedResponse: AnvilCommandResponse | undefined;
     if (pendingCreate) pendingCreate.requestInFlight = true;
     try {
       const response = await this.fetcher("/api/v1/commands", {
@@ -1121,6 +1794,7 @@ export class ForgeAnvilClient implements AnvilClient {
         body: JSON.stringify(command),
       });
       const value = await response.json() as AnvilCommandResponse;
+      receivedResponse = value;
       if (!response.ok || !value.success) {
         definitiveFailure = value.outcome === "completed";
         throw new Error(value.error ?? `Forge command failed with HTTP ${response.status}`);
@@ -1142,6 +1816,7 @@ export class ForgeAnvilClient implements AnvilClient {
           tracked.state = "acknowledged";
           tracked.requestInFlight = false;
           tracked.resolveSettled(true);
+          this.promptOutbox.drain(tracked.session.id);
           this.snapshot = { ...this.snapshot };
           this.emit();
         }
@@ -1159,6 +1834,7 @@ export class ForgeAnvilClient implements AnvilClient {
           tracked.state = "failed";
           tracked.error = failure.message;
           tracked.resolveSettled(false);
+          this.restoreQueuedPrompt(tracked.session.id);
           this.snapshot = {
             ...this.snapshot,
             sessions: this.snapshot.sessions.map((session) => session.id === tracked.session.id
@@ -1172,7 +1848,7 @@ export class ForgeAnvilClient implements AnvilClient {
       this.snapshot = { ...this.snapshot, clientError: failure.message };
       this.emit();
       if (throwOnError) throw failure;
-      return undefined;
+      return receivedResponse;
     }
   }
 

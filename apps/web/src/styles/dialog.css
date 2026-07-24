@@ -9,6 +9,32 @@
   backdrop-filter: blur(7px);
 }
 
+.interaction-panel-wrap {
+  width: 100%;
+  flex: 0 0 auto;
+  padding: 0 24px;
+}
+
+.interaction-panel {
+  width: min(100%, 790px);
+  max-height: min(520px, 48dvh);
+  margin: 0 auto;
+  overflow: hidden auto;
+  color: var(--text);
+  background: #121212;
+  border: 1px solid rgba(201, 166, 99, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.28);
+}
+
+.interaction-panel .interaction-dialog-header {
+  position: static;
+}
+
+.interaction-panel .dialog-queue-nav {
+  position: static;
+}
+
 .interaction-dialog {
   width: min(100%, 560px);
   max-height: min(760px, calc(100dvh - 44px));

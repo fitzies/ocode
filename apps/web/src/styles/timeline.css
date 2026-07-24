@@ -17,6 +17,58 @@
   display: flow-root;
 }
 
+.timeline-virtual-space {
+  position: relative;
+  width: 100%;
+}
+
+.timeline-virtual-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  padding-bottom: 18px;
+  will-change: transform;
+}
+
+.artifact-block {
+  display: grid;
+  gap: 8px;
+}
+
+.artifact-block > pre {
+  max-height: 180px;
+  overflow: hidden;
+  margin: 0;
+  color: #a7a89f;
+  font: 10px/1.55 "Geist Mono Variable", "Geist Mono", monospace;
+  white-space: pre-wrap;
+}
+
+.artifact-block > a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 11px;
+  gap: 14px;
+  color: #c7c8bf;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  text-decoration: none;
+}
+
+.artifact-block > a:hover {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.artifact-block small {
+  color: #777870;
+  font: 8.5px/1.3 "Geist Mono Variable", "Geist Mono", monospace;
+  white-space: nowrap;
+}
+
 .timeline-date {
   display: flex;
   align-items: center;
@@ -113,7 +165,8 @@
 
 .user-message {
   display: flex;
-  justify-content: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
   margin: 0 0 28px 18%;
 }
 
@@ -128,6 +181,11 @@
 }
 
 .user-message .text-block { color: #e6e6e6; }
+.message-pending {
+  margin: 5px 4px 0;
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
 .assistant-message { margin: 26px 8% 30px 0; }
 .system-message { margin: 18px 8%; padding: 10px 12px; border-left: 2px solid var(--border-strong); }
 .message-error { margin-top: 8px; color: #e98b8f; font-size: 10.5px; }
@@ -147,7 +205,6 @@
 .system-event,
 .interaction-event { margin: 7px 8% 7px 37px; }
 
-.thinking-event summary,
 .tool-event > summary,
 .technical-detail > summary {
   display: flex;
@@ -157,26 +214,26 @@
   user-select: none;
 }
 
-.thinking-event summary::-webkit-details-marker,
 .tool-event > summary::-webkit-details-marker,
 .technical-detail > summary::-webkit-details-marker { display: none; }
 
-.thinking-event summary {
-  min-height: 28px;
-  gap: 7px;
-  color: #85867d;
-  font-size: 10.5px;
-}
-.thinking-event summary > svg:first-child { color: #a5a59d; }
-.thinking-markdown {
-  margin: 5px 0 10px 21px;
-  padding-left: 10px;
+.thinking-event {
   color: #85867d;
   font-size: 11px;
+  font-style: italic;
+  font-synthesis: style;
   line-height: 1.6;
-  border-left: 1px solid rgba(255, 255, 255, 0.12);
 }
-.thinking-markdown p { margin-bottom: 0.7em; }
+.thinking-event * { font-style: italic; }
+.thinking-label {
+  margin-right: 0.35em;
+  color: #9a9b93;
+}
+.thinking-markdown { display: inline; }
+.thinking-markdown p { display: inline; margin: 0; }
+.thinking-markdown > :not(p):first-child { margin-top: 5px; }
+.thinking-markdown > :not(p):last-child { margin-bottom: 5px; }
+.thinking-event > .event-state-label { margin-left: 7px; }
 .thinking-markdown h1,
 .thinking-markdown h2,
 .thinking-markdown h3,
@@ -221,6 +278,7 @@ details[open] > summary .disclosure-icon { transform: rotate(90deg); }
 .tool-main { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 2px; }
 .tool-main strong { overflow: hidden; color: #b7b7ae; font-size: 10.5px; font-weight: 540; text-overflow: ellipsis; white-space: nowrap; }
 .tool-main > span { overflow: hidden; color: #85867e; font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.tool-main > .tool-failure-summary { color: #c98282; }
 .tool-status { display: grid; width: 20px; place-items: center; color: var(--green); }
 .tool-event--running .tool-status,
 .tool-event--queued .tool-status { color: #b4b4b4; }
@@ -311,9 +369,4 @@ details[open] > summary .disclosure-icon { transform: rotate(90deg); }
 }
 
 .timeline--empty { display: flex; align-items: center; justify-content: center; flex-direction: column; padding: 40px 24px 20px; text-align: center; }
-.empty-mark { display: grid; width: 48px; height: 48px; margin-bottom: 17px; place-items: center; color: #d4d4d4; background: #151515; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24); }
 .timeline--empty h2 { margin: 0; color: #ededed; font-size: 19px; font-weight: 590; letter-spacing: -0.025em; }
-.timeline--empty > p { max-width: 430px; margin: 10px 0 21px; color: #7d7e75; font-size: 11.5px; line-height: 1.6; }
-.prompt-suggestions { display: flex; max-width: 600px; flex-wrap: wrap; justify-content: center; gap: 7px; }
-.prompt-suggestions button { padding: 7px 10px; color: #989990; font-size: 10.5px; background: rgba(255, 255, 255, 0.025); border: 1px solid var(--border); border-radius: 7px; cursor: pointer; }
-.prompt-suggestions button:hover { color: #cac9c1; background: rgba(255, 255, 255, 0.045); border-color: var(--border-strong); }

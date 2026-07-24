@@ -17,6 +17,17 @@ describe("FixtureAnvilClient", () => {
     expect(snapshot.timelines["failure-unknown"].some((entry) => entry.kind === "event" && entry.category === "unknown")).toBe(true);
   });
 
+  it("settles and reopens a thread through protocol state", async () => {
+    const client = new FixtureAnvilClient();
+    const sessionId = client.getSnapshot().sessions[0]!.id;
+
+    await client.setSessionSettled(sessionId, true);
+    expect(client.getSnapshot().sessions.find((session) => session.id === sessionId)?.settled).toBe(true);
+
+    await client.setSessionSettled(sessionId, false);
+    expect(client.getSnapshot().sessions.find((session) => session.id === sessionId)?.settled).toBe(false);
+  });
+
   it("creates sessions in the explicitly selected project", () => {
     const client = new FixtureAnvilClient();
     const projectId = client.getSnapshot().projects.at(-1)?.id;

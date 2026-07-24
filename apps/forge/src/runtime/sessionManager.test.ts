@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { ANVIL_PROTOCOL_VERSION, type AnvilClientCommand } from "@anvil/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import type { ForgeConfig } from "../config.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { ForgeDatabase } from "../store/database.ts";
@@ -14,6 +15,7 @@ let directory: string;
 let config: ForgeConfig;
 let database: ForgeDatabase;
 let events: ForgeEventService;
+let artifacts: ArtifactStore;
 let manager: SessionManager;
 
 const requestedSessionId = "01959f7e-7d64-7000-8000-000000000001";
@@ -53,6 +55,7 @@ beforeEach(() => {
     let sessionFile = sessionDir + "/session.jsonl";
     let sessionId = "pi-session-1";
     let pendingDialogPromptId;
+    let aborted = false;
     input.on("line", (line) => {
       const request = JSON.parse(line);
       if (request.type === "get_state") {
@@ -82,7 +85,15 @@ beforeEach(() => {
         send({ type: "agent_start" });
         send({ type: "message_start", message: { role: "user", content: request.message, timestamp: 1 } });
         send({ type: "message_end", message: { role: "user", content: request.message, timestamp: 1 } });
-        if (request.message === "Crash with dialog") {
+        if (request.message === "Hang tool") {
+          send({ type: "response", id: request.id, command: request.type, success: true });
+          send({
+            type: "tool_execution_start",
+            toolCallId: "call-hung",
+            toolName: "bash",
+            args: { command: "python3 hanging.py" },
+          });
+        } else if (request.message === "Crash with dialog") {
           send({ type: "extension_ui_request", id: "dialog-crash", method: "confirm", title: "Continue?" });
           setTimeout(() => process.exit(17), 30);
         } else if (request.message === "Open dialog" || request.message === "Open timed dialog") {
@@ -102,8 +113,14 @@ beforeEach(() => {
         if (pendingDialogPromptId) {
           send({ type: "response", id: pendingDialogPromptId, command: "prompt", success: true });
           pendingDialogPromptId = undefined;
-          send({ type: "agent_settled" });
+          if (!aborted) send({ type: "agent_settled" });
         }
+      } else if (request.type === "abort") {
+        aborted = true;
+        process.stdout.write(
+          JSON.stringify({ type: "response", id: request.id, command: request.type, success: true }) + "\\n" +
+          JSON.stringify({ type: "agent_settled" }) + "\\n"
+        );
       } else {
         send({ type: "response", id: request.id, command: request.type, success: true });
       }
@@ -117,12 +134,14 @@ beforeEach(() => {
     port: 3210,
     databasePath: ":memory:",
     sessionDir: join(directory, "sessions"),
+    artifactDir: join(directory, "artifacts"),
     piExecutable: executable,
     webRoot: join(directory, "web"),
     projects: [project],
   };
   database = new ForgeDatabase(":memory:");
-  events = new ForgeEventService(database, [project]);
+  artifacts = new ArtifactStore(config.artifactDir);
+  events = new ForgeEventService(database, [project], artifacts);
   manager = new SessionManager(config, database, events);
 });
 
@@ -179,6 +198,85 @@ describe("SessionManager", () => {
     }));
   });
 
+  it("persists settlement idempotently without changing runtime state", async () => {
+    await manager.handleCommand(command("create-settle", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    const settle = command("settle-1", "session.settled", requestedSessionId, { settled: true });
+
+    const response = await manager.handleCommand(settle);
+    const duplicate = await manager.handleCommand(settle);
+
+    expect(response.success).toBe(true);
+    expect(duplicate).toEqual(response);
+    expect(events.currentSnapshot().sessions.find((session) => session.id === requestedSessionId)?.settled).toBe(true);
+    expect(database.getSession(requestedSessionId)?.session.settled).toBe(true);
+    expect(database.readEventsAfter(0).filter((event) => event.type === "session.settled")).toHaveLength(1);
+  });
+
+  it("resolves uploaded attachments into Pi prompt context", async () => {
+    const created = await manager.handleCommand(command("create-attachment", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    const sessionId = (created.data as { sessionId: string }).sessionId;
+    const attachment = events.ingestAttachment(
+      sessionId,
+      Buffer.from("important attachment text"),
+      "text/plain",
+      "notes.txt",
+    );
+
+    const response = await manager.handleCommand(command("prompt-attachment", "prompt.send", sessionId, {
+      content: "Review this",
+      delivery: "prompt",
+      attachments: [attachment],
+    }));
+
+    expect(response.success).toBe(true);
+    await waitUntil(() => (events.currentSnapshot().timelines[sessionId] ?? []).some(
+      (entry) => entry.kind === "message" && entry.role === "user",
+    ));
+    const user = events.currentSnapshot().timelines[sessionId].find(
+      (entry) => entry.kind === "message" && entry.role === "user",
+    );
+    expect(user).toMatchObject({
+      kind: "message",
+      content: [expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining('<file name="notes.txt">\nimportant attachment text\n</file>'),
+      })],
+    });
+    expect(events.artifact(attachment.artifactId)?.purpose).toBe("input");
+  });
+
+  it("rejects image attachments whose bytes do not match the declared media type", async () => {
+    const created = await manager.handleCommand(command("create-bad-image", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    const sessionId = (created.data as { sessionId: string }).sessionId;
+    const attachment = events.ingestAttachment(
+      sessionId,
+      Buffer.from("not a png"),
+      "image/png",
+      "fake.png",
+    );
+
+    const response = await manager.handleCommand(command("prompt-bad-image", "prompt.send", sessionId, {
+      content: "Review this",
+      delivery: "prompt",
+      attachments: [attachment],
+    }));
+
+    expect(response).toMatchObject({
+      success: false,
+      error: expect.stringContaining("does not match its media type"),
+    });
+    expect(events.artifact(attachment.artifactId)?.purpose).toBe("upload");
+  });
+
   it("adds a validated workspace and restores it from the database", async () => {
     const workspacePath = join(directory, "second-workspace");
     mkdirSync(workspacePath);
@@ -198,7 +296,7 @@ describe("SessionManager", () => {
     await manager.stopAll();
     const orphanDirectory = join(config.sessionDir, "deleted-before-cleanup");
     mkdirSync(orphanDirectory, { recursive: true });
-    events = new ForgeEventService(database, config.projects);
+    events = new ForgeEventService(database, config.projects, artifacts);
     manager = new SessionManager(config, database, events);
     expect(events.currentSnapshot().projects.some((project) => project.id === projectId)).toBe(true);
     expect(existsSync(orphanDirectory)).toBe(false);
@@ -228,7 +326,7 @@ describe("SessionManager", () => {
 
     mkdirSync(runtimeDirectory, { recursive: true });
     await manager.stopAll();
-    events = new ForgeEventService(database, config.projects);
+    events = new ForgeEventService(database, config.projects, artifacts);
     manager = new SessionManager(config, database, events);
     expect(events.currentSnapshot().sessions.some((session) => session.id === sessionId)).toBe(false);
     expect(existsSync(runtimeDirectory)).toBe(false);
@@ -246,9 +344,27 @@ describe("SessionManager", () => {
         payload: { status: "running" },
       },
       {
-        type: "interaction.requested",
+        type: "tool.started",
         sessionId,
         timestamp: "2026-07-23T01:00:02.000Z",
+        payload: {
+          tool: {
+            id: "tool-interrupted",
+            kind: "tool",
+            toolCallId: "call-interrupted",
+            name: "bash",
+            summary: "Run script",
+            status: "running",
+            arguments: {},
+            output: [],
+            createdAt: "2026-07-23T01:00:02.000Z",
+          },
+        },
+      },
+      {
+        type: "interaction.requested",
+        sessionId,
+        timestamp: "2026-07-23T01:00:03.000Z",
         payload: {
           request: {
             id: "stale-dialog",
@@ -265,6 +381,11 @@ describe("SessionManager", () => {
 
     expect(events.currentSnapshot().pendingInteractions).toHaveLength(0);
     expect(events.currentSnapshot().sessions.find((session) => session.id === sessionId)?.status).toBe("failed");
+    expect(events.currentSnapshot().timelines[sessionId]).toContainEqual(expect.objectContaining({
+      kind: "tool",
+      toolCallId: "call-interrupted",
+      status: "failed",
+    }));
     expect(database.getSession(sessionId)?.session.status).toBe("failed");
   });
 
@@ -303,6 +424,31 @@ describe("SessionManager", () => {
       kind: "interaction",
       requestId: "dialog-crash",
       status: "cancelled",
+    }));
+  });
+
+  it("fails a tool visibly when it never reports completion, even without a declared timeout", async () => {
+    await manager.stopAll();
+    manager = new SessionManager(config, database, events, { defaultBashTimeoutMs: 20 });
+    const created = await manager.handleCommand(command("create-hung", "session.create", null, { projectId: "anvil", sessionId: requestedSessionId }));
+    const sessionId = (created.data as { sessionId: string }).sessionId;
+    const response = await manager.handleCommand(command("prompt-hung", "prompt.send", sessionId, {
+      content: "Hang tool",
+      delivery: "prompt",
+    }));
+
+    expect(response.success).toBe(true);
+    await waitUntil(() => events.currentSnapshot().sessions.some(
+      (session) => session.id === sessionId && session.status === "failed",
+    ));
+    expect(events.currentSnapshot().timelines[sessionId]).toContainEqual(expect.objectContaining({
+      kind: "tool",
+      toolCallId: "call-hung",
+      status: "failed",
+      output: [expect.objectContaining({
+        type: "text",
+        text: expect.stringContaining("timeout without reporting completion"),
+      })],
     }));
   });
 
@@ -345,7 +491,11 @@ describe("SessionManager", () => {
     expect(cancelled.success).toBe(true);
     expect((await prompting).success).toBe(true);
     expect(events.currentSnapshot().pendingInteractions).toHaveLength(0);
-    expect(events.currentSnapshot().sessions.find((session) => session.id === sessionId)?.status).toBe("idle");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events.currentSnapshot().sessions.find((session) => session.id === sessionId)).toMatchObject({
+      status: "idle",
+      lastTerminalOutcome: "cancelled",
+    });
     expect(events.currentSnapshot().timelines[sessionId]).toContainEqual(expect.objectContaining({
       kind: "interaction",
       requestId: "dialog-1",

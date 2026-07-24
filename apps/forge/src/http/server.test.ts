@@ -1,6 +1,18 @@
-import { ANVIL_PROTOCOL_VERSION, isAnvilBootstrap, type AnvilCommandResponse } from "@anvil/protocol";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import {
+  ANVIL_PROTOCOL_VERSION,
+  isAnvilBootstrap,
+  isAnvilSessionDetailSync,
+  isAnvilSummaryBootstrap,
+  type AnvilCommandResponse,
+  type SessionSummary,
+} from "@anvil/protocol";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { ForgeDatabase } from "../store/database.ts";
 import { ForgeHttpServer } from "./server.ts";
@@ -8,12 +20,16 @@ import { ForgeHttpServer } from "./server.ts";
 let database: ForgeDatabase;
 let events: ForgeEventService;
 let server: ForgeHttpServer;
+let artifacts: ArtifactStore;
+let artifactDirectory: string;
 let baseUrl: string;
 
 beforeEach(async () => {
   database = new ForgeDatabase(":memory:");
-  events = new ForgeEventService(database, [{ id: "anvil", name: "Anvil", path: "/repo" }]);
-  server = new ForgeHttpServer({ events });
+  artifactDirectory = mkdtempSync(join(tmpdir(), "anvil-http-artifacts-"));
+  artifacts = new ArtifactStore(artifactDirectory, 32);
+  events = new ForgeEventService(database, [{ id: "anvil", name: "Anvil", path: "/repo" }], artifacts);
+  server = new ForgeHttpServer({ events, artifacts });
   await server.listen("127.0.0.1", 0);
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
@@ -23,6 +39,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await server.close();
   database.close();
+  rmSync(artifactDirectory, { recursive: true, force: true });
 });
 
 describe("ForgeHttpServer", () => {
@@ -38,6 +55,216 @@ describe("ForgeHttpServer", () => {
     expect(response.status).toBe(200);
     expect(isAnvilBootstrap(bootstrap)).toBe(true);
     expect(bootstrap).toMatchObject({ cursor: 1, snapshot: { lastSequence: 1 } });
+  });
+
+  it("serves lightweight summaries and sequence-based thread details", async () => {
+    const session: SessionSummary = {
+      id: "session-1",
+      projectId: "anvil",
+      title: "Cached thread",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle",
+      modelId: "test/model",
+      thinkingLevel: "medium",
+    };
+    events.createSession(session, {
+      sessionId: session.id,
+      timestamp: session.updatedAt,
+      type: "session.upserted",
+      payload: { session },
+    });
+    events.append([{
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "message.started",
+      payload: {
+        message: {
+          id: "message-1",
+          kind: "message",
+          role: "assistant",
+          content: [],
+          status: "streaming",
+          createdAt: "2026-07-23T01:00:01.000Z",
+        },
+      },
+    }]);
+
+    const summaryResponse = await fetch(`${baseUrl}/api/v1/bootstrap`, {
+      headers: { accept: "application/vnd.anvil.summary+json" },
+    });
+    const summary: unknown = await summaryResponse.json();
+    expect(isAnvilSummaryBootstrap(summary)).toBe(true);
+    expect(summary).toMatchObject({ cursor: 2, sessions: [{ id: session.id }] });
+    expect(summary).not.toHaveProperty("snapshot");
+
+    const deltaResponse = await fetch(`${baseUrl}/api/v1/sessions/${session.id}/detail?after=1`);
+    const delta: unknown = await deltaResponse.json();
+    expect(isAnvilSessionDetailSync(delta)).toBe(true);
+    expect(delta).toMatchObject({ mode: "delta", fromSequence: 1, throughSequence: 2 });
+    expect((delta as { events: unknown[] }).events).toHaveLength(1);
+
+    const resetResponse = await fetch(`${baseUrl}/api/v1/sessions/${session.id}/detail`);
+    const reset: unknown = await resetResponse.json();
+    expect(isAnvilSessionDetailSync(reset)).toBe(true);
+    expect(reset).toMatchObject({ mode: "reset", detail: { sessionId: session.id, throughSequence: 2 } });
+  });
+
+  it("serves externalized artifacts only through the owner-authenticated API", async () => {
+    const session: SessionSummary = {
+      id: "artifact-session",
+      projectId: "anvil",
+      title: "Artifacts",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle",
+      modelId: "test/model",
+      thinkingLevel: "medium",
+    };
+    events.createSession(session, {
+      sessionId: session.id,
+      timestamp: session.updatedAt,
+      type: "session.upserted",
+      payload: { session },
+    });
+    const [event] = events.append([{
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "message.started",
+      payload: {
+        message: {
+          id: "message-1",
+          kind: "message",
+          role: "assistant",
+          content: [{ id: "text-1", type: "text", text: "large artifact body".repeat(20) }],
+          status: "complete",
+          createdAt: "2026-07-23T01:00:01.000Z",
+        },
+      },
+    }]);
+    if (event?.type !== "message.started") throw new Error("Expected message event");
+    const block = event.payload.message.content[0];
+    if (block?.type !== "artifact") throw new Error("Expected artifact block");
+
+    await server.close();
+    server = new ForgeHttpServer({ events, artifacts, ownerLogin: "owner@example.com" });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+
+    expect((await fetch(`${baseUrl}${block.url}`)).status).toBe(403);
+    const response = await fetch(`${baseUrl}${block.url}`, {
+      headers: { "tailscale-user-login": "owner@example.com" },
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await response.text()).toBe("large artifact body".repeat(20));
+
+    const head = await fetch(`${baseUrl}${block.url}`, {
+      method: "HEAD",
+      headers: { "tailscale-user-login": "owner@example.com" },
+    });
+    expect(head.status).toBe(200);
+    expect(head.headers.get("content-length")).toBe(String(block.byteLength));
+    expect(await head.text()).toBe("");
+    expect((await fetch(`${baseUrl}/api/v1/artifacts/not-a-valid-id`, {
+      headers: { "tailscale-user-login": "owner@example.com" },
+    })).status).toBe(404);
+  });
+
+  it("uploads session-scoped attachments and searches workspace files", async () => {
+    const session: SessionSummary = {
+      id: "attachment-session",
+      projectId: "anvil",
+      title: "Attachments",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle",
+      modelId: "test/model",
+      thinkingLevel: "medium",
+    };
+    events.createSession(session, {
+      sessionId: session.id,
+      timestamp: session.updatedAt,
+      type: "session.upserted",
+      payload: { session },
+    });
+    await server.close();
+    server = new ForgeHttpServer({
+      events,
+      artifacts,
+      searchFiles: async (sessionId, query) => sessionId === session.id && query === "comp"
+        ? ["apps/web/src/components/Composer.tsx"]
+        : undefined,
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const upload = await fetch(`${baseUrl}/api/v1/sessions/${session.id}/attachments`, {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        "x-anvil-file-name": encodeURIComponent("notes.txt"),
+      },
+      body: "attachment body",
+    });
+    const reference = await upload.json() as { artifactId: string; url: string };
+    expect(upload.status).toBe(201);
+    expect(events.artifact(reference.artifactId)).toMatchObject({
+      sessionId: session.id,
+      name: "notes.txt",
+      byteLength: 15,
+    });
+    expect(await (await fetch(`${baseUrl}${reference.url}`)).text()).toBe("attachment body");
+
+    const removableUpload = await fetch(`${baseUrl}/api/v1/sessions/${session.id}/attachments`, {
+      method: "POST",
+      headers: { "content-type": "text/plain", "x-anvil-file-name": "remove.txt" },
+      body: "remove me",
+    });
+    const removable = await removableUpload.json() as { artifactId: string };
+    expect((await fetch(`${baseUrl}/api/v1/sessions/${session.id}/attachments/${removable.artifactId}`, {
+      method: "DELETE",
+    })).status).toBe(200);
+    expect(events.artifact(removable.artifactId)).toBeUndefined();
+
+    const search = await fetch(`${baseUrl}/api/v1/sessions/${session.id}/files?q=comp`);
+    expect(search.status).toBe(200);
+    expect(await search.json()).toEqual({ files: [{ path: "apps/web/src/components/Composer.tsx" }] });
+    expect((await fetch(`${baseUrl}/api/v1/sessions/missing/attachments`, {
+      method: "POST",
+      headers: { "content-type": "text/plain", "x-anvil-file-name": "notes.txt" },
+      body: "no session",
+    })).status).toBe(404);
+  });
+
+  it("queues an owner-initiated service restart after acknowledging the request", async () => {
+    await server.close();
+    let requestRestart!: () => void;
+    const restarted = new Promise<void>((resolve) => {
+      requestRestart = resolve;
+    });
+    server = new ForgeHttpServer({ events, artifacts, requestRestart, instanceId: "forge-before-restart" });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+
+    const response = await fetch(`${baseUrl}/api/v1/admin/restart`, {
+      method: "POST",
+      headers: { origin: baseUrl },
+    });
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ status: "restarting", instanceId: "forge-before-restart" });
+    await restarted;
+  });
+
+  it("rejects restart requests when Forge is not service-managed", async () => {
+    const response = await fetch(`${baseUrl}/api/v1/admin/restart`, { method: "POST" });
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ code: "restart_unavailable" });
   });
 
   it("replays and streams SSE events after a cursor", async () => {

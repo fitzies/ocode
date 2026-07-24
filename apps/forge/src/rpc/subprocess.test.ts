@@ -49,6 +49,36 @@ describe("RpcSubprocess", () => {
     await once(rpc, "exit");
   });
 
+  it("makes user-local tools available to Pi subprocesses", async () => {
+    const rpc = new RpcSubprocess({
+      executable: process.execPath,
+      args: ["--input-type=module", "--eval", `
+        import { createInterface } from "node:readline";
+        const input = createInterface({ input: process.stdin });
+        input.on("line", (line) => {
+          const command = JSON.parse(line);
+          process.stdout.write(JSON.stringify({
+            type: "response",
+            command: command.type,
+            id: command.id,
+            success: true,
+            data: { path: process.env.PATH },
+          }) + "\\n");
+        });
+      `],
+      cwd: process.cwd(),
+      env: { HOME: "/tmp/anvil-user", PATH: "/usr/bin" },
+    });
+    rpc.start();
+
+    const response = await rpc.sendRequest({ type: "get_state" });
+    expect(response).toMatchObject({
+      data: { path: `/tmp/anvil-user/.local/bin${process.platform === "win32" ? ";" : ":"}/usr/bin` },
+    });
+    rpc.stop();
+    await once(rpc, "exit");
+  });
+
   it("times out an unanswered request", async () => {
     const rpc = nodeRpc("setInterval(() => {}, 1000);", 25);
     rpc.start();

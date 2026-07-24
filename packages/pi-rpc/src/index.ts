@@ -26,6 +26,7 @@ export interface PiRpcAdapterState {
   reasoningIds: Record<number, string>;
   catalog: CapabilityCatalog;
   knownToolCallIds: Set<string>;
+  terminalOutcomeInCurrentRun?: "failed" | "cancelled";
 }
 
 export interface RecordedRpcItem {
@@ -253,6 +254,7 @@ export function normalizePiRpcRecord(
   const emit = <T extends AnvilEvent["type"]>(
     type: T,
     payload: Extract<AnvilEvent, { type: T }>["payload"],
+    includeRaw = true,
   ) => {
     state.nextSequence++;
     events.push({
@@ -260,7 +262,7 @@ export function normalizePiRpcRecord(
       timestamp,
       type,
       payload,
-      raw,
+      ...(includeRaw ? { raw } : {}),
     } as UnsequencedAnvilEvent);
   };
 
@@ -375,8 +377,7 @@ export function normalizePiRpcRecord(
     emit("stream.marker", {
       messageId: `response-${stringOf(record.id, command || "unknown")}`,
       markerType: `response:${command || "unknown"}`,
-      data: raw,
-    });
+    }, false);
     return events;
   }
   if (type === "session_info_changed") {
@@ -395,11 +396,15 @@ export function normalizePiRpcRecord(
     }
   }
   if (type === "agent_start") {
+    state.terminalOutcomeInCurrentRun = undefined;
     emit("run.status", { status: "running" });
     return events;
   }
   if (type === "agent_settled") {
-    emit("run.status", { status: "idle" });
+    if (!state.terminalOutcomeInCurrentRun) {
+      emit("run.status", { status: "idle", outcome: "completed" });
+    }
+    state.terminalOutcomeInCurrentRun = undefined;
     return events;
   }
   if (type === "message_start") {
@@ -409,8 +414,7 @@ export function normalizePiRpcRecord(
       emit("stream.marker", {
         messageId: stringOf(message.toolCallId, "unknown-tool-result"),
         markerType: "toolResult:start",
-        data: json(message),
-      });
+      }, false);
       return events;
     }
     const id = messageId(message, state);
@@ -447,7 +451,7 @@ export function normalizePiRpcRecord(
         blockId: `${id}-text-${contentIndex}`,
         delta: stringOf(update.delta),
         modelId: stringOf(message.model) || undefined,
-      });
+      }, false);
     } else if (updateType === "thinking_start") {
       const reasoningId = `${id}-reasoning-${contentIndex}`;
       state.reasoningIds[contentIndex] = reasoningId;
@@ -479,7 +483,7 @@ export function normalizePiRpcRecord(
           },
         });
       }
-      emit("reasoning.delta", { reasoningId, delta: stringOf(update.delta) });
+      emit("reasoning.delta", { reasoningId, delta: stringOf(update.delta) }, false);
     } else if (updateType === "thinking_end") {
       const reasoningId =
         state.reasoningIds[contentIndex] ?? `${id}-reasoning-${contentIndex}`;
@@ -494,14 +498,17 @@ export function normalizePiRpcRecord(
         status: reason === "aborted" ? "cancelled" : "failed",
         error: stringOf(update.error, reason),
       });
-      emit("run.status", { status: reason === "aborted" ? "idle" : "failed" });
+      state.terminalOutcomeInCurrentRun = reason === "aborted" ? "cancelled" : "failed";
+      emit("run.status", {
+        status: reason === "aborted" ? "idle" : "failed",
+        outcome: state.terminalOutcomeInCurrentRun,
+      });
     } else {
       emit("stream.marker", {
         messageId: id,
         markerType: updateType || "unknown_update",
         contentIndex: numberOf(update.contentIndex),
-        data: json(update),
-      });
+      }, false);
     }
     return events;
   }
@@ -610,7 +617,7 @@ export function normalizePiRpcRecord(
       toolCallId: stringOf(record.toolCallId),
       output: contentBlocks(partial.content, `tool-${stringOf(record.toolCallId)}-partial`),
       details: partial.details === undefined ? undefined : json(partial.details),
-    });
+    }, false);
     return events;
   }
   if (type === "tool_execution_end") {
@@ -762,8 +769,7 @@ export function normalizePiRpcRecord(
     emit("stream.marker", {
       messageId: state.lastAssistantMessageId ?? "agent-run",
       markerType: type,
-      data: raw,
-    });
+    }, false);
     return events;
   }
 

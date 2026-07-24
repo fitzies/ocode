@@ -1,7 +1,7 @@
 import type { ModelDescriptor } from "@anvil/protocol";
 import { describe, expect, it } from "vitest";
 
-import { selectAnvilModels, updateComposerDraft } from "./Composer";
+import { activeFileMention, selectAnvilModels, updateComposerDraft } from "./Composer";
 
 const model = (id: string, name: string): ModelDescriptor => ({
   id,
@@ -20,6 +20,14 @@ describe("updateComposerDraft", () => {
     drafts = updateComposerDraft(drafts, "session-b", "");
 
     expect(drafts).toEqual({ "session-a": "Message for A" });
+  });
+});
+
+describe("activeFileMention", () => {
+  it("finds unquoted and quoted @ file queries at the cursor", () => {
+    expect(activeFileMention("Review @src/cmp", 15)).toEqual({ start: 7, query: "src/cmp" });
+    expect(activeFileMention('Review @"docs/my f', 18)).toEqual({ start: 7, query: "docs/my f" });
+    expect(activeFileMention("email@example.com", 17)).toBeUndefined();
   });
 });
 

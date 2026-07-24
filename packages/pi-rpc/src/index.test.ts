@@ -162,6 +162,25 @@ describe("Pi RPC normalization", () => {
     });
   });
 
+  it("does not overwrite a failed or cancelled terminal outcome when Pi settles", () => {
+    for (const reason of ["aborted", "provider_error"] as const) {
+      const adapter = state();
+      normalizePiRpcRecord(adapter, { type: "agent_start" });
+      const failure = normalizePiRpcRecord(adapter, {
+        type: "message_update",
+        assistantMessageEvent: { type: "error", reason },
+        message: { id: `message-${reason}` },
+      });
+      const settled = normalizePiRpcRecord(adapter, { type: "agent_settled" });
+
+      expect(failure.at(-1)).toMatchObject({
+        type: "run.status",
+        payload: { outcome: reason === "aborted" ? "cancelled" : "failed" },
+      });
+      expect(settled).toEqual([]);
+    }
+  });
+
   it("turns accumulated tool progress into replaceable output events", () => {
     const [event] = normalizePiRpcRecord(state(), {
       type: "tool_execution_update",

@@ -111,6 +111,103 @@
   gap: 7px;
 }
 
+.settings-control {
+  position: relative;
+}
+
+.settings-popover {
+  position: absolute;
+  top: calc(100% + 9px);
+  right: 0;
+  width: min(290px, calc(100vw - 28px));
+  padding: 7px;
+  color: #c8c8c0;
+  background: #121311;
+  border: 1px solid #30312d;
+  border-radius: 9px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.52);
+}
+
+.settings-popover-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 8px 9px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-popover-heading strong {
+  font-size: 11px;
+  font-weight: 580;
+}
+
+.settings-popover-heading span {
+  color: #6e9871;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 8.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-restart {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 6px;
+  padding: 9px;
+  gap: 3px;
+  color: #c8c8c0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.settings-restart:hover:not(:disabled),
+.settings-restart:focus-visible {
+  background: rgba(255, 255, 255, 0.05);
+  outline: none;
+}
+
+.settings-restart:disabled {
+  color: #77786f;
+  cursor: wait;
+}
+
+.settings-restart span {
+  font-size: 11px;
+  font-weight: 540;
+}
+
+.settings-restart small {
+  color: #77786f;
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.settings-error {
+  margin: 6px 9px 8px;
+  color: #c98282;
+  font-size: 9.5px;
+  line-height: 1.4;
+}
+
+.git-diff-stat {
+  display: inline-flex;
+  align-items: center;
+  padding-right: 5px;
+  gap: 7px;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 10.5px;
+  font-weight: 520;
+  font-variant-numeric: tabular-nums;
+}
+
+.git-additions { color: #6e9871; }
+.git-deletions { color: #a26d6d; }
+
 .connection-chip,
 .trust-chip {
   display: inline-flex;
@@ -199,3 +296,92 @@
   border-bottom: 1px solid rgba(197, 157, 84, 0.12);
 }
 
+
+.completion-toasts {
+  position: fixed;
+  z-index: 40;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  width: min(380px, calc(100vw - 32px));
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.completion-toast {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  min-height: 62px;
+  padding: 10px 10px 10px 13px;
+  gap: 10px;
+  color: #e8e8e3;
+  background: #171815;
+  border: 1px solid #33342f;
+  border-radius: 9px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.42);
+  pointer-events: auto;
+  animation: completion-toast-in 180ms ease-out;
+}
+
+.completion-toast-mark {
+  width: 8px;
+  height: 8px;
+  background: var(--green);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px rgba(70, 167, 88, 0.1);
+}
+
+.completion-toast-copy {
+  display: flex;
+  min-width: 0;
+  padding: 0;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.completion-toast-copy strong {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.completion-toast-copy span {
+  min-width: 0;
+  overflow: hidden;
+  color: #96978f;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.completion-toast-dismiss {
+  align-self: start;
+  padding: 0 2px;
+  color: #77786f;
+  font-size: 16px;
+  line-height: 1;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.completion-toast-dismiss:hover,
+.completion-toast-dismiss:focus-visible {
+  color: #d3d3cd;
+}
+
+@keyframes completion-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .completion-toast { animation: none; }
+}

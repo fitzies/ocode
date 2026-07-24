@@ -6,6 +6,8 @@ import {
   isAnvilBootstrap,
   isAnvilClientCommand,
   isAnvilEvent,
+  isAnvilSessionDetailSync,
+  isAnvilSummaryBootstrap,
   isJsonValue,
 } from "./index";
 
@@ -49,9 +51,28 @@ describe("protocol runtime guards", () => {
       sessionId: "session-1",
       timestamp: "2026-07-21T08:00:00.000Z",
       type: "prompt.send",
-      payload: { content: "Continue", delivery: "steer", images: [] },
+      payload: {
+        content: "Continue",
+        delivery: "steer",
+        images: [],
+        attachments: [{
+          type: "artifactReference",
+          artifactId: "01959f7e-7d64-7000-8000-000000000002",
+          url: "/api/v1/artifacts/01959f7e-7d64-7000-8000-000000000002",
+          mediaType: "text/plain",
+          byteLength: 12,
+          name: "notes.txt",
+        }],
+      },
     };
     expect(isAnvilClientCommand(command)).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      payload: {
+        ...command.payload,
+        attachments: [{ ...command.payload.attachments[0], url: "/api/v1/artifacts/other" }],
+      },
+    })).toBe(false);
     expect(isAnvilClientCommand({ ...command, payload: { ...command.payload, delivery: "later" } })).toBe(false);
     expect(isAnvilClientCommand({ ...command, sessionId: null })).toBe(false);
     expect(isAnvilClientCommand({
@@ -78,6 +99,63 @@ describe("protocol runtime guards", () => {
       sessionId: null,
       payload: { sessionId: "session-1" },
     })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.settled",
+      sessionId: "session-1",
+      payload: { settled: true },
+    })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.settled",
+      sessionId: "session-1",
+      payload: { settled: "yes" },
+    })).toBe(false);
+  });
+
+  it("validates externalized artifact content blocks", () => {
+    const base = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-artifact",
+      sequence: 1,
+      sessionId: "session-1",
+      timestamp: "2026-07-21T08:00:00.000Z",
+      type: "message.started",
+    };
+    expect(isAnvilEvent({
+      ...base,
+      payload: {
+        message: {
+          id: "message-1",
+          kind: "message",
+          role: "assistant",
+          status: "complete",
+          createdAt: base.timestamp,
+          content: [{
+            id: "artifact-1",
+            type: "artifact",
+            artifactId: "01959f7e-7d64-7000-8000-000000000001",
+            url: "/api/v1/artifacts/01959f7e-7d64-7000-8000-000000000001",
+            mediaType: "text/plain",
+            byteLength: 500000,
+            preview: "Preview",
+          }],
+        },
+      },
+    })).toBe(true);
+    expect(isAnvilEvent({
+      ...base,
+      payload: {
+        message: {
+          id: "message-1",
+          kind: "message",
+          role: "assistant",
+          status: "complete",
+          createdAt: base.timestamp,
+          content: [{ id: "artifact-1", type: "artifact", artifactId: "id", url: "/artifact", mediaType: "text/plain", byteLength: -1 }],
+        },
+      },
+    })).toBe(false);
   });
 
   it("validates workspace and deletion events", () => {
@@ -98,6 +176,12 @@ describe("protocol runtime guards", () => {
       sessionId: "session-1",
       type: "session.deleted",
       payload: { sessionId: "session-1" },
+    })).toBe(true);
+    expect(isAnvilEvent({
+      ...base,
+      sessionId: "session-1",
+      type: "session.settled",
+      payload: { settled: true },
     })).toBe(true);
   });
 
@@ -131,6 +215,54 @@ describe("protocol runtime guards", () => {
     };
     expect(isAnvilBootstrap({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [event], cursor: 1 })).toBe(true);
     expect(isAnvilBootstrap({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [{ ...event, sequence: 2 }], cursor: 1 })).toBe(false);
+  });
+
+  it("validates lightweight summary and per-session detail synchronization", () => {
+    const session = {
+      id: "session-1",
+      projectId: "anvil",
+      title: "Thread",
+      updatedAt: "2026-07-21T08:00:00.000Z",
+      status: "idle",
+      modelId: "test/model",
+      thinkingLevel: "medium",
+      lastActivitySequence: 4,
+      lastTerminalSequence: 4,
+      lastTerminalOutcome: "completed",
+    };
+    expect(isAnvilSummaryBootstrap({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      capturedAt: session.updatedAt,
+      connection: "connected",
+      projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+      sessions: [session],
+      cursor: 4,
+    })).toBe(true);
+    expect(isAnvilSessionDetailSync({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      mode: "reset",
+      detail: {
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        sessionId: session.id,
+        throughSequence: 4,
+        timeline: [],
+        catalog: { models: [], commands: [], skills: [] },
+        pendingInteractions: [],
+        extensionStatuses: [],
+        widgets: [],
+        queue: { steering: [], followUp: [] },
+        composerDraft: "",
+        runState: "idle",
+      },
+    })).toBe(true);
+    expect(isAnvilSummaryBootstrap({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      capturedAt: session.updatedAt,
+      connection: "connected",
+      projects: [],
+      sessions: [{ ...session, lastActivitySequence: -1 }],
+      cursor: 4,
+    })).toBe(false);
   });
 
   it("rejects malformed envelopes and decodes malformed payloads as unknown", () => {

@@ -1,4 +1,5 @@
 import type {
+  ArtifactReference,
   ContentBlock,
   JsonValue,
   SessionSummary,
@@ -13,15 +14,15 @@ import dangerCircleIcon from "@iconify-icons/solar/danger-circle-bold-duotone";
 import infoCircleIcon from "@iconify-icons/solar/info-circle-bold-duotone";
 import questionCircleIcon from "@iconify-icons/solar/question-circle-bold-duotone";
 import refreshIcon from "@iconify-icons/solar/refresh-linear";
-import sledgehammerIcon from "@iconify-icons/solar/sledgehammer-bold-duotone";
-import starsIcon from "@iconify-icons/solar/stars-minimalistic-bold-duotone";
-import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { memo, useLayoutEffect, useMemo, useRef } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 interface TimelineProps {
   session: SessionSummary;
   entries: TimelineEntry[];
+  loading?: boolean;
   onSuggestion: (prompt: string) => void;
 }
 
@@ -56,8 +57,49 @@ function hasVisibleContent(blocks: ContentBlock[]): boolean {
   ));
 }
 
+function artifactReference(value: JsonValue | undefined): ArtifactReference | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, JsonValue>;
+  if (
+    record.type !== "artifactReference" ||
+    typeof record.artifactId !== "string" ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(record.artifactId) ||
+    typeof record.url !== "string" ||
+    record.url !== `/api/v1/artifacts/${record.artifactId}` ||
+    typeof record.mediaType !== "string" ||
+    typeof record.byteLength !== "number"
+  ) return undefined;
+  return record as unknown as ArtifactReference;
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1_024) return `${bytes} B`;
+  if (bytes < 1_024 * 1_024) return `${Math.round(bytes / 1_024)} KB`;
+  return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
+}
+
+function ArtifactLink({ artifact, preview }: {
+  artifact: Omit<ArtifactReference, "type">;
+  preview?: string;
+}) {
+  const safeUrl = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(artifact.artifactId) &&
+    artifact.url === `/api/v1/artifacts/${artifact.artifactId}`;
+  if (!safeUrl) return <span className="artifact-unavailable">Invalid artifact reference</span>;
+  return (
+    <div className="artifact-block">
+      {preview && <pre>{preview}</pre>}
+      <a href={artifact.url} download={artifact.name}>
+        <span>{artifact.name ?? "Download artifact"}</span>
+        <small>{formatBytes(artifact.byteLength)} · {artifact.mediaType}</small>
+      </a>
+    </div>
+  );
+}
+
 function JsonDetails({ label, value }: { label: string; value?: JsonValue }) {
   if (value === undefined) return null;
+  const artifact = artifactReference(value);
+  if (artifact) return <ArtifactLink artifact={artifact} />;
   return (
     <details className="technical-detail">
       <summary>{label}<Icon icon={altArrowRightIcon} width={12} /></summary>
@@ -94,6 +136,9 @@ function ContentBlocks({ blocks, compact = false }: { blocks: ContentBlock[]; co
             ? <div className="text-block" key={block.id}>{block.text}</div>
             : <MarkdownText key={block.id}>{block.text}</MarkdownText>;
         }
+        if (block.type === "artifact") {
+          return <ArtifactLink key={block.id} artifact={block} preview={block.preview} />;
+        }
         if (block.type === "image") {
           const source = block.url ?? (block.data ? `data:${block.mimeType};base64,${block.data}` : undefined);
           return (
@@ -128,7 +173,9 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
     return (
       <article className={`${messageClass} message-status--${entry.status}`}>
         <ContentBlocks blocks={visibleContent} />
-        {entry.status === "streaming" && hasVisibleContent(visibleContent) && <span className="stream-caret" aria-label="Streaming" />}
+        {entry.status === "streaming" && entry.role === "user" && entry.id.startsWith("optimistic-")
+          ? <span className="message-pending" role="status">Sending…</span>
+          : entry.status === "streaming" && hasVisibleContent(visibleContent) && <span className="stream-caret" aria-label="Streaming" />}
         {entry.error && <div className="message-error">{entry.error}</div>}
         {(entry.role === "extension" || entry.status === "failed") && <JsonDetails label="Raw message" value={entry.raw} />}
       </article>
@@ -137,28 +184,30 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
 
   if (entry.kind === "reasoning") {
     return (
-      <details className={`thinking-event thinking-event--${entry.status}`}>
-        <summary>
-          <Icon icon={starsIcon} width={15} />
-          <span>{entry.status === "streaming" ? "Reasoning" : "Reasoning trace"}</span>
-          {entry.status === "cancelled" && <span className="event-state-label">cancelled</span>}
-          <Icon icon={altArrowRightIcon} className="disclosure-icon" width={14} />
-        </summary>
+      <div className={`thinking-event thinking-event--${entry.status}`}>
+        <span className="thinking-label">Thinking:</span>
         <MarkdownText className="thinking-markdown markdown-body">
-          {entry.content || "Reasoning stream started…"}
+          {entry.content || "Getting started…"}
         </MarkdownText>
-      </details>
+        {entry.status === "cancelled" && <span className="event-state-label">cancelled</span>}
+      </div>
     );
   }
 
   if (entry.kind === "tool") {
+    const failureBlock = entry.status === "failed"
+      ? entry.output.find((block) => block.type === "text" && block.text.trim())
+      : undefined;
+    const failureText = failureBlock?.type === "text" ? failureBlock.text : undefined;
     return (
       <details className={`tool-event tool-event--${entry.status}`}>
         <summary>
           <span className="tool-icon"><Icon icon={commandIcon} width={15} /></span>
           <span className="tool-main">
             <strong>{entry.summary}</strong>
-            <span>{entry.name} · {entry.toolCallId}</span>
+            <span className={failureText ? "tool-failure-summary" : undefined}>
+              {failureText ?? `${entry.name} · ${entry.toolCallId}`}
+            </span>
           </span>
           <span className="tool-status"><ToolStatus entry={entry} /></span>
           <Icon icon={altArrowRightIcon} className="disclosure-icon" width={14} />
@@ -200,8 +249,12 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
   );
 }
 
-function renderEntries(entries: TimelineEntry[]): ReactNode[] {
-  const rendered: ReactNode[] = [];
+type TimelineRow =
+  | { key: string; kind: "entry"; entry: TimelineEntry }
+  | { key: string; kind: "tool-batch"; tools: ToolEntry[] };
+
+function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
+  const rows: TimelineRow[] = [];
   let index = 0;
   while (index < entries.length) {
     const entry = entries[index]!;
@@ -215,26 +268,43 @@ function renderEntries(entries: TimelineEntry[]): ReactNode[] {
         nextIndex += 1;
       }
       if (tools.length > 1) {
-        const running = tools.filter((tool) => tool.status === "running").length;
-        rendered.push(
-          <section className="tool-batch" key={`batch-${entry.batchId}`} aria-label={`${tools.length} parallel tools`}>
-            <div className="tool-batch-label"><span>{tools.length} parallel tools</span><small>{running ? `${running} running` : "settled"}</small></div>
-            {tools.map((tool) => <TimelineItem key={tool.id} entry={tool} />)}
-          </section>,
-        );
+        rows.push({ key: `batch-${entry.batchId}`, kind: "tool-batch", tools });
         index = nextIndex;
         continue;
       }
     }
-    rendered.push(<TimelineItem key={entry.id} entry={entry} />);
+    rows.push({ key: entry.id, kind: "entry", entry });
     index += 1;
   }
-  return rendered;
+  return rows;
 }
 
-export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
+function TimelineRowView({ row }: { row: TimelineRow }) {
+  if (row.kind === "entry") return <TimelineItem entry={row.entry} />;
+  const running = row.tools.filter((tool) => tool.status === "running").length;
+  return (
+    <section className="tool-batch" aria-label={`${row.tools.length} parallel tools`}>
+      <div className="tool-batch-label">
+        <span>{row.tools.length} parallel tools</span>
+        <small>{running ? `${running} running` : "settled"}</small>
+      </div>
+      {row.tools.map((tool) => <TimelineItem key={tool.id} entry={tool} />)}
+    </section>
+  );
+}
+
+export const Timeline = memo(function Timeline({ session, entries, loading = false }: TimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottom = useRef(true);
+  const rows = useMemo(() => timelineRows(entries), [entries]);
+  const virtualized = rows.length > 100;
+  const virtualizer = useVirtualizer({
+    count: virtualized ? rows.length : 0,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => rows[index]?.kind === "tool-batch" ? 180 : 96,
+    getItemKey: (index) => rows[index]?.key ?? index,
+    overscan: 8,
+  });
   const activeTool = entries.some((entry) => entry.kind === "tool" && (entry.status === "running" || entry.status === "queued"));
   const streamingResponse = entries.some((entry) => (
     entry.kind === "message" &&
@@ -261,14 +331,13 @@ export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
   if (entries.length === 0) {
     return (
       <div ref={scrollRef} className="timeline timeline--empty" onScroll={trackScrollPosition}>
-        <div className="empty-mark"><Icon icon={sledgehammerIcon} width={25} /></div>
-        <h2>What should Pi work on?</h2>
-        <p>This session is ready for Forge. Ask a question, request a change, or replay a recorded Pi RPC fixture.</p>
-        <div className="prompt-suggestions">
-          {["Review the current project structure", "Help me plan the next milestone", "Summarize recent changes"].map((prompt) => (
-            <button key={prompt} onClick={() => onSuggestion(prompt)}>{prompt}</button>
-          ))}
-        </div>
+        {loading ? (
+          <div role="status" aria-label="Loading thread">
+            <span className="forge-spinner" aria-hidden="true" />
+          </div>
+        ) : (
+          <h2>What should Pi work on?</h2>
+        )}
       </div>
     );
   }
@@ -278,7 +347,24 @@ export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
       <div className="timeline-inner">
         <div className="timeline-date"><span>Recorded session</span></div>
         <div className="timeline-events" aria-live="polite" aria-relevant="additions text">
-          {renderEntries(entries)}
+          {virtualized ? (
+            <div className="timeline-virtual-space" style={{ height: virtualizer.getTotalSize() }}>
+              {virtualizer.getVirtualItems().map((item) => {
+                const row = rows[item.index]!;
+                return (
+                  <div
+                    className="timeline-virtual-row"
+                    data-index={item.index}
+                    key={row.key}
+                    ref={virtualizer.measureElement}
+                    style={{ transform: `translateY(${item.start}px)` }}
+                  >
+                    <TimelineRowView row={row} />
+                  </div>
+                );
+              })}
+            </div>
+          ) : rows.map((row) => <TimelineRowView key={row.key} row={row} />)}
         </div>
         {showWorkingStatus && (
           <div className="working-status" role="status" aria-live="polite">
@@ -289,4 +375,4 @@ export function Timeline({ session, entries, onSuggestion }: TimelineProps) {
       </div>
     </div>
   );
-}
+});

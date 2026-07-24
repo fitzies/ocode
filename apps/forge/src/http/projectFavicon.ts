@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { open, realpath } from "node:fs/promises";
+import { glob, open, realpath } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 
 const MAX_FAVICON_BYTES = 5 * 1024 * 1024;
@@ -104,14 +104,7 @@ async function expoIconPath(root: string): Promise<string | null> {
   return null;
 }
 
-export async function resolveProjectFavicon(projectPath: string): Promise<ResolvedProjectFavicon | null> {
-  let root: string;
-  try {
-    root = await realpath(projectPath);
-  } catch {
-    return null;
-  }
-
+async function resolveAtRoot(root: string): Promise<ResolvedProjectFavicon | null> {
   const expoIcon = await expoIconPath(root);
   if (expoIcon) {
     const icon = await existingIcon(root, expoIcon);
@@ -130,6 +123,67 @@ export async function resolveProjectFavicon(projectPath: string): Promise<Resolv
     if (!href) continue;
     const cleanHref = href.replace(/^\//, "");
     const icon = await existingIcon(root, `public/${cleanHref}`) ?? await existingIcon(root, cleanHref);
+    if (icon) return icon;
+  }
+  return null;
+}
+
+async function workspacePatterns(root: string): Promise<string[]> {
+  const patterns: string[] = [];
+  const packageJson = await readWorkspaceText(root, "package.json");
+  if (packageJson) {
+    try {
+      const value = JSON.parse(packageJson) as { workspaces?: unknown };
+      const configured = Array.isArray(value.workspaces)
+        ? value.workspaces
+        : value.workspaces && typeof value.workspaces === "object"
+          ? (value.workspaces as { packages?: unknown }).packages
+          : undefined;
+      if (Array.isArray(configured)) patterns.push(...configured.filter((item): item is string => typeof item === "string"));
+    } catch { /* Other workspace manifests may still be available. */ }
+  }
+
+  const pnpmWorkspace = await readWorkspaceText(root, "pnpm-workspace.yaml");
+  if (pnpmWorkspace) {
+    for (const match of pnpmWorkspace.matchAll(/^\s*-\s*["']?([^"'#\s]+)["']?\s*$/gm)) {
+      if (match[1]) patterns.push(match[1]);
+    }
+  }
+  if (patterns.length === 0) patterns.push("apps/*");
+  return [...new Set(patterns)].filter((pattern) => !pattern.startsWith("!") && !pattern.startsWith("/") && !pattern.split(/[\\/]/).includes(".."));
+}
+
+async function workspaceRoots(root: string): Promise<string[]> {
+  const roots: string[] = [];
+  for (const pattern of await workspacePatterns(root)) {
+    try {
+      for await (const relativePath of glob(pattern, { cwd: root })) {
+        if (roots.length >= 100) return roots;
+        let canonical: string;
+        try {
+          canonical = await realpath(resolve(root, relativePath));
+        } catch {
+          continue;
+        }
+        if (canonical !== root && inside(root, canonical) && !roots.includes(canonical)) roots.push(canonical);
+      }
+    } catch { /* Ignore unsupported or malformed repository glob patterns. */ }
+  }
+  return roots;
+}
+
+export async function resolveProjectFavicon(projectPath: string): Promise<ResolvedProjectFavicon | null> {
+  let root: string;
+  try {
+    root = await realpath(projectPath);
+  } catch {
+    return null;
+  }
+
+  const rootIcon = await resolveAtRoot(root);
+  if (rootIcon) return rootIcon;
+  for (const workspaceRoot of await workspaceRoots(root)) {
+    const icon = await resolveAtRoot(workspaceRoot);
     if (icon) return icon;
   }
   return null;

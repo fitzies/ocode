@@ -89,7 +89,14 @@
 
 .timeline-date span { padding: 0 12px; }
 
-.content-blocks { display: grid; gap: 10px; }
+.content-blocks {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+.content-blocks > *,
+.text-block,
+.markdown-body { min-width: 0; }
 .text-block {
   color: var(--legacy-text);
   font-size: 13px;
@@ -156,7 +163,24 @@
 }
 .markdown-body pre code { padding: 0; color: inherit; font-size: inherit; background: none; border: 0; border-radius: 0; }
 .markdown-body hr { height: 1px; margin: 1.25em 0; background: var(--border); border: 0; }
-.markdown-body table { display: block; width: max-content; max-width: 100%; margin: 0 0 0.95em; overflow-x: auto; border-spacing: 0; border-collapse: collapse; }
+.markdown-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 0 0.95em;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  overscroll-behavior-x: contain;
+}
+.markdown-table-scroll:focus-visible {
+  outline: 1px solid var(--border-strong);
+  outline-offset: 2px;
+}
+.markdown-body table {
+  width: max-content;
+  min-width: 100%;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
 .markdown-body th,
 .markdown-body td { padding: 6px 9px; text-align: left; border: 1px solid var(--border); }
 .markdown-body th { color: var(--legacy-text-high); font-weight: 600; background: color-mix(in oklab, var(--foreground) 3.5%, transparent); }

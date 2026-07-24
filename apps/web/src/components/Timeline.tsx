@@ -112,6 +112,11 @@ function JsonDetails({ label, value }: { label: string; value?: JsonValue }) {
 
 const MARKDOWN_COMPONENTS: Components = {
   a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+  table: ({ node: _node, ...props }) => (
+    <div className="markdown-table-scroll" role="region" aria-label="Scrollable table" tabIndex={0}>
+      <table {...props} />
+    </div>
+  ),
 };
 
 const MarkdownText = memo(function MarkdownText({

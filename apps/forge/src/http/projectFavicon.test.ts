@@ -42,6 +42,18 @@ describe("resolveProjectFavicon", () => {
     });
   });
 
+  it("discovers an icon in a monorepo application workspace", async () => {
+    const root = await temporaryDirectory("anvil-monorepo-icon-");
+    await mkdir(join(root, "apps", "web", "public"), { recursive: true });
+    await writeFile(join(root, "pnpm-workspace.yaml"), "packages:\n  - apps/*\n  - packages/*\n");
+    await writeFile(join(root, "apps", "web", "public", "favicon.svg"), "<svg>web</svg>");
+
+    await expect(resolveProjectFavicon(root)).resolves.toMatchObject({
+      body: Buffer.from("<svg>web</svg>"),
+      mediaType: "image/svg+xml",
+    });
+  });
+
   it("resolves icon links and rejects icons outside the workspace", async () => {
     const root = await temporaryDirectory("anvil-linked-icon-");
     const outside = await temporaryDirectory("anvil-outside-icon-");

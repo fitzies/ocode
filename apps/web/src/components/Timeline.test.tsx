@@ -50,6 +50,29 @@ describe("Timeline markdown", () => {
     expect(html).not.toContain("**Phase 3 goal:**");
   });
 
+  it("wraps GFM tables in a bounded horizontal scroller", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          content: [{
+            id: "table-1",
+            type: "text",
+            text: "| A very wide column | Another wide column |\n| --- | --- |\n| First value | Second value |",
+          }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="markdown-table-scroll"');
+    expect(html).toContain('role="region"');
+    expect(html).toContain('aria-label="Scrollable table"');
+    expect(html).toContain("<table>");
+    expect(html).toContain("<th>A very wide column</th>");
+  });
+
   it("renders externalized content as an artifact download", () => {
     const html = renderToStaticMarkup(
       <Timeline

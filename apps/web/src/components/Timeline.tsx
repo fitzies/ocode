@@ -295,6 +295,7 @@ function TimelineRowView({ row }: { row: TimelineRow }) {
 
 export const Timeline = memo(function Timeline({ session, entries, loading = false }: TimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const shouldStickToBottom = useRef(true);
   const rows = useMemo(() => timelineRows(entries), [entries]);
   const virtualized = rows.length > 100;
@@ -318,8 +319,38 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
 
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
-    if (scroller && shouldStickToBottom.current) scroller.scrollTop = scroller.scrollHeight;
-  }, [entries, session.status]);
+    if (!scroller || !shouldStickToBottom.current) return;
+
+    if (virtualized && rows.length > 0) {
+      virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
+    }
+    scroller.scrollTop = scroller.scrollHeight;
+
+    const frame = requestAnimationFrame(() => {
+      if (shouldStickToBottom.current) scroller.scrollTop = scroller.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [entries, rows.length, session.status, virtualized, virtualizer]);
+
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    const content = contentRef.current;
+    if (!scroller || !content || typeof ResizeObserver === "undefined") return;
+
+    let frame: number | undefined;
+    const observer = new ResizeObserver(() => {
+      if (!shouldStickToBottom.current) return;
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (shouldStickToBottom.current) scroller.scrollTop = scroller.scrollHeight;
+      });
+    });
+    observer.observe(content);
+    return () => {
+      observer.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+  }, []);
 
   const trackScrollPosition = () => {
     const scroller = scrollRef.current;
@@ -344,7 +375,7 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
 
   return (
     <div ref={scrollRef} className="timeline" onScroll={trackScrollPosition}>
-      <div className="timeline-inner">
+      <div ref={contentRef} className="timeline-inner">
         <div className="timeline-date"><span>Recorded session</span></div>
         <div className="timeline-events" aria-live="polite" aria-relevant="additions text">
           {virtualized ? (

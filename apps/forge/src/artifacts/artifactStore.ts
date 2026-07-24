@@ -195,7 +195,7 @@ export class ArtifactStore {
       typeof record.data === "string"
     ) {
       const bytes = Buffer.from(record.data, "base64");
-      if (bytes.length > this.inlineBytes) {
+      if (bytes.length > this.inlineBytes || Buffer.byteLength(record.data, "utf8") > this.inlineBytes) {
         const name = typeof record.name === "string" ? record.name : "image";
         const artifact = this.write(sessionId, bytes, record.mimeType, name, artifacts, writtenIds);
         const transformed: Record<string, unknown> = { ...record, url: artifact.url };

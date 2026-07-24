@@ -60,6 +60,10 @@
   white-space: nowrap;
 }
 
+.session-heading-repo {
+  color: var(--text-secondary);
+}
+
 .header-run-state {
   position: relative;
   display: inline-flex;

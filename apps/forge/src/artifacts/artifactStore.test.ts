@@ -2,7 +2,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ArtifactContentBlock, ArtifactReference, SessionSummary } from "@anvil/protocol";
+import { createPiRpcAdapterState, normalizePiRpcRecord } from "@anvil/pi-rpc";
+import { ANVIL_PROTOCOL_VERSION, isAnvilEvent, type ArtifactContentBlock, type ArtifactReference, type SessionSummary } from "@anvil/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ForgeEventService } from "../events/eventService.ts";
@@ -15,6 +16,29 @@ afterEach(() => {
 });
 
 describe("ArtifactStore", () => {
+  it("keeps normalized image messages valid when externalizing inline data", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-artifacts-"));
+    directories.push(directory);
+    const state = createPiRpcAdapterState({
+      sessionId: "session-1",
+      fixtureId: "image-message",
+      baseTimestamp: "2026-07-24T00:00:00.000Z",
+    });
+    const [event] = normalizePiRpcRecord(state, {
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [
+          { type: "text", text: "Review this image" },
+          { type: "image", data: "a".repeat(301_776), mimeType: "image/png" },
+        ],
+      },
+    }, 0);
+    const [prepared] = new ArtifactStore(directory).externalize([event!]).events;
+
+    expect(isAnvilEvent({ ...prepared, protocolVersion: ANVIL_PROTOCOL_VERSION, id: "event-1", sequence: 1 })).toBe(true);
+  });
+
   it("externalizes oversized tool output and raw records before journaling", () => {
     const directory = mkdtempSync(join(tmpdir(), "anvil-artifacts-"));
     directories.push(directory);

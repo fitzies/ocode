@@ -230,15 +230,14 @@ button:disabled {
 
 .sidebar-brand {
   display: flex;
-  min-height: 63px;
-  align-items: flex-start;
-  padding: 18px 15px 0 17px;
+  min-height: 52px;
+  align-items: center;
+  padding: 0 15px 0 11px;
 }
 
 .brand-lockup {
   display: flex;
   align-items: center;
-  gap: 7px;
 }
 
 .brand-name {
@@ -248,20 +247,8 @@ button:disabled {
   letter-spacing: -0.01em;
 }
 
-.brand-divider {
-  color: #3f3f3f;
-  font-size: 12px;
-}
-
-.brand-environment {
-  color: #898a82;
-  font-size: 12px;
-  font-weight: 450;
-}
-
 .sidebar-close {
-  display: none;
-  margin-left: auto;
+  margin-right: 4px;
 }
 
 .thread-search {

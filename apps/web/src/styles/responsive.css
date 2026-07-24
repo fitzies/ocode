@@ -59,11 +59,13 @@
 
 @media (max-width: 900px) {
   .sidebar {
-    position: absolute;
+    position: fixed;
     top: 0;
     bottom: 0;
     left: 0;
-    width: 282px;
+    width: min(282px, 100dvw);
+    max-width: 100dvw;
+    overflow-x: hidden;
     transform: translateX(-102%);
     transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
   }
@@ -71,6 +73,25 @@
   .sidebar--open {
     transform: translateX(0);
     box-shadow: 18px 0 50px rgba(0, 0, 0, 0.3);
+  }
+
+  .sidebar-scroll {
+    overflow-x: hidden;
+  }
+
+  .session-settle {
+    display: none;
+  }
+
+  .session-recency,
+  .session-item:hover .session-recency,
+  .session-item:focus-within .session-recency,
+  .session-row--active .session-recency {
+    opacity: 1;
+  }
+
+  .session-item--settled .session-row {
+    padding-right: 42px;
   }
 
   .sidebar-close,

@@ -1244,7 +1244,11 @@ export class ForgeAnvilClient implements AnvilClient {
       },
       body: file,
     });
-    if (!response.ok) throw new Error(`Attachment upload failed with HTTP ${response.status}`);
+    if (!response.ok) {
+      const error = await response.json().catch(() => undefined) as { message?: unknown } | undefined;
+      const detail = typeof error?.message === "string" ? `: ${error.message}` : "";
+      throw new Error(`Attachment upload failed with HTTP ${response.status}${detail}`);
+    }
     return await response.json() as ArtifactReference;
   };
 

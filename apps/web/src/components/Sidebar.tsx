@@ -3,7 +3,7 @@ import type { AnvilClientSnapshot } from "../lib/anvilClient";
 import { sortSessionsByActivity } from "@anvil/state";
 import { memo, useEffect, useRef, useState } from "react";
 import { Icon } from "@iconify/react";
-import closeCircleIcon from "@iconify-icons/solar/close-circle-linear";
+import hamburgerMenuIcon from "@iconify-icons/solar/hamburger-menu-linear";
 import searchIcon from "@iconify-icons/solar/magnifer-linear";
 
 export type SidebarSnapshot = Pick<
@@ -198,14 +198,14 @@ export const Sidebar = memo(function Sidebar({
         >
           <span className="session-copy">
             <span className="session-project-line">
-              <span className="session-project">{project?.name ?? "Unknown"}</span>
+              <span className="session-project">{project?.name.toLowerCase() ?? "unknown"}</span>
               <span className={`session-runtime session-runtime--${session.status}`}>
                 {session.status === "running" ? "Working" : session.status === "waiting" ? "Needs you" : session.status === "failed" ? "Failed" : "Idle"}
               </span>
             </span>
             <span className="session-title" title={displayTitle}>{displayTitle}</span>
             <span className="session-meta">
-              <span className="session-context-copy" title={`${project?.name ?? "Unknown"}/${branch}`}>{project?.name ?? "Unknown"}/{branch}</span>
+              <span className="session-context-copy" title={`${project?.name.toLowerCase() ?? "unknown"}/${branch}`}>{project?.name.toLowerCase() ?? "unknown"}/{branch}</span>
               <span className="session-recency">
                 <StatusMark status={session.status} completedUnviewed={completedUnviewed} />
                 <span>{completedUnviewed ? "Completed" : formatUpdatedAt(session.updatedAt)}</span>
@@ -236,19 +236,17 @@ export const Sidebar = memo(function Sidebar({
       inert={mobile && !open ? true : undefined}
     >
       <div className="sidebar-brand">
-        <div className="brand-lockup">
-          <span className="brand-name">Anvil</span>
-          <span className="brand-divider">/</span>
-          <span className="brand-environment">Pi</span>
-        </div>
         <button
           className="icon-button sidebar-close"
           onClick={onClose}
           aria-label="Close sidebar"
           autoFocus={mobile && open}
         >
-          <Icon icon={closeCircleIcon} width={18} />
+          <Icon icon={hamburgerMenuIcon} width={18} />
         </button>
+        <div className="brand-lockup">
+          <span className="brand-name">Anvil</span>
+        </div>
       </div>
 
       <div className="sidebar-search-row">
@@ -294,7 +292,7 @@ export const Sidebar = memo(function Sidebar({
                     onClose();
                   }}
                 >
-                  {project.name}
+                  {project.name.toLowerCase()}
                 </button>
               ))}
               {snapshot.projects.length === 0 && <span>Add a project first</span>}
@@ -317,7 +315,7 @@ export const Sidebar = memo(function Sidebar({
               }}
               title={project.path}
             >
-              {project.name}
+              {project.name.toLowerCase()}
             </button>
           ))}
           <button type="button" className="project-filter-add" onClick={onAddWorkspace} aria-label="Add workspace" title="Add workspace">+</button>

@@ -1,6 +1,5 @@
 import type { ArtifactReference, CapabilityCatalog } from "@anvil/protocol";
 import { Icon } from "@iconify/react";
-import branchingPathsIcon from "@iconify-icons/solar/branching-paths-down-linear";
 import forgeServerIcon from "@iconify-icons/solar/server-square-cloud-bold-duotone";
 import hamburgerMenuIcon from "@iconify-icons/solar/hamburger-menu-linear";
 import settingsIcon from "@iconify-icons/solar/settings-minimalistic-linear";
@@ -399,19 +398,11 @@ export function AppShell() {
               <Icon icon={hamburgerMenuIcon} width={18} />
             </button>
             <div className="session-heading">
-              <div className="session-heading-row">
-                <h1>{activeSession?.title ?? "No thread selected"}</h1>
-                {activeSession && (
-                  <span className={`header-run-state header-run-state--${activeSession.status}`}>
-                    {activeSessionCreationError ? "Failed" : activeSessionPending ? "Starting" : activeSession.status === "running" ? "Running" : activeSession.status === "waiting" ? "Waiting" : activeSession.status === "failed" ? "Failed" : "Ready"}
-                  </span>
-                )}
-              </div>
-              {activeSession && (
-                <div className="session-context">
-                  <span>{activeProject?.name}</span><span className="context-separator">/</span><Icon icon={branchingPathsIcon} width={12} /><span>{activeSession.branch ?? "main"}</span>
-                </div>
-              )}
+              <h1>
+                {activeSession ? (
+                  <><span className="session-heading-repo">{activeProject?.name.toLowerCase() ?? "unknown"}</span> / {activeSession.title}</>
+                ) : "No thread selected"}
+              </h1>
             </div>
           </div>
 

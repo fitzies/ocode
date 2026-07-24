@@ -17,6 +17,7 @@ import paperclipIcon from "@iconify-icons/solar/paperclip-linear";
 import closeCircleIcon from "@iconify-icons/solar/close-circle-linear";
 import stopIcon from "@iconify-icons/solar/stop-bold";
 import {
+  type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
   useEffect,
@@ -170,6 +171,15 @@ function formatAttachmentSize(bytes: number): string {
   if (bytes < 1_024) return `${bytes} B`;
   if (bytes < 1_024 * 1_024) return `${Math.round(bytes / 1_024)} KB`;
   return `${(bytes / (1_024 * 1_024)).toFixed(1)} MB`;
+}
+
+function namePastedFile(file: File, index: number): File {
+  if (file.name.trim()) return file;
+  const extension = file.type.split("/", 2)[1]?.replace("jpeg", "jpg").replace(/[^a-z0-9.+-]/gi, "") || "bin";
+  return new File([file], `pasted-attachment-${index + 1}.${extension}`, {
+    type: file.type || "application/octet-stream",
+    lastModified: file.lastModified,
+  });
 }
 
 function Widget({ widget }: { widget: ExtensionWidget }) {
@@ -379,6 +389,14 @@ export function Composer({
     setCursorPosition(0);
   };
 
+  const onPaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.files, namePastedFile);
+    if (!files.length) return;
+
+    event.preventDefault();
+    onAttachFiles(sessionId, files);
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (fileMention && fileItems.length && !fileMenuDismissed) {
       if (event.key === "ArrowDown") {
@@ -513,7 +531,7 @@ export function Composer({
             {attachments.map((attachment) => (
               <span className={`composer-attachment composer-attachment--${attachment.status}`} key={attachment.id} title={attachment.error}>
                 <Icon icon={paperclipIcon} width={13} />
-                <span><strong>{attachment.name}</strong><small>{attachment.status === "uploading" ? "Uploading…" : attachment.status === "failed" ? "Upload failed" : formatAttachmentSize(attachment.size)}</small></span>
+                <span><strong>{attachment.name}</strong><small>{attachment.status === "uploading" ? "Uploading…" : attachment.status === "failed" ? attachment.error ?? "Upload failed" : formatAttachmentSize(attachment.size)}</small></span>
                 <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => onRemoveAttachment(sessionId, attachment.id)}><Icon icon={closeCircleIcon} width={14} /></button>
               </span>
             ))}
@@ -530,6 +548,7 @@ export function Composer({
           onSelect={(event) => setCursorPosition(event.currentTarget.selectionStart)}
           onClick={(event) => setCursorPosition(event.currentTarget.selectionStart)}
           onKeyUp={(event) => setCursorPosition(event.currentTarget.selectionStart)}
+          onPaste={onPaste}
           onKeyDown={onKeyDown}
           placeholder={running ? "Steer Pi…" : "Message Pi…"}
           aria-label="Message Pi"

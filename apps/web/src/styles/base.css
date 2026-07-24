@@ -529,20 +529,15 @@ button:disabled {
   height: 68px;
   padding: 9px 10px;
   text-align: left;
-  background: color-mix(in oklab, var(--foreground) 1.8%, transparent);
-  border: 1px solid color-mix(in oklab, var(--foreground) 5.2%, transparent);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 8px;
   cursor: pointer;
-  transition: background 110ms ease, border-color 110ms ease, transform 110ms ease;
+  transition: background 110ms ease, transform 110ms ease;
 }
 
 .session-row::before {
   display: none;
-}
-
-.session-row:hover {
-  background: color-mix(in oklab, var(--foreground) 3.6%, transparent);
-  border-color: color-mix(in oklab, var(--foreground) 8.5%, transparent);
 }
 
 .session-row:active {
@@ -550,14 +545,13 @@ button:disabled {
 }
 
 .session-row:focus-visible {
-  border-color: color-mix(in oklab, var(--foreground) 34%, transparent);
-  outline: 0;
+  outline: 1px solid color-mix(in oklab, var(--foreground) 34%, transparent);
+  outline-offset: -1px;
 }
 
 .session-row--active,
 .session-row--active:hover {
   background: var(--accent);
-  border-color: color-mix(in oklab, var(--foreground) 14%, transparent);
 }
 
 .session-copy {

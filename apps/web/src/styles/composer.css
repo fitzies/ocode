@@ -102,6 +102,7 @@
   background: color-mix(in oklab, var(--foreground) 3.5%, transparent);
   border: 1px solid color-mix(in oklab, var(--foreground) 8.5%, transparent);
   border-radius: 7px;
+  transition: opacity 120ms ease, border-color 120ms ease, background-color 120ms ease;
 }
 
 .composer-attachment > svg { color: var(--legacy-text-low); }

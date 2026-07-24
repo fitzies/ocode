@@ -8,18 +8,28 @@ import type {
 } from "@anvil/protocol";
 import {
   AlertCircleIcon,
+  ArrowDown01Icon,
   ArrowRight01Icon,
+  ArtificialIntelligence02Icon,
+  BrowserIcon,
   CheckmarkCircle02Icon,
   CommandIcon,
+  File01Icon,
+  FileEditIcon,
+  GitBranchIcon,
+  Globe02Icon,
   HelpCircleIcon,
+  Image02Icon,
   InformationCircleIcon,
   Loading03Icon,
+  Search01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { presentTool, type ToolCategory } from "./toolPresentation";
 
 interface TimelineProps {
   session: SessionSummary;
@@ -165,20 +175,42 @@ function ContentBlocks({ blocks, compact = false }: { blocks: ContentBlock[]; co
 
 function ToolStatus({ entry }: { entry: ToolEntry }) {
   if (entry.status === "running" || entry.status === "queued") {
-    return <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="spin size-3.5" aria-label="Running" />;
+    return <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="spin size-3.5" aria-label={entry.status === "queued" ? "Queued" : "Running"} />;
   }
   if (entry.status === "failed") return <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} className="size-3.5" aria-label="Failed" />;
   if (entry.status === "cancelled") return <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} className="size-3.5" aria-label="Cancelled" />;
   return <HugeiconsIcon icon={CheckmarkCircle02Icon} strokeWidth={2} className="size-3.5" aria-label="Completed" />;
 }
 
-function TimelineItem({ entry }: { entry: TimelineEntry }) {
+function ToolGlyph({ category }: { category: ToolCategory }) {
+  const icon = category === "file" ? File01Icon
+    : category === "edit" ? FileEditIcon
+      : category === "search" ? Search01Icon
+        : category === "browser" ? BrowserIcon
+          : category === "agent" ? ArtificialIntelligence02Icon
+            : category === "image" ? Image02Icon
+              : category === "git" ? GitBranchIcon
+                : category === "parallel" ? Globe02Icon
+                  : CommandIcon;
+  return <HugeiconsIcon icon={icon} strokeWidth={2} className="size-3.5" />;
+}
+
+function firstTextOutput(entry: ToolEntry): string | undefined {
+  const block = entry.output.find((candidate) => candidate.type === "text" && candidate.text.trim());
+  if (block?.type !== "text") return undefined;
+  const text = block.text.replace(/\s+/g, " ").trim();
+  return text.length > 120 ? `${text.slice(0, 119)}…` : text;
+}
+
+function TimelineItem({ entry, entering = false }: { entry: TimelineEntry; entering?: boolean }) {
+  const entranceClass = entering ? " timeline-entry--entering" : "";
+  const reasoningStartedEmpty = useRef(entry.kind === "reasoning" && !entry.content).current;
   if (entry.kind === "message") {
     const visibleContent = entry.content.filter((block) => block.type !== "toolCall");
     if (!visibleContent.length && !entry.error && entry.status !== "streaming") return null;
     const messageClass = entry.role === "user" ? "user-message" : entry.role === "assistant" ? "assistant-message" : "system-message";
     return (
-      <article className={`${messageClass} message-status--${entry.status}`}>
+      <article className={`${messageClass} message-status--${entry.status}${entranceClass}`}>
         <ContentBlocks blocks={visibleContent} />
         {entry.status === "streaming" && entry.role === "user" && entry.id.startsWith("optimistic-")
           ? <span className="message-pending" role="status">Sending…</span>
@@ -190,37 +222,45 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
   }
 
   if (entry.kind === "reasoning") {
+    const revealReasoning = reasoningStartedEmpty && Boolean(entry.content);
     return (
-      <div className={`thinking-event thinking-event--${entry.status}`}>
+      <div className={`thinking-event thinking-event--${entry.status}${entranceClass}`}>
         <span className="thinking-label">Thinking:</span>
-        <MarkdownText className="thinking-markdown markdown-body">
-          {entry.content || "Getting started…"}
-        </MarkdownText>
+        <span className={`thinking-content${revealReasoning ? " thinking-content--revealing" : ""}`}>
+          {(!entry.content || revealReasoning) && (
+            <span className="thinking-placeholder" aria-hidden={revealReasoning || undefined}>Getting started…</span>
+          )}
+          {entry.content && (
+            <MarkdownText className="thinking-markdown markdown-body">{entry.content}</MarkdownText>
+          )}
+        </span>
         {entry.status === "cancelled" && <span className="event-state-label">cancelled</span>}
       </div>
     );
   }
 
   if (entry.kind === "tool") {
-    const failureBlock = entry.status === "failed"
-      ? entry.output.find((block) => block.type === "text" && block.text.trim())
-      : undefined;
-    const failureText = failureBlock?.type === "text" ? failureBlock.text : undefined;
+    const presentation = presentTool(entry);
+    const failureText = entry.status === "failed" ? firstTextOutput(entry) : undefined;
+    const summaryDetail = failureText && presentation.category === "generic"
+      ? `${entry.name} · ${failureText}`
+      : failureText ?? presentation.detail;
     return (
-      <details className={`tool-event tool-event--${entry.status}`}>
+      <details className={`tool-event tool-event--${entry.status} tool-event--${presentation.category}${entranceClass}`}>
         <summary>
-          <span className="tool-icon"><HugeiconsIcon icon={CommandIcon} strokeWidth={2} className="size-3.5" /></span>
+          <span className="tool-icon"><ToolGlyph category={presentation.category} /></span>
           <span className="tool-main">
-            <strong>{entry.summary}</strong>
-            <span className={failureText ? "tool-failure-summary" : undefined}>
-              {failureText ?? `${entry.name} · ${entry.toolCallId}`}
+            <strong>{presentation.title}</strong>
+            <span className={failureText ? "tool-failure-summary" : undefined} title={failureText}>
+              {summaryDetail}
             </span>
           </span>
+          <span className="tool-status-copy" aria-hidden="true">{presentation.status}</span>
           <span className="tool-status"><ToolStatus entry={entry} /></span>
           <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
         </summary>
         <div className="tool-detail">
-          {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">Output</span><ContentBlocks blocks={entry.output} compact /></section>}
+          {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact /></section>}
           <JsonDetails label="Arguments" value={entry.arguments} />
           <JsonDetails label="Details" value={entry.details} />
           <JsonDetails label="Raw RPC event" value={entry.raw} />
@@ -231,7 +271,7 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
 
   if (entry.kind === "interaction") {
     return (
-      <article className={`interaction-event interaction-event--${entry.status}`}>
+      <article className={`interaction-event interaction-event--${entry.status}${entranceClass}`}>
         <span className="interaction-icon"><HugeiconsIcon icon={HelpCircleIcon} strokeWidth={2} className="size-4" /></span>
         <span className="interaction-copy">
           <strong>{entry.title}</strong>
@@ -244,7 +284,7 @@ function TimelineItem({ entry }: { entry: TimelineEntry }) {
   }
 
   return (
-    <article className={`system-event system-event--${entry.tone}`}>
+    <article className={`system-event system-event--${entry.tone}${entranceClass}`}>
       <span className="system-event-icon"><HugeiconsIcon icon={entry.tone === "error" ? AlertCircleIcon : InformationCircleIcon} strokeWidth={2} className="size-4" /></span>
       <span className="system-event-copy">
         <strong>{entry.title}</strong>
@@ -286,14 +326,39 @@ function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   return rows;
 }
 
-function TimelineRowView({ row }: { row: TimelineRow }) {
-  if (row.kind === "entry") return <TimelineItem entry={row.entry} />;
+function TimelineRowView({ row, entering = false }: { row: TimelineRow; entering?: boolean }) {
+  const animateEntrance = useRef(entering).current;
+  if (row.kind === "entry") return <TimelineItem entry={row.entry} entering={animateEntrance} />;
+  const completed = row.tools.filter((tool) => tool.status === "completed").length;
   const running = row.tools.filter((tool) => tool.status === "running").length;
+  const queued = row.tools.filter((tool) => tool.status === "queued").length;
+  const failed = row.tools.filter((tool) => tool.status === "failed").length;
+  const cancelled = row.tools.filter((tool) => tool.status === "cancelled").length;
+  const settled = completed + failed + cancelled;
+  const batchStatus = running || queued
+    ? [
+        `${settled}/${row.tools.length} settled`,
+        running ? `${running} running` : undefined,
+        queued ? `${queued} queued` : undefined,
+        failed ? `${failed} failed` : undefined,
+        cancelled ? `${cancelled} cancelled` : undefined,
+      ].filter(Boolean).join(" · ")
+    : failed || cancelled
+      ? [
+          completed ? `${completed} complete` : undefined,
+          failed ? `${failed} failed` : undefined,
+          cancelled ? `${cancelled} cancelled` : undefined,
+        ].filter(Boolean).join(" · ")
+      : `${completed}/${row.tools.length} complete`;
   return (
-    <section className="tool-batch" aria-label={`${row.tools.length} parallel tools`}>
+    <section className={`tool-batch${failed || cancelled ? " tool-batch--has-errors" : ""}${animateEntrance ? " timeline-entry--entering" : ""}`} aria-label={`${row.tools.length} parallel tools`}>
       <div className="tool-batch-label">
-        <span>{row.tools.length} parallel tools</span>
-        <small>{running ? `${running} running` : "settled"}</small>
+        <span><strong>Parallel work</strong><small>{row.tools.length} tools</small></span>
+        <small>{batchStatus}</small>
+      </div>
+      <div className="tool-batch-progress" aria-hidden="true">
+        <span className="tool-batch-progress-complete" style={{ width: `${(completed / row.tools.length) * 100}%` }} />
+        <span className="tool-batch-progress-error" style={{ width: `${((failed + cancelled) / row.tools.length) * 100}%` }} />
       </div>
       {row.tools.map((tool) => <TimelineItem key={tool.id} entry={tool} />)}
     </section>
@@ -303,8 +368,21 @@ function TimelineRowView({ row }: { row: TimelineRow }) {
 export const Timeline = memo(function Timeline({ session, entries, loading = false }: TimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const shouldStickToBottom = useRef(true);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollFrame = useRef<number | undefined>(undefined);
+  const followingRef = useRef(true);
+  const [following, setFollowing] = useState(true);
   const rows = useMemo(() => timelineRows(entries), [entries]);
+  const seenRowKeys = useRef<Set<string> | null>(null);
+  if (seenRowKeys.current === null) seenRowKeys.current = new Set(rows.map((row) => row.key));
+  const enteringRowKeys = new Set(rows.filter((row) => {
+    if (seenRowKeys.current!.has(row.key)) return false;
+    // The optimistic user row already supplied the visual acknowledgement; do not flash again on server reconciliation.
+    return row.kind !== "entry" || row.entry.kind !== "message" || row.entry.role !== "user" || row.entry.id.startsWith("optimistic-");
+  }).map((row) => row.key));
+  useLayoutEffect(() => {
+    for (const row of rows) seenRowKeys.current!.add(row.key);
+  }, [rows]);
   const virtualized = rows.length > 100;
   const virtualizer = useVirtualizer({
     count: virtualized ? rows.length : 0,
@@ -313,6 +391,8 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
     getItemKey: (index) => rows[index]?.key ?? index,
     overscan: 8,
   });
+  // The CSS bottom anchor owns follow behavior; virtual measurements must not issue competing scroll corrections.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
   const activeTool = entries.some((entry) => entry.kind === "tool" && (entry.status === "running" || entry.status === "queued"));
   const streamingResponse = entries.some((entry) => (
     entry.kind === "message" &&
@@ -323,94 +403,142 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
   const lastUserMessage = [...entries].reverse().find((entry) => entry.kind === "message" && entry.role === "user");
   const showWorkingStatus = session.status === "running" && !activeTool && !streamingResponse;
   const statusMessage = workingMessage(`${session.id}:${lastUserMessage?.id ?? "start"}`);
+  const hasEntries = entries.length > 0;
 
-  useLayoutEffect(() => {
-    const scroller = scrollRef.current;
-    if (!scroller || !shouldStickToBottom.current) return;
-
-    if (virtualized && rows.length > 0) {
-      virtualizer.scrollToIndex(rows.length - 1, { align: "end" });
-    }
-    scroller.scrollTop = scroller.scrollHeight;
-
-    const frame = requestAnimationFrame(() => {
-      if (shouldStickToBottom.current) scroller.scrollTop = scroller.scrollHeight;
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [entries, rows.length, session.status, virtualized, virtualizer]);
-
-  useLayoutEffect(() => {
-    const scroller = scrollRef.current;
-    const content = contentRef.current;
-    if (!scroller || !content || typeof ResizeObserver === "undefined") return;
-
-    let frame: number | undefined;
-    const observer = new ResizeObserver(() => {
-      if (!shouldStickToBottom.current) return;
-      if (frame !== undefined) cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
-        if (shouldStickToBottom.current) scroller.scrollTop = scroller.scrollHeight;
-      });
-    });
-    observer.observe(content);
-    return () => {
-      observer.disconnect();
-      if (frame !== undefined) cancelAnimationFrame(frame);
-    };
+  const updateFollowing = useCallback((next: boolean) => {
+    if (followingRef.current === next) return;
+    followingRef.current = next;
+    setFollowing(next);
   }, []);
 
-  const trackScrollPosition = () => {
-    const scroller = scrollRef.current;
-    if (!scroller) return;
-    const distanceFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    shouldStickToBottom.current = distanceFromBottom < 96;
-  };
+  const scheduleScrollToLatest = useCallback(() => {
+    if (scrollFrame.current !== undefined) return;
+    scrollFrame.current = requestAnimationFrame(() => {
+      scrollFrame.current = undefined;
+      if (!followingRef.current) return;
+      bottomRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
+    });
+  }, []);
 
-  if (entries.length === 0) {
+  const followLatest = useCallback(() => {
+    updateFollowing(true);
+    scheduleScrollToLatest();
+  }, [scheduleScrollToLatest, updateFollowing]);
+
+  const previousUserMessageId = useRef(lastUserMessage?.id);
+  useLayoutEffect(() => {
+    const currentId = lastUserMessage?.id;
+    if (currentId !== previousUserMessageId.current && currentId?.startsWith("optimistic-")) {
+      followLatest();
+    }
+    previousUserMessageId.current = currentId;
+  }, [followLatest, lastUserMessage?.id]);
+
+  const previousRowCount = useRef(rows.length);
+  useLayoutEffect(() => {
+    if (!hasEntries) {
+      previousRowCount.current = 0;
+      updateFollowing(true);
+      return;
+    }
+    if (previousRowCount.current === 0 || rows.length > previousRowCount.current) {
+      scheduleScrollToLatest();
+    }
+    previousRowCount.current = rows.length;
+  }, [hasEntries, rows.length, scheduleScrollToLatest, updateFollowing]);
+
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    const bottom = bottomRef.current;
+    if (!hasEntries || !scroller || !bottom || typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver(([entry]) => {
+      updateFollowing(entry?.isIntersecting ?? false);
+    }, { root: scroller, threshold: 0 });
+    observer.observe(bottom);
+    scheduleScrollToLatest();
+    return () => observer.disconnect();
+  }, [hasEntries, scheduleScrollToLatest, updateFollowing]);
+
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const supportsScrollAnchoring = typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
+    if (!hasEntries || !content || supportsScrollAnchoring || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      if (followingRef.current) scheduleScrollToLatest();
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [hasEntries, scheduleScrollToLatest]);
+
+  useLayoutEffect(() => () => {
+    if (scrollFrame.current !== undefined) cancelAnimationFrame(scrollFrame.current);
+  }, []);
+
+  if (!hasEntries) {
     return (
-      <div ref={scrollRef} className="timeline timeline--empty" onScroll={trackScrollPosition}>
-        {loading ? (
-          <div role="status" aria-label="Loading thread">
-            <span className="forge-spinner" aria-hidden="true" />
-          </div>
-        ) : (
-          <h2>What should Pi work on?</h2>
-        )}
+      <div className="timeline-frame">
+        <div ref={scrollRef} className="timeline timeline--empty">
+          {loading ? (
+            <div role="status" aria-label="Loading thread">
+              <span className="forge-spinner" aria-hidden="true" />
+            </div>
+          ) : (
+            <h2>What should Pi work on?</h2>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div ref={scrollRef} className="timeline" onScroll={trackScrollPosition}>
-      <div ref={contentRef} className="timeline-inner">
-        <div className="timeline-date"><span>Recorded session</span></div>
-        <div className="timeline-events" aria-live="polite" aria-relevant="additions text">
-          {virtualized ? (
-            <div className="timeline-virtual-space" style={{ height: virtualizer.getTotalSize() }}>
-              {virtualizer.getVirtualItems().map((item) => {
-                const row = rows[item.index]!;
-                return (
-                  <div
-                    className="timeline-virtual-row"
-                    data-index={item.index}
-                    key={row.key}
-                    ref={virtualizer.measureElement}
-                    style={{ transform: `translateY(${item.start}px)` }}
-                  >
-                    <TimelineRowView row={row} />
-                  </div>
-                );
-              })}
-            </div>
-          ) : rows.map((row) => <TimelineRowView key={row.key} row={row} />)}
-        </div>
-        {showWorkingStatus && (
-          <div className="working-status" role="status" aria-live="polite">
-            <span className="thinking-ellipsis" aria-hidden="true"><i /><i /><i /></span>
-            <span>{statusMessage}</span>
+    <div className="timeline-frame">
+      <div
+        ref={scrollRef}
+        className={`timeline${following ? "" : " timeline--detached"}`}
+        onWheel={(event) => {
+          if (event.deltaY < 0) updateFollowing(false);
+        }}
+      >
+        <div ref={contentRef} className="timeline-inner">
+          <div className="timeline-date"><span>Recorded session</span></div>
+          <div className="timeline-events" aria-live="polite" aria-relevant="additions text">
+            {virtualized ? (
+              <div className="timeline-virtual-space" style={{ height: virtualizer.getTotalSize() }}>
+                {virtualizer.getVirtualItems().map((item) => {
+                  const row = rows[item.index]!;
+                  return (
+                    <div
+                      className="timeline-virtual-row"
+                      data-index={item.index}
+                      key={row.key}
+                      ref={virtualizer.measureElement}
+                      style={{ transform: `translateY(${item.start}px)` }}
+                    >
+                      <TimelineRowView row={row} entering={enteringRowKeys.has(row.key)} />
+                    </div>
+                  );
+                })}
+              </div>
+            ) : rows.map((row) => <TimelineRowView key={row.key} row={row} entering={enteringRowKeys.has(row.key)} />)}
           </div>
-        )}
+          {showWorkingStatus && (
+            <div className="working-status" role="status" aria-live="polite">
+              <span className="thinking-ellipsis" aria-hidden="true"><i /><i /><i /></span>
+              <span>{statusMessage}</span>
+            </div>
+          )}
+          <div className="timeline-follow-space" aria-hidden="true" />
+          <div ref={bottomRef} className="timeline-bottom-anchor" aria-hidden="true" />
+        </div>
       </div>
+      {!following && (
+        <button type="button" className="timeline-jump-latest" onClick={followLatest}>
+          <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className="size-3.5" />
+          Jump to latest
+        </button>
+      )}
     </div>
   );
 });

@@ -232,6 +232,11 @@
     margin-left: 12px;
   }
 
+  .tool-status-copy,
+  .tool-batch-label > small {
+    display: none;
+  }
+
   .composer-tools .model-picker:nth-of-type(2) {
     display: none;
   }

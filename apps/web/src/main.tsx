@@ -14,7 +14,7 @@ createRoot(document.getElementById("root")!).render(
     <ThemeProvider defaultTheme="system" storageKey="anvil-theme">
       <TooltipProvider delayDuration={350}>
         <RouterProvider router={router} />
-        <Toaster position="bottom-right" closeButton />
+        <Toaster position="bottom-right" />
       </TooltipProvider>
     </ThemeProvider>
   </StrictMode>,

@@ -8,7 +8,7 @@ import {
   Sun03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useTheme } from "@/components/theme-provider";
@@ -38,6 +38,8 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { anvilClient, type DeliveryMode } from "../lib/anvilClient";
+import { equalAppShellSnapshots, selectAppShellSnapshot } from "../lib/appShellSnapshot";
+import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
 import { InteractionPanel } from "./InteractionDialog";
 import { Sidebar } from "./Sidebar";
@@ -68,7 +70,12 @@ export function AppShell() {
 }
 
 function AppShellContent() {
-  const snapshot = useSyncExternalStore(anvilClient.subscribe, anvilClient.getSnapshot);
+  const snapshot = useExternalStoreSelector(
+    anvilClient.subscribe,
+    anvilClient.getSnapshot,
+    selectAppShellSnapshot,
+    equalAppShellSnapshots,
+  );
   const { isMobile, setOpenMobile } = useSidebar();
   const { theme, setTheme } = useTheme();
   const [newProjectId, setNewProjectId] = useState("");

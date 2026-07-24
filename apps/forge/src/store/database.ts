@@ -21,7 +21,9 @@ import {
 const sqliteModuleName = "node:sqlite";
 const { DatabaseSync } = await import(sqliteModuleName) as typeof import("node:sqlite");
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
+const RETAINED_EVENT_COUNT = 100_000;
+const MAX_COMPACTION_ROWS_PER_CHECKPOINT = 1_000;
 
 function parseJson(value: unknown): unknown {
   if (typeof value !== "string") throw new Error("Expected persisted JSON text");
@@ -201,7 +203,6 @@ export class ForgeDatabase {
       `).run(JSON.stringify({ eventType: "session.redacted", payload: null }), sessionId);
       const deleted = this.database.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
       if (Number(deleted.changes) !== 1) throw new Error("Session not found");
-      this.database.prepare("DELETE FROM snapshots").run();
       const [committed] = this.insertEvents([event]);
       if (!committed) throw new Error("Session deletion did not produce an event");
       this.database.exec("COMMIT");
@@ -422,22 +423,66 @@ export class ForgeDatabase {
     return Number(row.sequence);
   }
 
-  saveSnapshot(snapshot: AnvilSnapshot): void {
+  saveSnapshot(
+    snapshot: AnvilSnapshot,
+    retention: {
+      retainedEventCount?: number;
+      maxCompactionRows?: number;
+      discardPreviousSnapshots?: boolean;
+    } = {},
+  ): void {
     if (!isAnvilSnapshot(snapshot)) throw new Error("Cannot persist an invalid Anvil snapshot");
     if (snapshot.lastSequence > this.latestSequence()) {
       throw new Error("Snapshot cursor is ahead of the event journal");
     }
-    this.database.prepare(`
-      INSERT INTO snapshots (cursor, captured_at, snapshot_json)
-      VALUES (?, ?, ?)
-      ON CONFLICT(cursor) DO UPDATE SET
-        captured_at = excluded.captured_at,
-        snapshot_json = excluded.snapshot_json
-    `).run(snapshot.lastSequence, snapshot.capturedAt, JSON.stringify(snapshot));
-    this.database.prepare(`
-      DELETE FROM snapshots
-      WHERE cursor NOT IN (SELECT cursor FROM snapshots ORDER BY cursor DESC LIMIT 3)
-    `).run();
+
+    const previousCompactedThrough = this.compactedThrough();
+    const retainedEventCount = retention.retainedEventCount ?? RETAINED_EVENT_COUNT;
+    const maxCompactionRows = retention.maxCompactionRows ?? MAX_COMPACTION_ROWS_PER_CHECKPOINT;
+    const desiredCompactedThrough = Math.max(0, snapshot.lastSequence - retainedEventCount);
+    const compactedThrough = Math.min(
+      desiredCompactedThrough,
+      previousCompactedThrough + maxCompactionRows,
+    );
+
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.database.prepare(`
+        INSERT INTO snapshots (cursor, captured_at, snapshot_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(cursor) DO UPDATE SET
+          captured_at = excluded.captured_at,
+          snapshot_json = excluded.snapshot_json
+      `).run(snapshot.lastSequence, snapshot.capturedAt, JSON.stringify(snapshot));
+      if (retention.discardPreviousSnapshots) {
+        this.database.prepare("DELETE FROM snapshots WHERE cursor <> ?").run(snapshot.lastSequence);
+      } else {
+        this.database.prepare(`
+          DELETE FROM snapshots
+          WHERE cursor NOT IN (SELECT cursor FROM snapshots ORDER BY cursor DESC LIMIT 3)
+        `).run();
+      }
+      if (compactedThrough > previousCompactedThrough) {
+        this.database.prepare("DELETE FROM events WHERE sequence <= ?").run(compactedThrough);
+        this.database.prepare(`
+          INSERT INTO runtime_metadata (key, value)
+          VALUES ('compacted_through_sequence', ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        `).run(String(compactedThrough));
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  compactedThrough(): number {
+    const row = this.database.prepare(`
+      SELECT value FROM runtime_metadata WHERE key = 'compacted_through_sequence'
+    `).get() as { value?: unknown } | undefined;
+    const value = Number(row?.value ?? 0);
+    return Number.isSafeInteger(value) && value >= 0 ? value : 0;
   }
 
   latestSnapshot(): StoredSnapshot | undefined {
@@ -683,6 +728,18 @@ export class ForgeDatabase {
         BEGIN IMMEDIATE;
         ALTER TABLE sessions ADD COLUMN branch TEXT;
         PRAGMA user_version = 6;
+        COMMIT;
+      `);
+    }
+
+    if (version < 7) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE runtime_metadata (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL
+        );
+        PRAGMA user_version = 7;
         COMMIT;
       `);
     }

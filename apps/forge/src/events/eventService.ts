@@ -61,6 +61,43 @@ export class ForgeEventService extends EventEmitter {
     return structuredClone(this.snapshot);
   }
 
+  projectSummary(projectId: string): ProjectSummary | undefined {
+    const project = this.snapshot.projects.find((candidate) => candidate.id === projectId);
+    return project ? { ...project } : undefined;
+  }
+
+  sessionSummary(sessionId: string): SessionSummary | undefined {
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    return session ? { ...session } : undefined;
+  }
+
+  sessionSummariesForProject(projectId: string): SessionSummary[] {
+    return this.snapshot.sessions
+      .filter((session) => session.projectId === projectId)
+      .map((session) => ({ ...session }));
+  }
+
+  pendingInteractionsForSession(sessionId: string): AnvilSnapshot["pendingInteractions"] {
+    return structuredClone(
+      this.snapshot.pendingInteractions.filter((request) => request.sessionId === sessionId),
+    );
+  }
+
+  hasPendingInteraction(sessionId: string, requestId?: string): boolean {
+    return this.snapshot.pendingInteractions.some(
+      (request) => request.sessionId === sessionId && (requestId === undefined || request.id === requestId),
+    );
+  }
+
+  catalogForSession(sessionId: string): AnvilSnapshot["catalogs"][string] | undefined {
+    const catalog = this.snapshot.catalogs[sessionId];
+    return catalog ? structuredClone(catalog) : undefined;
+  }
+
+  timelineForSession(sessionId: string): AnvilSnapshot["timelines"][string] {
+    return structuredClone(this.snapshot.timelines[sessionId] ?? []);
+  }
+
   bootstrap(): AnvilBootstrap {
     return {
       protocolVersion: ANVIL_PROTOCOL_VERSION,
@@ -101,7 +138,11 @@ export class ForgeEventService extends EventEmitter {
   sessionDetailSync(sessionId: string, afterSequence?: number): AnvilSessionDetailSync | undefined {
     const detail = this.sessionDetail(sessionId);
     if (!detail) return undefined;
-    if (afterSequence === undefined || afterSequence < 0 || afterSequence > detail.throughSequence) {
+    if (
+      afterSequence === undefined ||
+      afterSequence < this.compactedThrough() ||
+      afterSequence > detail.throughSequence
+    ) {
       return { protocolVersion: ANVIL_PROTOCOL_VERSION, mode: "reset", detail };
     }
     const events = this.database.readSessionEventsAfter(
@@ -161,7 +202,7 @@ export class ForgeEventService extends EventEmitter {
     const committed = this.database.deleteSessionWithEvent(sessionId, event);
     this.acceptCommitted([committed]);
     this.artifacts?.remove(artifactIds);
-    this.checkpoint();
+    this.checkpoint(true);
     return committed;
   }
 
@@ -219,8 +260,16 @@ export class ForgeEventService extends EventEmitter {
     return this.database.readEventsAfter(cursor, limit);
   }
 
-  checkpoint(): void {
-    this.database.saveSnapshot(this.snapshot);
+  latestSequence(): number {
+    return this.snapshot.lastSequence;
+  }
+
+  compactedThrough(): number {
+    return this.database.compactedThrough();
+  }
+
+  checkpoint(discardPreviousSnapshots = false): void {
+    this.database.saveSnapshot(this.snapshot, { discardPreviousSnapshots });
     this.eventsSinceSnapshot = 0;
   }
 }

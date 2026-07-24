@@ -107,6 +107,12 @@ describe("ForgeHttpServer", () => {
     const reset: unknown = await resetResponse.json();
     expect(isAnvilSessionDetailSync(reset)).toBe(true);
     expect(reset).toMatchObject({ mode: "reset", detail: { sessionId: session.id, throughSequence: 2 } });
+
+    database.saveSnapshot(events.currentSnapshot(), { retainedEventCount: 1, maxCompactionRows: 10 });
+    const staleResponse = await fetch(`${baseUrl}/api/v1/sessions/${session.id}/detail?after=0`);
+    expect(await staleResponse.json()).toMatchObject({ mode: "reset", detail: { throughSequence: 2 } });
+    const boundaryResponse = await fetch(`${baseUrl}/api/v1/sessions/${session.id}/detail?after=1`);
+    expect(await boundaryResponse.json()).toMatchObject({ mode: "delta", fromSequence: 1 });
   });
 
   it("serves externalized artifacts only through the owner-authenticated API", async () => {
@@ -266,6 +272,22 @@ describe("ForgeHttpServer", () => {
     const response = await fetch(`${baseUrl}/api/v1/admin/rebuild`, { method: "POST" });
     expect(response.status).toBe(503);
     expect(await response.json()).toMatchObject({ code: "rebuild_unavailable" });
+  });
+
+  it("resets stale SSE cursors after journal compaction", async () => {
+    events.append(Array.from({ length: 3 }, (_, index) => ({
+      sessionId: null,
+      timestamp: `2026-07-23T01:00:0${index}.000Z`,
+      type: "connection.changed" as const,
+      payload: { connection: "connected" as const },
+    })));
+    database.saveSnapshot(events.currentSnapshot(), { retainedEventCount: 1, maxCompactionRows: 10 });
+
+    const response = await fetch(`${baseUrl}/api/v1/events?after=1`);
+    const text = await response.text();
+    expect(text).toContain("event: reset");
+    expect(text).toContain('"reason":"cursor_invalid"');
+    expect(text).toContain('"cursor":3');
   });
 
   it("replays and streams SSE events after a cursor", async () => {

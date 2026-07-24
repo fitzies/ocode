@@ -33,6 +33,51 @@ describe("ForgeEventService", () => {
     database.close();
   });
 
+  it("recovers a deletion from a retained snapshot after older events were compacted", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-compacted-delete-"));
+    const path = join(directory, "forge.sqlite");
+    const project = { id: "project-1", name: "Project", path: "/repo" };
+    try {
+      const database = new ForgeDatabase(path);
+      const service = new ForgeEventService(database, [project]);
+      const session = {
+        id: "session-1",
+        projectId: project.id,
+        title: "Deleted later",
+        updatedAt: "2026-07-23T01:00:00.000Z",
+        status: "idle" as const,
+        modelId: "test/model",
+        thinkingLevel: "off" as const,
+        settled: false,
+      };
+      service.createSession(session, {
+        sessionId: session.id,
+        timestamp: session.updatedAt,
+        type: "session.upserted",
+        payload: { session },
+      });
+      database.saveSnapshot(service.currentSnapshot(), {
+        retainedEventCount: 0,
+        maxCompactionRows: 10,
+      });
+      expect(database.compactedThrough()).toBe(1);
+      database.deleteSessionWithEvent(session.id, {
+        sessionId: session.id,
+        timestamp: "2026-07-23T01:00:01.000Z",
+        type: "session.deleted",
+        payload: { sessionId: session.id },
+      });
+      database.close();
+
+      const reopened = new ForgeDatabase(path);
+      const restored = new ForgeEventService(reopened, [project]);
+      expect(restored.currentSnapshot()).toMatchObject({ sessions: [], lastSequence: 2 });
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to full journal replay when the stored snapshot is obsolete", () => {
     const directory = mkdtempSync(join(tmpdir(), "anvil-snapshot-fallback-"));
     const path = join(directory, "forge.sqlite");

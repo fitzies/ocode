@@ -26,6 +26,8 @@ export interface PiRpcAdapterState {
   reasoningIds: Record<number, string>;
   catalog: CapabilityCatalog;
   knownToolCallIds: Set<string>;
+  extensionStatuses: Map<string, string | undefined>;
+  extensionWidgets: Map<string, { lines: string[] | undefined; placement: "aboveEditor" | "belowEditor" }>;
   terminalOutcomeInCurrentRun?: "failed" | "cancelled";
 }
 
@@ -47,6 +49,8 @@ export function createPiRpcAdapterState(input: {
     reasoningIds: {},
     catalog: { models: [], commands: [], skills: [] },
     knownToolCallIds: new Set(),
+    extensionStatuses: new Map(),
+    extensionWidgets: new Map(),
   };
 }
 
@@ -374,10 +378,6 @@ export function normalizePiRpcRecord(
         ];
       });
     }
-    emit("stream.marker", {
-      messageId: `response-${stringOf(record.id, command || "unknown")}`,
-      markerType: `response:${command || "unknown"}`,
-    }, false);
     return events;
   }
   if (type === "session_info_changed") {
@@ -410,13 +410,7 @@ export function normalizePiRpcRecord(
   if (type === "message_start") {
     const message = recordOf(record.message);
     const role = stringOf(message.role, "system");
-    if (role === "toolResult") {
-      emit("stream.marker", {
-        messageId: stringOf(message.toolCallId, "unknown-tool-result"),
-        markerType: "toolResult:start",
-      }, false);
-      return events;
-    }
+    if (role === "toolResult") return events;
     const id = messageId(message, state);
     if (role === "assistant") {
       state.activeAssistantMessageId = id;
@@ -503,12 +497,6 @@ export function normalizePiRpcRecord(
         status: reason === "aborted" ? "idle" : "failed",
         outcome: state.terminalOutcomeInCurrentRun,
       });
-    } else {
-      emit("stream.marker", {
-        messageId: id,
-        markerType: updateType || "unknown_update",
-        contentIndex: numberOf(update.contentIndex),
-      }, false);
     }
     return events;
   }
@@ -678,16 +666,23 @@ export function normalizePiRpcRecord(
         },
       });
     } else if (method === "setStatus") {
-      emit("extension.status", {
-        key: stringOf(record.statusKey, "extension"),
-        text: stringOf(record.statusText) || undefined,
-      });
+      const key = stringOf(record.statusKey, "extension");
+      const text = stringOf(record.statusText) || undefined;
+      if (state.extensionStatuses.has(key) && state.extensionStatuses.get(key) === text) return events;
+      state.extensionStatuses.set(key, text);
+      emit("extension.status", { key, text });
     } else if (method === "setWidget") {
-      emit("extension.widget", {
-        key: stringOf(record.widgetKey, "extension"),
-        lines: Array.isArray(record.widgetLines) ? record.widgetLines.map(String) : undefined,
-        placement: record.widgetPlacement === "belowEditor" ? "belowEditor" : "aboveEditor",
-      });
+      const key = stringOf(record.widgetKey, "extension");
+      const lines = Array.isArray(record.widgetLines) ? record.widgetLines.map(String) : undefined;
+      const placement = record.widgetPlacement === "belowEditor" ? "belowEditor" : "aboveEditor";
+      const previous = state.extensionWidgets.get(key);
+      const unchanged = previous !== undefined &&
+        previous.placement === placement &&
+        previous.lines?.length === lines?.length &&
+        (lines === undefined || lines.every((line, index) => previous.lines?.[index] === line));
+      if (unchanged) return events;
+      state.extensionWidgets.set(key, { lines, placement });
+      emit("extension.widget", { key, lines, placement });
     } else if (method === "set_editor_text") {
       emit("composer.prefill", { text: stringOf(record.text) });
     } else if (method === "setTitle") {
@@ -765,13 +760,7 @@ export function normalizePiRpcRecord(
     });
     return events;
   }
-  if (type === "agent_end" || type === "turn_start" || type === "turn_end") {
-    emit("stream.marker", {
-      messageId: state.lastAssistantMessageId ?? "agent-run",
-      markerType: type,
-    }, false);
-    return events;
-  }
+  if (type === "agent_end" || type === "turn_start" || type === "turn_end") return events;
 
   emit("unknown", { eventType: type, payload: raw });
   return events;

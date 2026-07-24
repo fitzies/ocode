@@ -17,6 +17,8 @@ Environment overrides are documented in `.env.example`. Persistent data defaults
 
 Tool output, images, raw RPC records, or structured details larger than 256 KiB are externalized before they enter SQLite, snapshots, or SSE. Artifact files are mode `0600`, live outside the static web root, and are served only through the owner-authenticated `/api/v1/artifacts/:id` route. Deleting a thread removes its artifact metadata and files; startup removes files that have no durable metadata.
 
+Forge keeps a snapshot-backed tail of 100,000 journal events for reconnection and gradually compacts older rows during checkpoints. Clients whose cursor predates that tail receive a reset and restore from authoritative snapshots. Compaction makes SQLite pages reusable but does not immediately shrink the database file on disk.
+
 ## Development
 
 ```bash
@@ -82,3 +84,5 @@ Settled thread details are cached in memory for five minutes and persisted in In
 After a Forge service restart, conversation history is rebuilt from SQLite and Pi session files. Commands left pending are marked unknown and are never replayed automatically. A persisted client prompt outbox retains drafts and stable command IDs, but surfaces unknown outcomes for user action instead of blindly duplicating side effects.
 
 Because systemd owns the Pi subprocess control group, an in-flight run cannot be truthfully reattached after a full Forge service restart. It is marked interrupted, pending dialogs are cancelled, and the next command restores the durable Pi session into a clean runtime. Browser disconnects and slow clients do not interrupt runs; slow SSE consumers are bounded and reconnect from their last delivered sequence.
+
+Settling a thread stops its Pi subprocess immediately. Unsettled runtimes that remain idle for 15 minutes are also stopped without changing the thread's visible settled state. A later prompt lazily restores the durable Pi session before continuing.

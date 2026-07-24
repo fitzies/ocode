@@ -43,6 +43,53 @@ describe("Pi RPC normalization", () => {
     expect(future).toMatchObject({ type: "interaction.requested", payload: { request: { method: "unknown", originalMethod: "futureWizard", fields: [{ id: "name", type: "text" }] } } });
   });
 
+  it("drops transport-only records that have no client-visible state", () => {
+    const adapter = state();
+    const records = [
+      { type: "response", id: "prompt-1", command: "prompt", success: true },
+      { type: "turn_start" },
+      { type: "turn_end" },
+      { type: "agent_end" },
+      {
+        type: "message_update",
+        assistantMessageEvent: { type: "toolcall_delta", contentIndex: 1, delta: "{}" },
+        message: { id: "assistant-1" },
+      },
+      { type: "message_start", message: { role: "toolResult", toolCallId: "call-1" } },
+    ];
+
+    expect(records.flatMap((record) => normalizePiRpcRecord(adapter, record))).toEqual([]);
+  });
+
+  it("deduplicates unchanged extension status and widget state", () => {
+    const adapter = state();
+    const status = {
+      type: "extension_ui_request",
+      method: "setStatus",
+      statusKey: "workspace",
+      statusText: "Indexing",
+    };
+    const widget = {
+      type: "extension_ui_request",
+      method: "setWidget",
+      widgetKey: "workspace",
+      widgetLines: ["Branch: main", "Clean"],
+      widgetPlacement: "aboveEditor",
+    };
+
+    expect(normalizePiRpcRecord(adapter, status)).toHaveLength(1);
+    expect(normalizePiRpcRecord(adapter, status)).toEqual([]);
+    expect(normalizePiRpcRecord(adapter, { ...status, statusText: "Ready" })).toHaveLength(1);
+    expect(normalizePiRpcRecord(adapter, { ...status, statusText: "" })).toHaveLength(1);
+    expect(normalizePiRpcRecord(adapter, { ...status, statusText: "" })).toEqual([]);
+
+    expect(normalizePiRpcRecord(adapter, widget)).toHaveLength(1);
+    expect(normalizePiRpcRecord(adapter, { ...widget, widgetLines: [...widget.widgetLines] })).toEqual([]);
+    expect(normalizePiRpcRecord(adapter, { ...widget, widgetLines: ["Branch: feature"] })).toHaveLength(1);
+    expect(normalizePiRpcRecord(adapter, { ...widget, widgetLines: undefined })).toHaveLength(1);
+    expect(normalizePiRpcRecord(adapter, { ...widget, widgetLines: undefined })).toEqual([]);
+  });
+
   it("normalizes live model and command catalogs from Pi responses", () => {
     const adapter = state();
     const [models] = normalizePiRpcRecord(adapter, {

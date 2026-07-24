@@ -30,7 +30,10 @@ import { WorkspaceFileIndex } from "./workspaceFiles.ts";
 interface SessionManagerOptions {
   defaultToolTimeoutMs?: number;
   defaultBashTimeoutMs?: number;
+  idleRuntimeTimeoutMs?: number;
 }
+
+type StreamDeltaEvent = Extract<UnsequencedAnvilEvent, { type: "message.delta" | "reasoning.delta" }>;
 
 interface ManagedSession {
   rpc: RpcSubprocess;
@@ -41,6 +44,9 @@ interface ManagedSession {
   commandTail: Promise<unknown>;
   suppressedResponseIds: Set<string>;
   toolTimers: Map<string, NodeJS.Timeout>;
+  pendingStreamEvent?: StreamDeltaEvent;
+  streamFlushTimer?: NodeJS.Timeout;
+  idleTimer?: NodeJS.Timeout;
 }
 
 function commandResponse(
@@ -96,6 +102,16 @@ function isTextMediaType(mediaType: string): boolean {
 const PI_IMAGE_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const MAX_INLINE_TEXT_ATTACHMENT_BYTES = 512 * 1024;
 const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const STREAM_BATCH_MS = 32;
+const MAX_STREAM_BATCH_BYTES = 8 * 1024;
+const DEFAULT_IDLE_RUNTIME_TIMEOUT_MS = 15 * 60_000;
+const SESSION_SUMMARY_EVENT_TYPES = new Set<AnvilEvent["type"]>([
+  "session.configured",
+  "run.status",
+  "message.started",
+  "interaction.requested",
+  "interaction.resolved",
+]);
 
 function gitBranch(cwd: string): string | undefined {
   try {
@@ -221,6 +237,8 @@ export class SessionManager {
     const runtimes = [...this.runtimes.values()];
     for (const runtime of runtimes) {
       runtime.stopping = true;
+      this.clearIdleTimer(runtime);
+      this.flushPendingStreamEvent(runtime);
       this.clearToolTimers(runtime);
       runtime.rpc.stop();
     }
@@ -268,8 +286,15 @@ export class SessionManager {
       return await this.dispatchRuntimeCommand(command);
     } finally {
       const remaining = (this.activeCommandCounts.get(sessionId) ?? 1) - 1;
-      if (remaining > 0) this.activeCommandCounts.set(sessionId, remaining);
-      else this.activeCommandCounts.delete(sessionId);
+      if (remaining > 0) {
+        this.activeCommandCounts.set(sessionId, remaining);
+      } else {
+        this.activeCommandCounts.delete(sessionId);
+        const runtime = this.runtimes.get(sessionId);
+        if (runtime && this.events.sessionSummary(sessionId)?.status === "idle") {
+          this.scheduleIdleStop(sessionId, runtime);
+        }
+      }
     }
   }
 
@@ -281,15 +306,14 @@ export class SessionManager {
     if (stored.session.settled && command.type !== "prompt.send") {
       return commandResponse(command, false, { error: "Send a prompt to resume this settled thread" });
     }
-    const snapshot = this.events.currentSnapshot();
-    const catalog = snapshot.catalogs[sessionId];
+    const catalog = this.events.catalogForSession(sessionId);
     if (command.type === "model.set" && !catalog?.models.some(
       (model) => model.id === command.payload.modelId,
     )) {
       return commandResponse(command, false, { error: "Model is not available in this session" });
     }
     if (command.type === "thinking.set") {
-      const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+      const session = this.events.sessionSummary(sessionId);
       const model = catalog?.models.find((candidate) => candidate.id === session?.modelId);
       if (!model?.supportedThinkingLevels.includes(command.payload.level)) {
         return commandResponse(command, false, {
@@ -317,9 +341,7 @@ export class SessionManager {
         throw error;
       }
       if (response.success) {
-        const pending = this.events.currentSnapshot().pendingInteractions.filter(
-          (request) => request.sessionId === sessionId,
-        );
+        const pending = this.events.pendingInteractionsForSession(sessionId);
         for (const request of pending) {
           runtime.rpc.send({
             type: "extension_ui_response",
@@ -342,9 +364,7 @@ export class SessionManager {
       return response;
     }
     if (command.type === "interaction.respond") {
-      const pending = this.events.currentSnapshot().pendingInteractions.some(
-        (request) => request.id === command.payload.requestId && request.sessionId === command.sessionId,
-      );
+      const pending = this.events.hasPendingInteraction(sessionId, command.payload.requestId);
       if (!pending) return commandResponse(command, false, { error: "Interaction is no longer pending" });
       runtime.rpc.send({
         type: "extension_ui_response",
@@ -462,9 +482,7 @@ export class SessionManager {
     );
     const timer = setTimeout(() => {
       this.interactionTimers.delete(request.id);
-      const stillPending = this.events.currentSnapshot().pendingInteractions.some(
-        (candidate) => candidate.id === request.id,
-      );
+      const stillPending = this.events.hasPendingInteraction(request.sessionId, request.id);
       if (stillPending) {
         const runtime = this.runtimes.get(request.sessionId);
         if (runtime?.rpc.running) {
@@ -560,9 +578,7 @@ export class SessionManager {
     void this.ensureRuntime({ session }).catch((error) => {
       if (this.shuttingDown || this.deleting.has(session.id)) return;
       const message = error instanceof Error ? error.message : String(error);
-      const current = this.events.currentSnapshot().sessions.find(
-        (candidate) => candidate.id === session.id,
-      );
+      const current = this.events.sessionSummary(session.id);
       if (current && current.status !== "failed") {
         this.events.append([
           domainEvent("run.status", { status: "failed", outcome: "failed", message }, session.id),
@@ -584,18 +600,23 @@ export class SessionManager {
     }
 
     if (command.payload.settled) {
-      const snapshot = this.events.currentSnapshot();
-      const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
-      const hasPendingInteraction = snapshot.pendingInteractions.some(
-        (request) => request.sessionId === sessionId,
-      );
-      const runtimeStarting = this.starting.has(sessionId);
+      const starting = this.starting.get(sessionId);
+      if (starting) {
+        try {
+          await starting;
+        } catch (error) {
+          return commandResponse(command, false, {
+            error: `Pi could not finish starting: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+      }
+      const session = this.events.sessionSummary(sessionId);
+      const hasPendingInteraction = this.events.pendingInteractionsForSession(sessionId).length > 0;
       const commandInFlight = (this.activeCommandCounts.get(sessionId) ?? 0) > 0;
       if (
         session?.status === "running" ||
         session?.status === "waiting" ||
         hasPendingInteraction ||
-        runtimeStarting ||
         commandInFlight ||
         this.runningTools(sessionId).length > 0
       ) {
@@ -631,9 +652,7 @@ export class SessionManager {
       if (settledRuntime && settledRuntime !== runtime) await this.stopRuntime(settledRuntime);
       this.runtimes.delete(sessionId);
 
-      const pending = this.events.currentSnapshot().pendingInteractions.filter(
-        (request) => request.sessionId === sessionId,
-      );
+      const pending = this.events.pendingInteractionsForSession(sessionId);
       for (const request of pending) {
         const timer = this.interactionTimers.get(request.id);
         if (timer) clearTimeout(timer);
@@ -669,6 +688,8 @@ export class SessionManager {
 
   private async stopRuntime(runtime: ManagedSession): Promise<void> {
     runtime.stopping = true;
+    this.clearIdleTimer(runtime);
+    this.flushPendingStreamEvent(runtime);
     this.clearToolTimers(runtime);
     if (runtime.rpc.running) runtime.rpc.stop();
     let timeout: NodeJS.Timeout | undefined;
@@ -719,7 +740,10 @@ export class SessionManager {
 
   private async ensureRuntime(stored: RuntimeSessionRecord): Promise<ManagedSession> {
     const existing = this.runtimes.get(stored.session.id);
-    if (existing?.rpc.running) return existing;
+    if (existing?.rpc.running) {
+      this.clearIdleTimer(existing);
+      return existing;
+    }
     const pending = this.starting.get(stored.session.id);
     if (pending) return pending;
 
@@ -801,6 +825,7 @@ export class SessionManager {
         sessionId: typeof data.sessionId === "string" ? data.sessionId : undefined,
         sessionFile: typeof data.sessionFile === "string" ? data.sessionFile : undefined,
       });
+      if (data.isStreaming !== true) this.scheduleIdleStop(stored.session.id, runtime);
       return runtime;
     } catch (error) {
       runtime.stopping = true;
@@ -824,18 +849,26 @@ export class SessionManager {
     }
     try {
       const at = Math.max(0, Date.now() - runtime.baseTimestamp);
-      this.events.append(normalizePiRpcRecord(runtime.adapter, record, at));
+      const normalized = normalizePiRpcRecord(runtime.adapter, record, at);
+      this.appendNormalizedEvents(sessionId, runtime, normalized);
+      if (record.type === "agent_start") this.clearIdleTimer(runtime);
       if (record.type === "tool_execution_start") this.armToolTimer(sessionId, runtime, record);
       if (record.type === "tool_execution_end" && typeof record.toolCallId === "string") {
         this.clearToolTimer(runtime, record.toolCallId);
       }
       if (record.type === "agent_settled") {
-        const session = this.events.currentSnapshot().sessions.find((candidate) => candidate.id === sessionId);
+        const session = this.events.sessionSummary(sessionId);
         if (session) this.refreshProjectBranch(session.projectId);
       }
-      this.syncSession(sessionId);
-      if (record.type === "agent_settled" && this.runningTools(sessionId).length > 0) {
-        this.failRuntime(sessionId, runtime, "Pi settled without reporting a result for a running tool");
+      if (normalized.some((event) => SESSION_SUMMARY_EVENT_TYPES.has(event.type))) {
+        this.syncSession(sessionId);
+      }
+      if (record.type === "agent_settled") {
+        if (this.runningTools(sessionId).length > 0) {
+          this.failRuntime(sessionId, runtime, "Pi settled without reporting a result for a running tool");
+        } else {
+          this.scheduleIdleStop(sessionId, runtime);
+        }
       }
     } catch (error) {
       const message = `Failed to persist RPC record: ${error instanceof Error ? error.message : String(error)}`;
@@ -845,18 +878,37 @@ export class SessionManager {
   }
 
   private onExit(sessionId: string, runtime: ManagedSession): void {
+    let flushError: unknown;
+    try {
+      this.flushPendingStreamEvent(runtime);
+    } catch (error) {
+      flushError = error;
+    }
     if (this.runtimes.get(sessionId) === runtime) this.runtimes.delete(sessionId);
-    if (runtime.stopping || runtime.failureReported) return;
-    this.failRuntime(sessionId, runtime, "Pi subprocess exited unexpectedly");
+    if (runtime.stopping || runtime.failureReported) {
+      if (flushError) {
+        process.stderr.write(
+          `[pi:${sessionId}] Failed to persist buffered output while stopping: ${flushError instanceof Error ? flushError.message : String(flushError)}\n`,
+        );
+      }
+      return;
+    }
+    this.failRuntime(
+      sessionId,
+      runtime,
+      flushError
+        ? `Failed to persist buffered RPC output: ${flushError instanceof Error ? flushError.message : String(flushError)}`
+        : "Pi subprocess exited unexpectedly",
+    );
   }
 
   private failRuntime(sessionId: string, runtime: ManagedSession, message: string): void {
     if (runtime.failureReported) return;
     runtime.failureReported = true;
+    this.clearIdleTimer(runtime);
+    this.flushPendingStreamEvent(runtime);
     this.clearToolTimers(runtime);
-    const pending = this.events.currentSnapshot().pendingInteractions.filter(
-      (request) => request.sessionId === sessionId,
-    );
+    const pending = this.events.pendingInteractionsForSession(sessionId);
     try {
       this.events.append([
         ...pending.map((request) => domainEvent(
@@ -876,8 +928,107 @@ export class SessionManager {
     if (runtime.rpc.running) runtime.rpc.stop("SIGKILL");
   }
 
+  private scheduleIdleStop(sessionId: string, runtime: ManagedSession): void {
+    this.clearIdleTimer(runtime);
+    const timeoutMs = this.options.idleRuntimeTimeoutMs ?? DEFAULT_IDLE_RUNTIME_TIMEOUT_MS;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
+    runtime.idleTimer = setTimeout(() => {
+      runtime.idleTimer = undefined;
+      void this.withSessionLifecycle(sessionId, async () => {
+        if (this.runtimes.get(sessionId) !== runtime || runtime.stopping) return;
+        const session = this.events.sessionSummary(sessionId);
+        if (
+          session?.status !== "idle" ||
+          this.events.pendingInteractionsForSession(sessionId).length > 0 ||
+          (this.activeCommandCounts.get(sessionId) ?? 0) > 0 ||
+          this.runningTools(sessionId).length > 0
+        ) {
+          return;
+        }
+        await this.stopSessionRuntime(sessionId);
+      }).catch((error) => {
+        process.stderr.write(
+          `[pi:${sessionId}] Failed to stop idle runtime: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+      });
+    }, Math.min(timeoutMs, 2_147_483_647));
+    runtime.idleTimer.unref();
+  }
+
+  private clearIdleTimer(runtime: ManagedSession): void {
+    if (runtime.idleTimer) clearTimeout(runtime.idleTimer);
+    runtime.idleTimer = undefined;
+  }
+
+  private appendNormalizedEvents(
+    sessionId: string,
+    runtime: ManagedSession,
+    events: UnsequencedAnvilEvent[],
+  ): void {
+    const [event] = events;
+    if (events.length === 1 && event && this.isStreamDeltaEvent(event)) {
+      const pending = runtime.pendingStreamEvent;
+      if (pending && this.canMergeStreamEvents(pending, event)) {
+        runtime.pendingStreamEvent = {
+          ...event,
+          payload: { ...event.payload, delta: pending.payload.delta + event.payload.delta },
+        } as StreamDeltaEvent;
+      } else {
+        this.flushPendingStreamEvent(runtime);
+        runtime.pendingStreamEvent = event;
+      }
+      if (Buffer.byteLength(runtime.pendingStreamEvent.payload.delta) >= MAX_STREAM_BATCH_BYTES) {
+        this.flushPendingStreamEvent(runtime);
+        return;
+      }
+      if (!runtime.streamFlushTimer) {
+        runtime.streamFlushTimer = setTimeout(() => {
+          runtime.streamFlushTimer = undefined;
+          try {
+            this.flushPendingStreamEvent(runtime);
+          } catch (error) {
+            const message = `Failed to persist buffered RPC output: ${error instanceof Error ? error.message : String(error)}`;
+            process.stderr.write(`[pi:${sessionId}] ${message}\n`);
+            this.failRuntime(sessionId, runtime, message);
+          }
+        }, STREAM_BATCH_MS);
+        runtime.streamFlushTimer.unref();
+      }
+      return;
+    }
+
+    this.flushPendingStreamEvent(runtime);
+    if (events.length > 0) this.events.append(events);
+  }
+
+  private isStreamDeltaEvent(event: UnsequencedAnvilEvent): event is StreamDeltaEvent {
+    return event.type === "reasoning.delta" ||
+      (event.type === "message.delta" && event.payload.artifact === undefined);
+  }
+
+  private canMergeStreamEvents(previous: StreamDeltaEvent, next: StreamDeltaEvent): boolean {
+    if (previous.type !== next.type) return false;
+    if (previous.type === "reasoning.delta" && next.type === "reasoning.delta") {
+      return previous.payload.reasoningId === next.payload.reasoningId;
+    }
+    if (previous.type === "message.delta" && next.type === "message.delta") {
+      return previous.payload.messageId === next.payload.messageId &&
+        previous.payload.blockId === next.payload.blockId &&
+        previous.payload.modelId === next.payload.modelId;
+    }
+    return false;
+  }
+
+  private flushPendingStreamEvent(runtime: ManagedSession): void {
+    if (runtime.streamFlushTimer) clearTimeout(runtime.streamFlushTimer);
+    runtime.streamFlushTimer = undefined;
+    const pending = runtime.pendingStreamEvent;
+    runtime.pendingStreamEvent = undefined;
+    if (pending) this.events.append([pending]);
+  }
+
   private runningTools(sessionId: string): ToolEntry[] {
-    return (this.events.currentSnapshot().timelines[sessionId] ?? []).filter(
+    return this.events.timelineForSession(sessionId).filter(
       (entry): entry is ToolEntry => entry.kind === "tool" && (entry.status === "running" || entry.status === "queued"),
     );
   }
@@ -935,8 +1086,8 @@ export class SessionManager {
     const project = this.projects.get(projectId);
     if (!project) return;
     const branch = gitBranch(project.path);
-    const affected = this.events.currentSnapshot().sessions.filter(
-      (session) => session.projectId === projectId && session.branch !== branch,
+    const affected = this.events.sessionSummariesForProject(projectId).filter(
+      (session) => session.branch !== branch,
     );
     if (affected.length === 0) return;
     this.events.append(affected.map((session) => domainEvent(
@@ -944,15 +1095,14 @@ export class SessionManager {
       { branch: branch ?? null },
       session.id,
     )));
-    const snapshot = this.events.currentSnapshot();
     for (const previous of affected) {
-      const session = snapshot.sessions.find((candidate) => candidate.id === previous.id);
+      const session = this.events.sessionSummary(previous.id);
       if (session) this.database.updateSession(session);
     }
   }
 
   private syncSession(sessionId: string, piState?: { sessionId?: string; sessionFile?: string }): void {
-    const session = this.events.currentSnapshot().sessions.find((candidate) => candidate.id === sessionId);
+    const session = this.events.sessionSummary(sessionId);
     if (!session) return;
     if (piState?.sessionFile) {
       const ownedDirectory = `${resolve(this.config.sessionDir, sessionId)}${sep}`;

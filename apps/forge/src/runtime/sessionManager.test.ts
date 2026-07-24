@@ -84,7 +84,14 @@ beforeEach(() => {
         send({ type: "agent_start" });
         send({ type: "message_start", message: { role: "user", content: request.message, timestamp: 1 } });
         send({ type: "message_end", message: { role: "user", content: request.message, timestamp: 1 } });
-        if (request.message === "Hang tool") {
+        if (request.message === "Stream output") {
+          send({ type: "message_start", message: { id: "assistant-stream", role: "assistant", content: [], timestamp: 2 } });
+          send({ type: "message_update", message: { id: "assistant-stream" }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hello" } });
+          send({ type: "message_update", message: { id: "assistant-stream" }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " world" } });
+          send({ type: "message_end", message: { id: "assistant-stream", role: "assistant", content: [{ type: "text", text: "Hello world" }], timestamp: 2 } });
+          send({ type: "response", id: request.id, command: request.type, success: true });
+          send({ type: "agent_settled" });
+        } else if (request.message === "Hang tool") {
           send({ type: "response", id: request.id, command: request.type, success: true });
           send({
             type: "tool_execution_start",
@@ -230,7 +237,7 @@ describe("SessionManager", () => {
     expect(runtimes().has(requestedSessionId)).toBe(true);
   });
 
-  it("rejects settlement while the runtime is starting", async () => {
+  it("waits for a starting runtime before settling it", async () => {
     await manager.handleCommand(command("create-starting", "session.create", null, {
       projectId: "anvil",
       sessionId: requestedSessionId,
@@ -240,8 +247,8 @@ describe("SessionManager", () => {
       settled: true,
     }));
 
-    expect(response).toMatchObject({ success: false, error: expect.stringContaining("Wait for Pi") });
-    expect(database.getSession(requestedSessionId)?.session.settled).toBe(false);
+    expect(response).toMatchObject({ success: true });
+    expect(database.getSession(requestedSessionId)?.session.settled).toBe(true);
   });
 
   it("rejects settlement while Pi is waiting for interaction", async () => {
@@ -483,6 +490,54 @@ describe("SessionManager", () => {
       requestId: "dialog-crash",
       status: "cancelled",
     }));
+  });
+
+  it("stops idle runtimes without changing thread settlement and restores them on demand", async () => {
+    await manager.stopAll();
+    manager = new SessionManager(config, database, events, { idleRuntimeTimeoutMs: 20 });
+    await manager.handleCommand(command("create-idle", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    await waitUntil(() => events.currentSnapshot().sessions.some(
+      (session) => session.id === requestedSessionId && session.title === "Runtime test",
+    ));
+    const runtimes = () => (manager as unknown as { runtimes: Map<string, unknown> }).runtimes;
+    await waitUntil(() => (events.currentSnapshot().catalogs[requestedSessionId]?.models.length ?? 0) > 0);
+    const configured = await manager.handleCommand(command("model-before-idle", "model.set", requestedSessionId, {
+      modelId: "test/model-1",
+    }));
+    expect(configured.success).toBe(true);
+
+    await waitUntil(() => !runtimes().has(requestedSessionId));
+    expect(database.getSession(requestedSessionId)?.session.settled).toBe(false);
+
+    const response = await manager.handleCommand(command("prompt-after-idle", "prompt.send", requestedSessionId, {
+      content: "Resume idle runtime",
+      delivery: "prompt",
+    }));
+    expect(response.success).toBe(true);
+    expect(runtimes().has(requestedSessionId)).toBe(true);
+  });
+
+  it("coalesces adjacent streaming deltas before journaling them", async () => {
+    await manager.handleCommand(command("create-stream", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    await waitUntil(() => events.currentSnapshot().sessions.some(
+      (session) => session.id === requestedSessionId && session.title === "Runtime test",
+    ));
+
+    const response = await manager.handleCommand(command("prompt-stream", "prompt.send", requestedSessionId, {
+      content: "Stream output",
+      delivery: "prompt",
+    }));
+
+    expect(response.success).toBe(true);
+    const deltas = database.readEventsAfter(0).filter((event) => event.type === "message.delta");
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]).toMatchObject({ payload: { delta: "Hello world" } });
   });
 
   it("fails a tool visibly when it never reports completion, even without a declared timeout", async () => {

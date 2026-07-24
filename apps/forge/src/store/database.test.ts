@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { UnsequencedAnvilEvent } from "@anvil/pi-rpc";
+import { applyAnvilEvents, createEmptySnapshot } from "@anvil/state";
 import { describe, expect, it } from "vitest";
 
 import { ForgeDatabase } from "./database.ts";
@@ -102,6 +103,23 @@ describe("ForgeDatabase event journal", () => {
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  it("compacts a checkpointed journal prefix without reusing global sequences", () => {
+    const database = new ForgeDatabase(":memory:");
+    const committed = database.appendEvents(Array.from({ length: 5 }, (_, index) =>
+      event(null, `2026-07-23T01:00:0${index}.000Z`),
+    ));
+    const snapshot = applyAnvilEvents(createEmptySnapshot(), committed);
+
+    database.saveSnapshot(snapshot, { retainedEventCount: 2, maxCompactionRows: 10 });
+
+    expect(database.compactedThrough()).toBe(3);
+    expect(database.readEventsAfter(0).map((item) => item.sequence)).toEqual([4, 5]);
+    expect(database.appendEvents([
+      event(null, "2026-07-23T01:00:06.000Z"),
+    ])[0]?.sequence).toBe(6);
+    database.close();
   });
 
   it("rolls back session creation when its initial event is invalid", () => {

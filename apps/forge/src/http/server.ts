@@ -147,7 +147,7 @@ export class ForgeHttpServer {
     if (request.method === "GET" && url.pathname === "/api/v1/health/ready") {
       sendJson(response, 200, {
         status: "ready",
-        cursor: this.options.events.currentSnapshot().lastSequence,
+        cursor: this.options.events.latestSequence(),
         instanceId: this.instanceId,
       });
       return;
@@ -412,7 +412,7 @@ export class ForgeHttpServer {
       sendJson(response, 400, apiError("invalid_project", "Project id is malformed"));
       return;
     }
-    const project = this.options.events.currentSnapshot().projects.find((candidate) => candidate.id === projectId);
+    const project = this.options.events.projectSummary(projectId);
     const favicon = project ? await resolveProjectFavicon(project.path) : null;
     if (!favicon) {
       sendJson(response, 404, apiError("project_favicon_not_found", "Project favicon not found"));
@@ -547,7 +547,8 @@ export class ForgeHttpServer {
   private streamEvents(request: IncomingMessage, response: ServerResponse, url: URL): void {
     const rawCursor = request.headers["last-event-id"] ?? url.searchParams.get("after") ?? "0";
     const cursor = Number(rawCursor);
-    const latest = this.options.events.currentSnapshot().lastSequence;
+    const latest = this.options.events.latestSequence();
+    const compactedThrough = this.options.events.compactedThrough();
     response.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
       "cache-control": "no-cache, no-transform",
@@ -556,7 +557,11 @@ export class ForgeHttpServer {
     });
     response.flushHeaders();
 
-    if (!Number.isSafeInteger(cursor) || cursor < 0 || cursor > latest) {
+    if (
+      !Number.isSafeInteger(cursor) ||
+      cursor < compactedThrough ||
+      cursor > latest
+    ) {
       const reset: AnvilStreamReset = {
         protocolVersion: ANVIL_PROTOCOL_VERSION,
         reason: "cursor_invalid",

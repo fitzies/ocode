@@ -123,14 +123,7 @@ export function ProjectResource({ tab }: { tab: ProjectResourceTab }) {
   }
   return (
     <div className="project-resource-content">
-      <div className="project-resource-meta">
-        <span>{state.file.mediaType} · {formatBytes(state.file.size)}</span>
-        {state.refreshing && <small role="status">Checking…</small>}
-        {state.revalidationError && <strong role="status" title={state.revalidationError}>Refresh check failed</strong>}
-        <Button type="button" variant="ghost" size="icon-xs" aria-label={`Refresh ${tab.path}`} onClick={() => void refresh("manual")}>
-          <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-        </Button>
-      </div>
+      {state.revalidationError && <strong className="resource-refresh-warning" role="status" title={state.revalidationError}>Refresh check failed</strong>}
       <ResourceViewer tab={tab} state={state} />
     </div>
   );
@@ -138,6 +131,7 @@ export function ProjectResource({ tab }: { tab: ProjectResourceTab }) {
 
 export function ProjectResourceSurface({ projectId }: { projectId: string }) {
   const { state, selectProjectResource, closeProjectResource, setRightVisible } = useWorkspaceSurfaces();
+  const [refreshGeneration, setRefreshGeneration] = useState(0);
   const active = state.resourceTabs.find((tab) => tab.id === state.activeResourceId) ?? state.resourceTabs[0];
   if (!active) return null;
 
@@ -154,12 +148,15 @@ export function ProjectResourceSurface({ projectId }: { projectId: string }) {
             </div>
           ))}
         </nav>
+        <Button type="button" variant="ghost" size="icon-sm" aria-label={`Refresh ${active.path}`} onClick={() => setRefreshGeneration((value) => value + 1)}>
+          <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+        </Button>
         <Button type="button" variant="ghost" size="icon-sm" aria-label="Close resource surface" onClick={() => setRightVisible(false)}>
           <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
         </Button>
       </header>
       <main className="project-resource-viewer">
-        <ProjectResource key={`${active.projectId}:${active.id}`} tab={active} />
+        <ProjectResource key={`${active.projectId}:${active.id}:${refreshGeneration}`} tab={active} />
       </main>
     </section>
   );

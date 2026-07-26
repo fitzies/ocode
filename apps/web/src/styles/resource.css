@@ -57,10 +57,8 @@
 
 .project-resource-viewer,
 .project-resource-content { min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
-.project-resource-content { display: grid; grid-template-rows: auto minmax(0, 1fr); }
-.project-resource-meta { display: flex; min-width: 0; align-items: center; gap: 0.5rem; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border); color: var(--muted-foreground); font-size: 0.62rem; }
-.project-resource-meta > span { overflow: hidden; flex: 1; text-overflow: ellipsis; white-space: nowrap; }
-.project-resource-meta strong { color: var(--status-warning); font-weight: 550; }
+.project-resource-content { position: relative; }
+.resource-refresh-warning { position: absolute; z-index: 3; top: 0.5rem; right: 0.5rem; padding: 0.3rem 0.45rem; color: var(--status-warning); background: color-mix(in oklab, var(--background) 92%, transparent); border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 0.625rem; font-weight: 550; }
 
 .resource-loading,
 .resource-error,
@@ -119,6 +117,5 @@
 .project-resource-block small { color: var(--muted-foreground); font-size: 0.65rem; }
 
 @media (max-width: 700px) {
-  .project-resource-meta { padding-inline: 0.35rem; }
   .source-line { grid-template-columns: 3rem minmax(0, 1fr); }
 }

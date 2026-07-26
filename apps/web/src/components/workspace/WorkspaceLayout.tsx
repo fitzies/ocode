@@ -1,6 +1,7 @@
 import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
+import { usePanelRef } from "react-resizable-panels";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -22,44 +23,60 @@ export type WorkspaceLayoutProps = WorkspaceLayoutSlots & {
   onMobileSurfaceChange?: (surface: MobileWorkspaceSurface) => void;
 };
 
-function DesktopLeftStack({ main, bottom }: Pick<WorkspaceLayoutSlots, "main" | "bottom">) {
-  if (bottom === undefined || bottom === null) {
-    return <div className="workspace-layout-main">{main}</div>;
-  }
-
-  return (
-    <ResizablePanelGroup direction="vertical" className="workspace-layout-stack">
-      <ResizablePanel id="workspace-main" minSize="30%" defaultSize="70%">
-        <div className="workspace-layout-main">{main}</div>
-      </ResizablePanel>
-      <ResizableHandle withHandle />
-      <ResizablePanel id="workspace-bottom" minSize="15%" defaultSize="30%">
-        <section className="workspace-layout-surface workspace-layout-bottom" aria-label="Project terminal surface">
-          {bottom}
-        </section>
-      </ResizablePanel>
-    </ResizablePanelGroup>
-  );
-}
-
 function DesktopWorkspace({ main, bottom, right }: WorkspaceLayoutSlots) {
-  if (right === undefined || right === null) {
-    return (
-      <div className="workspace-layout-desktop" data-workspace-layout="desktop">
-        <DesktopLeftStack main={main} bottom={bottom} />
-      </div>
-    );
-  }
+  const bottomPanelRef = usePanelRef();
+  const rightPanelRef = usePanelRef();
+  const bottomVisible = bottom !== undefined && bottom !== null;
+  const rightVisible = right !== undefined && right !== null;
+  const previousBottomVisible = useRef(bottomVisible);
+  const previousRightVisible = useRef(rightVisible);
+
+  useEffect(() => {
+    if (bottomVisible && !previousBottomVisible.current) bottomPanelRef.current?.resize("40%");
+    else if (!bottomVisible) bottomPanelRef.current?.collapse();
+    previousBottomVisible.current = bottomVisible;
+  }, [bottomPanelRef, bottomVisible]);
+  useEffect(() => {
+    if (rightVisible && !previousRightVisible.current) rightPanelRef.current?.resize("28%");
+    else if (!rightVisible) rightPanelRef.current?.collapse();
+    previousRightVisible.current = rightVisible;
+  }, [rightPanelRef, rightVisible]);
 
   return (
     <div className="workspace-layout-desktop" data-workspace-layout="desktop">
       <ResizablePanelGroup direction="horizontal">
-        <ResizablePanel id="workspace-left" minSize="40%" defaultSize="72%">
-          <DesktopLeftStack main={main} bottom={bottom} />
+        <ResizablePanel id="workspace-left" minSize="40%" defaultSize={rightVisible ? "72%" : "100%"}>
+          <ResizablePanelGroup direction="vertical" className="workspace-layout-stack">
+            <ResizablePanel id="workspace-main" minSize="30%" defaultSize={bottomVisible ? "60%" : "100%"}>
+              <div className="workspace-layout-main">{main}</div>
+            </ResizablePanel>
+            <ResizableHandle withHandle className={bottomVisible ? "workspace-layout-terminal-handle" : "workspace-layout-handle--hidden"} disabled={!bottomVisible} />
+            <ResizablePanel
+              id="workspace-bottom"
+              panelRef={bottomPanelRef}
+              minSize="22%"
+              defaultSize="40%"
+              collapsedSize="0%"
+              collapsible
+              disabled={!bottomVisible}
+            >
+              <section className="workspace-layout-surface workspace-layout-bottom" aria-label="Project terminal surface" hidden={!bottomVisible}>
+                {bottom}
+              </section>
+            </ResizablePanel>
+          </ResizablePanelGroup>
         </ResizablePanel>
-        <ResizableHandle withHandle />
-        <ResizablePanel id="workspace-right" minSize="18%" defaultSize="28%">
-          <aside className="workspace-layout-surface workspace-layout-right" aria-label="Project resource surface">
+        <ResizableHandle withHandle className={rightVisible ? undefined : "workspace-layout-handle--hidden"} disabled={!rightVisible} />
+        <ResizablePanel
+          id="workspace-right"
+          panelRef={rightPanelRef}
+          minSize="18%"
+          defaultSize={rightVisible ? "28%" : "0%"}
+          collapsedSize="0%"
+          collapsible
+          disabled={!rightVisible}
+        >
+          <aside className="workspace-layout-surface workspace-layout-right" aria-label="Project resource surface" hidden={!rightVisible}>
             {right}
           </aside>
         </ResizablePanel>

@@ -45,6 +45,33 @@
   overflow: hidden;
 }
 
+.workspace-layout-handle--hidden {
+  display: none;
+}
+
+.workspace-layout-terminal-handle {
+  background: color-mix(in oklab, var(--border) 82%, transparent);
+  transition: background-color 120ms ease;
+}
+
+.workspace-layout-terminal-handle:hover,
+.workspace-layout-terminal-handle:focus-visible {
+  background: color-mix(in oklab, var(--foreground) 18%, var(--border));
+}
+
+.workspace-layout-terminal-handle > span {
+  width: 2rem;
+  height: 0.25rem;
+  border: 0;
+  background: color-mix(in oklab, var(--background) 90%, var(--foreground));
+  box-shadow: none;
+}
+
+.workspace-layout-terminal-handle > span > span {
+  width: 0.875rem;
+  height: 1px;
+}
+
 .workspace-layout-surface {
   background: var(--background);
 }

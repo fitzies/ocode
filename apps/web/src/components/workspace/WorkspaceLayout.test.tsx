@@ -10,9 +10,9 @@ describe("WorkspaceLayout", () => {
     );
 
     expect(markup).toContain("Conversation");
-    expect(markup).not.toContain("resizable-handle");
-    expect(markup).not.toContain("workspace-layout-bottom");
-    expect(markup).not.toContain("workspace-layout-right");
+    expect(markup.match(/workspace-layout-handle--hidden/g)).toHaveLength(2);
+    expect(markup).toContain('aria-label="Project terminal surface" hidden=""');
+    expect(markup).toContain('aria-label="Project resource surface" hidden=""');
   });
 
   it("mounts bottom and right placeholders in nested desktop resizable groups", () => {
@@ -27,8 +27,24 @@ describe("WorkspaceLayout", () => {
 
     expect(markup).toContain("Terminal placeholder");
     expect(markup).toContain("Resource placeholder");
+    expect(markup).toContain("workspace-layout-terminal-handle");
     expect(markup.match(/data-slot="resizable-panel-group"/g)).toHaveLength(2);
     expect(markup.match(/data-slot="resizable-handle"/g)).toHaveLength(2);
+  });
+
+  it("keeps the terminal under the same stable desktop panel ancestry when resources toggle", () => {
+    const withoutResource = renderToStaticMarkup(
+      <WorkspaceLayout isMobile={false} main={<main>Conversation</main>} bottom={<div data-testid="terminal">Terminal</div>} />,
+    );
+    const withResource = renderToStaticMarkup(
+      <WorkspaceLayout isMobile={false} main={<main>Conversation</main>} bottom={<div data-testid="terminal">Terminal</div>} right={<div>Resource</div>} />,
+    );
+
+    for (const markup of [withoutResource, withResource]) {
+      expect(markup).toContain('id="workspace-bottom"');
+      expect(markup).toContain('data-testid="terminal"');
+      expect(markup.indexOf('id="workspace-bottom"')).toBeLessThan(markup.indexOf('data-testid="terminal"'));
+    }
   });
 
   it("shows one full-screen mobile surface and falls back to conversation for an absent slot", () => {

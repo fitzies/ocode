@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { reconcileTerminalUiState, type TerminalGroup } from "./ProjectTerminalSurface";
+import { reconcileActiveTerminalId } from "./ProjectTerminalSurface";
 
 const metadata = (terminalId: string) => ({
   projectId: "project-a",
@@ -18,17 +18,11 @@ const first = "01959f7e-7d64-7000-8000-000000000001";
 const second = "01959f7e-7d64-7000-8000-000000000002";
 const stale = "01959f7e-7d64-7000-8000-000000000003";
 
-describe("terminal UI reconciliation", () => {
-  it("removes stale local panes and exposes terminals discovered on Forge", () => {
-    const groups: TerminalGroup[] = [{ id: "group-1", terminalIds: [first, stale], direction: "vertical" }];
-    const reconciled = reconcileTerminalUiState({
-      groups,
-      activeGroupId: "group-1",
-      activeTerminalId: stale,
-    }, [metadata(first), metadata(second)]);
-
-    expect(reconciled.groups[0]).toEqual({ id: "group-1", terminalIds: [first], direction: "vertical" });
-    expect(reconciled.groups.flatMap((group) => group.terminalIds)).toEqual([first, second]);
-    expect(reconciled.activeTerminalId).toBe(first);
+describe("terminal tab reconciliation", () => {
+  it("keeps the active terminal when available and falls back from stale state", () => {
+    const terminals = [metadata(first), metadata(second)];
+    expect(reconcileActiveTerminalId(second, terminals)).toBe(second);
+    expect(reconcileActiveTerminalId(stale, terminals)).toBe(first);
+    expect(reconcileActiveTerminalId(undefined, [])).toBeUndefined();
   });
 });

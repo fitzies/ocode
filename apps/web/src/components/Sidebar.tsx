@@ -48,8 +48,6 @@ export type SidebarSnapshot = Pick<
 
 interface SidebarProps {
   snapshot: SidebarSnapshot;
-  activeProjectId: string | null;
-  onSelectProject: (projectId: string) => void;
   onSelectSession: (sessionId: string) => void;
   onCreateSession: (projectId: string) => void;
   onAddWorkspace: () => void;
@@ -121,8 +119,6 @@ const usageIndicatorClass = {
 
 export const Sidebar = memo(function Sidebar({
   snapshot,
-  activeProjectId,
-  onSelectProject,
   onSelectSession,
   onCreateSession,
   onAddWorkspace,
@@ -255,28 +251,6 @@ export const Sidebar = memo(function Sidebar({
           <SidebarTrigger className="sidebar-close" aria-label="Close sidebar" />
           <span className="px-1 text-xs font-medium tracking-tight text-sidebar-foreground">Anvil</span>
         </div>
-        {snapshot.projects.length > 0 && (
-          <label className="workspace-navigation">
-            <span className="workspace-navigation-label">Workspace</span>
-            <span className="workspace-navigation-control">
-              {activeProjectId && <ProjectFavicon projectId={activeProjectId} />}
-              <select
-                value={activeProjectId ?? ""}
-                onChange={(event) => {
-                  onSelectProject(event.target.value);
-                  closeMobile();
-                }}
-                aria-label="Navigate to workspace"
-                title={snapshot.projects.find((project) => project.id === activeProjectId)?.path}
-              >
-                {snapshot.projects.map((project) => (
-                  <option key={project.id} value={project.id}>{project.name}</option>
-                ))}
-              </select>
-              <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} aria-hidden="true" />
-            </span>
-          </label>
-        )}
         <div className="flex gap-1.5">
           <div className="relative min-w-0 flex-1">
             <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />

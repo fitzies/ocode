@@ -7,6 +7,7 @@ import {
   type InteractionRequest,
   type JsonValue,
   type MessageEntry,
+  normalizeProjectResourcePath,
 } from "@anvil/protocol";
 
 export type UnsequencedAnvilEvent = {
@@ -163,6 +164,45 @@ function inlineHtmlMetadata(block: Extract<ContentBlock, { type: "inlineHtml" }>
   };
 }
 
+const OPEN_FILE_TOOL = "anvil_open_file";
+
+function projectResourceBlock(
+  toolName: string,
+  detailsValue: unknown,
+  id: string,
+): Extract<ContentBlock, { type: "projectResource" }> | undefined {
+  if (toolName !== OPEN_FILE_TOOL) return undefined;
+  const details = recordOf(detailsValue);
+  if (
+    details.kind !== "anvil.open-file" ||
+    details.schemaVersion !== 1 ||
+    typeof details.path !== "string" ||
+    normalizeProjectResourcePath(details.path) !== details.path ||
+    (details.view !== undefined && !["auto", "source", "preview"].includes(String(details.view))) ||
+    (details.line !== undefined && (!Number.isSafeInteger(details.line) || Number(details.line) <= 0)) ||
+    (details.column !== undefined && (!Number.isSafeInteger(details.column) || Number(details.column) <= 0))
+  ) return undefined;
+  return {
+    id,
+    type: "projectResource",
+    path: details.path,
+    ...(details.view ? { view: details.view as "auto" | "source" | "preview" } : {}),
+    ...(details.line ? { line: Number(details.line) } : {}),
+    ...(details.column ? { column: Number(details.column) } : {}),
+  };
+}
+
+function projectResourceMetadata(block: Extract<ContentBlock, { type: "projectResource" }>): JsonValue {
+  return {
+    kind: "anvil.open-file",
+    schemaVersion: 1,
+    path: block.path,
+    ...(block.view ? { view: block.view } : {}),
+    ...(block.line ? { line: block.line } : {}),
+    ...(block.column ? { column: block.column } : {}),
+  };
+}
+
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 function supportedThinkingLevels(model: Record<string, unknown>): Array<(typeof THINKING_LEVELS)[number]> {
@@ -176,10 +216,10 @@ function supportedThinkingLevels(model: Record<string, unknown>): Array<(typeof 
   });
 }
 
-function toolWasCancelled(record: Record<string, unknown>): boolean {
+function toolWasCancelled(record: Record<string, unknown>, inferFromErrorText = false): boolean {
   const details = recordOf(record.details);
   if (record.cancelled === true || details.cancelled === true) return true;
-  if (!Array.isArray(record.content)) return false;
+  if (!inferFromErrorText || !Array.isArray(record.content)) return false;
   return record.content.some((item) => {
     const block = recordOf(item);
     return block.type === "text" && /\b(?:aborted|cancelled)\b/i.test(stringOf(block.text));
@@ -554,9 +594,13 @@ export function normalizePiRpcRecord(
     if (role === "toolResult") {
       const toolCallId = stringOf(message.toolCallId, `restored-tool-${state.nextSequence}`);
       const toolName = stringOf(message.toolName, "unknown_tool");
+      const cancelled = toolWasCancelled(message, message.isError === true);
       const inlineHtml = message.isError === true
         ? undefined
         : inlineHtmlBlock(toolName, message.details, `tool-${toolCallId}-inline-html`);
+      const projectResource = message.isError === true || cancelled
+        ? undefined
+        : projectResourceBlock(toolName, message.details, `tool-${toolCallId}-project-resource`);
       if (!state.knownToolCallIds.has(toolCallId)) {
         state.knownToolCallIds.add(toolCallId);
         emit("tool.started", {
@@ -571,22 +615,26 @@ export function normalizePiRpcRecord(
             output: [],
             createdAt: timestamp,
             startedAt: timestamp,
-            ...(inlineHtml ? {} : { raw }),
+            ...(inlineHtml || projectResource ? {} : { raw }),
           },
-        }, !inlineHtml);
+        }, !inlineHtml && !projectResource);
       }
       emit("tool.completed", {
         toolCallId,
         output: inlineHtml
           ? [inlineHtml]
-          : contentBlocks(message.content, `tool-${toolCallId}-result`),
+          : projectResource
+            ? [projectResource]
+            : contentBlocks(message.content, `tool-${toolCallId}-result`),
         details: inlineHtml
           ? inlineHtmlMetadata(inlineHtml)
-          : message.details === undefined ? undefined : json(message.details),
-        status: toolWasCancelled(message)
+          : projectResource
+            ? projectResourceMetadata(projectResource)
+            : message.details === undefined ? undefined : json(message.details),
+        status: cancelled
           ? "cancelled"
           : message.isError === true ? "failed" : "completed",
-      }, !inlineHtml);
+      }, !inlineHtml && !projectResource);
       return events;
     }
     const id =
@@ -667,6 +715,7 @@ export function normalizePiRpcRecord(
   if (type === "tool_execution_end") {
     const result = recordOf(record.result);
     const toolCallId = stringOf(record.toolCallId);
+    const cancelled = toolWasCancelled(result, record.isError === true);
     const inlineHtml = record.isError === true
       ? undefined
       : inlineHtmlBlock(
@@ -674,18 +723,29 @@ export function normalizePiRpcRecord(
           result.details,
           `tool-${toolCallId}-inline-html`,
         );
+    const projectResource = record.isError === true || cancelled
+      ? undefined
+      : projectResourceBlock(
+          stringOf(record.toolName),
+          result.details,
+          `tool-${toolCallId}-project-resource`,
+        );
     emit("tool.completed", {
       toolCallId,
       output: inlineHtml
         ? [inlineHtml]
-        : contentBlocks(result.content, `tool-${toolCallId}-result`),
+        : projectResource
+          ? [projectResource]
+          : contentBlocks(result.content, `tool-${toolCallId}-result`),
       details: inlineHtml
         ? inlineHtmlMetadata(inlineHtml)
-        : result.details === undefined ? undefined : json(result.details),
-      status: toolWasCancelled(result)
+        : projectResource
+          ? projectResourceMetadata(projectResource)
+          : result.details === undefined ? undefined : json(result.details),
+      status: cancelled
         ? "cancelled"
         : record.isError === true ? "failed" : "completed",
-    }, !inlineHtml);
+    }, !inlineHtml && !projectResource);
     return events;
   }
   if (type === "queue_update") {

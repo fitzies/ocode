@@ -12,6 +12,7 @@ import {
   type ArtifactReference,
   type InteractionResponse,
   type JsonValue,
+  type ProjectResourceContentBlock,
   type SessionSummary,
   type ThinkingLevel,
   type TimelineEntry,
@@ -47,6 +48,13 @@ export interface WorkspaceFile {
   path: string;
 }
 
+export type LiveProjectResourceCompletion = {
+  sessionId: string;
+  sequence: number;
+  toolCallId: string;
+  blocks: ProjectResourceContentBlock[];
+};
+
 export interface ReplayStatus {
   fixtureId: string;
   playing: boolean;
@@ -77,6 +85,7 @@ interface PendingSessionCreate {
 export interface AnvilClient {
   getSnapshot(): AnvilClientSnapshot;
   subscribe(listener: () => void): () => void;
+  subscribeProjectResourceCompletions(listener: (completion: LiveProjectResourceCompletion) => void): () => void;
   dispatch(command: AnvilClientCommand): void;
   selectProject(projectId: string): void;
   selectSession(sessionId: string): void;
@@ -411,6 +420,8 @@ export class FixtureAnvilClient implements AnvilClient {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   };
+
+  subscribeProjectResourceCompletions = (_listener: (completion: LiveProjectResourceCompletion) => void) => () => undefined;
 
   dispatch = (command: AnvilClientCommand) => {
     switch (command.type) {
@@ -1107,6 +1118,7 @@ export class ForgeAnvilClient implements AnvilClient {
     replay: { fixtureId: "live", playing: false, cursor: 0, total: 0, speed: 1 },
   };
   private readonly listeners = new Set<() => void>();
+  private readonly projectResourceListeners = new Set<(completion: LiveProjectResourceCompletion) => void>();
   private readonly fetcher: typeof fetch;
   private readonly createEventSource: (url: string) => EventSource;
   private stream?: EventSource;
@@ -1163,6 +1175,11 @@ export class ForgeAnvilClient implements AnvilClient {
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  };
+
+  subscribeProjectResourceCompletions = (listener: (completion: LiveProjectResourceCompletion) => void) => {
+    this.projectResourceListeners.add(listener);
+    return () => this.projectResourceListeners.delete(listener);
   };
 
   dispatch = (command: AnvilClientCommand) => {
@@ -1893,6 +1910,26 @@ export class ForgeAnvilClient implements AnvilClient {
           const pending = this.pendingCreates.get(event.payload.sessionId);
           pending?.resolveSettled(false);
           this.pendingCreates.delete(event.payload.sessionId);
+        }
+        if (
+          eventApplied &&
+          event.sequence > previousSnapshot.lastSequence &&
+          event.type === "tool.completed" &&
+          event.payload.status === "completed" &&
+          event.sessionId
+        ) {
+          const blocks = event.payload.output.filter(
+            (block): block is ProjectResourceContentBlock => block.type === "projectResource",
+          );
+          if (blocks.length) {
+            const completion = {
+              sessionId: event.sessionId,
+              sequence: event.sequence,
+              toolCallId: event.payload.toolCallId,
+              blocks,
+            };
+            for (const listener of this.projectResourceListeners) listener(completion);
+          }
         }
         this.emit();
         if (this.snapshot.sequenceGap) void this.bootstrap();

@@ -20,6 +20,22 @@ Project terminals are owner-authenticated shells running with the Forge operatin
 
 Tool output, images, raw RPC records, or structured details larger than 256 KiB are externalized before they enter SQLite, snapshots, or SSE. Artifact files are mode `0600`, live outside the static web root, and are served only through the owner-authenticated `/api/v1/artifacts/:id` route. Deleting a thread removes its artifact metadata and files; startup removes files that have no durable metadata.
 
+## Project file access and resource viewing
+
+The read-only project file service resolves every request from an authenticated `projectId` and a normalized project-relative path. Forge obtains the canonical root from the trusted project registry, opens the target, resolves the opened file descriptor on Linux, and verifies that the final target remains inside that root. Project file access intentionally fails closed on non-Linux hosts because the portable pathname APIs cannot close parent-directory symlink races. Absolute paths, traversal, backslashes, control/NUL bytes, malformed URL encoding, escaping symlinks, special files, and unavailable projects are rejected. Filesystem opens are nonblocking so FIFOs cannot exhaust Forge workers. Resource metadata rejects files above 20 MiB, text reads stop at 1 MiB, and raster previews stop at 10 MiB with at most four delivery-scoped buffered responses.
+
+Owner-authenticated routes are:
+
+- `GET|HEAD /api/v1/projects/:projectId/files/metadata?path=` — regular-file metadata, media type, viewer hint, modification time, and ETag.
+- `GET /api/v1/projects/:projectId/files/content?path=` — valid UTF-8 text in an inert JSON response.
+- `GET|HEAD /api/v1/projects/:projectId/files/media?path=` — signature-checked PNG, JPEG, GIF, or WebP bytes with `nosniff`, sandbox CSP, no-store caching, and a safe disposition.
+
+Project-file routes reject browser requests marked cross-site and emit `Cross-Origin-Resource-Policy: same-origin` in addition to exact owner authentication. Workspace files are never copied into or served from the static web root. Source, Markdown, HTML, JavaScript, XML, and SVG travel only as JSON text. HTML preview is reconstructed in a sandboxed opaque-origin iframe under a deny-by-default CSP; scripts, event handlers, forms, navigation, and external resources are blocked. SVG direct preview is intentionally unsupported. Unknown/binary files show metadata instead of being decoded.
+
+The bundled `anvil_open_file` Pi tool requires a trusted workspace, accepts only project-relative paths, validates a bounded regular file, and returns navigation metadata without contents or a project ID. Pi RPC stores that result as a durable session-relative `projectResource` block. A newly streamed successful completion can open it once on the active client; restored or replayed history never imperatively reopens files, and every timeline result keeps a manual **Open file** action.
+
+Resource tabs are client-local and project-scoped. There is no project file explorer or project-scoped tree/search API: resources open only from live agent requests or explicit timeline actions, including validated project-relative paths on successful write/edit tools. File viewing is read-only: editing, create/rename/delete, arbitrary binary download, SVG preview, development-server preview, and filesystem watching are not implemented. Changes are detected by ETag with stale-while-revalidate checks when a resource is refreshed or the client regains focus.
+
 Forge keeps a snapshot-backed tail of 100,000 journal events for reconnection and gradually compacts older rows during checkpoints. Clients whose cursor predates that tail receive a reset and restore from authoritative snapshots. Compaction makes SQLite pages reusable but does not immediately shrink the database file on disk.
 
 ## Development

@@ -106,6 +106,51 @@ export function buildInlineHtmlDocument(html: string, token: string): string {
   return `<!doctype html><html><head>${documentInjection(token, html)}</head><body></body></html>`;
 }
 
+export function SandboxedHtmlPreview({ html, title, className = "" }: {
+  html: string;
+  title: string;
+  className?: string;
+}) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const token = useMemo(() => randomToken(), [html]);
+  const source = useMemo(() => buildInlineHtmlDocument(html, token), [html, token]);
+  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  useEffect(() => {
+    setState("loading");
+    const timeout = window.setTimeout(() => setState("error"), 8_000);
+    const receive = (event: MessageEvent) => {
+      if (event.source !== frameRef.current?.contentWindow) return;
+      const data = event.data;
+      if (!data || typeof data !== "object" || data.type !== MESSAGE_TYPE || data.token !== token) return;
+      if (data.event === "ready" || data.event === "resize") {
+        window.clearTimeout(timeout);
+        setState("ready");
+      }
+    };
+    window.addEventListener("message", receive);
+    return () => {
+      window.clearTimeout(timeout);
+      window.removeEventListener("message", receive);
+    };
+  }, [token]);
+  return (
+    <div className={`sandboxed-html-preview sandboxed-html-preview--${state} ${className}`.trim()}>
+      {state === "loading" && <div className="inline-html-artifact-loading" role="status"><Spinner className="size-4" />Loading preview…</div>}
+      {state === "error" && <div className="inline-html-artifact-error" role="alert">HTML preview could not be rendered.</div>}
+      <iframe
+        ref={frameRef}
+        className="sandboxed-html-preview-frame"
+        sandbox="allow-scripts"
+        referrerPolicy="no-referrer"
+        srcDoc={source}
+        title={title}
+        onLoad={() => frameRef.current?.contentWindow?.postMessage({ type: MESSAGE_TYPE, token, event: "measure" }, "*")}
+        onError={() => setState("error")}
+      />
+    </div>
+  );
+}
+
 export function InlineHtmlArtifactPending({ title }: { title: string }) {
   return (
     <article className="inline-html-artifact inline-html-artifact--pending" aria-label={title}>

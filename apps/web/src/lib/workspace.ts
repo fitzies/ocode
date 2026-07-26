@@ -1,4 +1,4 @@
-import type { ProjectSummary, SessionSummary } from "@anvil/protocol";
+import type { ProjectResourceReference, ProjectSummary, SessionSummary } from "@anvil/protocol";
 
 export type WorkspaceLocation = {
   projectId: string;
@@ -7,17 +7,35 @@ export type WorkspaceLocation = {
 
 export type MobileWorkspaceSurface = "conversation" | "terminal" | "resource";
 
+export type ProjectResourceOpenSource = "tool" | "timeline" | "terminal";
+
+export type ProjectResourceTab = ProjectResourceReference & {
+  id: string;
+  openedFrom: ProjectResourceOpenSource;
+};
+
 export type ProjectWorkspaceSurfaceState = {
   bottomVisible: boolean;
   rightVisible: boolean;
   mobileSurface: MobileWorkspaceSurface;
+  resourceTabs: ProjectResourceTab[];
+  activeResourceId: string | null;
 };
 
 export const DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE: ProjectWorkspaceSurfaceState = {
   bottomVisible: false,
   rightVisible: false,
   mobileSurface: "conversation",
+  resourceTabs: [],
+  activeResourceId: null,
 };
+
+export function shouldAutoOpenProjectResource(
+  completionSessionId: string,
+  location: WorkspaceLocation | null,
+): boolean {
+  return location?.sessionId === completionSessionId;
+}
 
 export function locationForSession(session: SessionSummary): WorkspaceLocation {
   return { projectId: session.projectId, sessionId: session.id };

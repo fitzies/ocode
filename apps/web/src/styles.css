@@ -4,6 +4,7 @@
 @import "./styles/timeline.css";
 @import "./styles/composer.css";
 @import "./styles/terminal.css";
+@import "./styles/resource.css";
 @import "./styles/responsive.css";
 @import "@xterm/xterm/css/xterm.css";
 @import "tw-animate-css";

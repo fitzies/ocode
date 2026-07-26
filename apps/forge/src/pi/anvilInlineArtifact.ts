@@ -2,10 +2,21 @@ import { constants } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, resolve } from "node:path";
 
+import { normalizeProjectResourcePath } from "@anvil/protocol";
 import { Type } from "typebox";
 
+import { secureOpenProjectPath } from "../files/secureProjectPath.ts";
+
 const MAX_INLINE_HTML_BYTES = 192 * 1024;
+const MAX_OPEN_FILE_BYTES = 20 * 1024 * 1024;
 const TOOL_NAME = "anvil_render_html_file";
+const OPEN_FILE_TOOL_NAME = "anvil_open_file";
+const OPEN_FILE_TEXT_EXTENSIONS = new Set([
+  ".c", ".cc", ".conf", ".cpp", ".css", ".csv", ".go", ".h", ".hpp", ".htm", ".html", ".ini",
+  ".java", ".js", ".json", ".jsx", ".log", ".lua", ".md", ".mdx", ".mjs", ".py", ".rb", ".rs", ".sh",
+  ".sql", ".svg", ".toml", ".ts", ".tsx", ".txt", ".xml", ".yaml", ".yml",
+]);
+const OPEN_FILE_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
 
 interface ToolContext {
   cwd: string;
@@ -22,7 +33,7 @@ interface ExtensionApi {
     parameters: ReturnType<typeof Type.Object>;
     execute(
       toolCallId: string,
-      params: { path: string; title?: string },
+      params: Record<string, unknown>,
       signal: AbortSignal | undefined,
       onUpdate: unknown,
       context: ToolContext,
@@ -61,6 +72,7 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
       if (signal?.aborted) throw new Error("Artifact rendering was cancelled");
 
       const workspaceRoot = await realpath(context.cwd);
+      if (typeof params.path !== "string") throw new Error("Artifact path is required");
       const requestedPath = params.path.replace(/^@/, "");
       const lexicalPath = resolve(workspaceRoot, requestedPath);
       if (!isInside(workspaceRoot, lexicalPath)) {
@@ -112,7 +124,7 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
       if (!html.trim()) throw new Error("Artifact file is empty");
 
       const sourcePath = relative(workspaceRoot, targetPath);
-      const title = params.title?.trim().slice(0, 120) || basename(targetPath, extname(targetPath));
+      const title = (typeof params.title === "string" ? params.title.trim().slice(0, 120) : "") || basename(targetPath, extname(targetPath));
       return {
         content: [{ type: "text", text: `Rendered ${title} inline.` }],
         details: {
@@ -122,6 +134,82 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
           sourcePath,
           byteLength: bytes.byteLength,
           html,
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: OPEN_FILE_TOOL_NAME,
+    label: "Open project file",
+    description:
+      "Open a regular file from the trusted workspace in Anvil's read-only resource viewer. The path must be project-relative. This tool returns navigation metadata, not file contents.",
+    promptSnippet: "Open a project file in Anvil's read-only resource viewer",
+    promptGuidelines: [
+      "Use anvil_open_file when the user should inspect a source, Markdown, HTML, raster image, or other project file in Anvil.",
+      "Pass only a project-relative path. Never pass or guess a project ID or an absolute filesystem path.",
+      "Use source for code and raw text, preview for Markdown, HTML, and allowlisted raster images, or auto to let Anvil choose.",
+    ],
+    parameters: Type.Object({
+      path: Type.String({ description: "Project-relative path to a regular file." }),
+      view: Type.Optional(Type.Union([
+        Type.Literal("auto"),
+        Type.Literal("source"),
+        Type.Literal("preview"),
+      ])),
+      line: Type.Optional(Type.Integer({ minimum: 1 })),
+      column: Type.Optional(Type.Integer({ minimum: 1 })),
+    }, { additionalProperties: false }),
+
+    async execute(_toolCallId, params, signal, _onUpdate, context) {
+      if (!context.isProjectTrusted()) throw new Error("Opening project files requires a trusted workspace");
+      if (signal?.aborted) throw new Error("Opening the project file was cancelled");
+      if (typeof params.path !== "string") throw new Error("Project-relative path is required");
+      const path = normalizeProjectResourcePath(params.path);
+      if (!path) throw new Error("File path must be a normalized project-relative path");
+      const view = params.view === undefined ? undefined : String(params.view);
+      if (view !== undefined && !["auto", "source", "preview"].includes(view)) throw new Error("File view is invalid");
+      const line = params.line === undefined ? undefined : Number(params.line);
+      const column = params.column === undefined ? undefined : Number(params.column);
+      if (line !== undefined && (!Number.isSafeInteger(line) || line < 1)) throw new Error("Line must be a positive integer");
+      if (column !== undefined && (!Number.isSafeInteger(column) || column < 1)) throw new Error("Column must be a positive integer");
+
+      const workspaceRoot = await realpath(context.cwd);
+      const lexicalPath = resolve(workspaceRoot, ...path.split("/"));
+      if (!isInside(workspaceRoot, lexicalPath)) throw new Error("File path must stay inside the trusted workspace");
+
+      let target: Awaited<ReturnType<typeof secureOpenProjectPath>>;
+      try {
+        target = await secureOpenProjectPath(workspaceRoot, path);
+      } catch (error) {
+        if (error instanceof Error && error.message === "path_outside_project") {
+          throw new Error("File path must stay inside the trusted workspace");
+        }
+        throw error;
+      }
+
+      try {
+        if (!target.file.isFile()) throw new Error("File path must point to a regular file");
+        const extension = extname(path).toLowerCase();
+        const viewLimit = view === "source" || OPEN_FILE_TEXT_EXTENSIONS.has(extension)
+          ? 1024 * 1024
+          : OPEN_FILE_IMAGE_EXTENSIONS.has(extension)
+            ? 10 * 1024 * 1024
+            : MAX_OPEN_FILE_BYTES;
+        if (target.file.size > viewLimit) throw new Error(`File exceeds the ${viewLimit / 1024 / 1024} MiB viewer limit`);
+      } finally {
+        await target.handle.close();
+      }
+
+      return {
+        content: [{ type: "text", text: `Ready to open ${path}.` }],
+        details: {
+          kind: "anvil.open-file",
+          schemaVersion: 1,
+          path,
+          ...(view ? { view } : {}),
+          ...(line ? { line } : {}),
+          ...(column ? { column } : {}),
         },
       };
     },

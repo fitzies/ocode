@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   activateProjectWorkspaceSurface,
+  closeProjectResourceInState,
+  openProjectResourceInState,
   updateProjectWorkspaceSurfaceState,
 } from "./WorkspaceSurfaceState";
 
@@ -20,11 +22,15 @@ describe("project workspace surface state", () => {
       bottomVisible: true,
       rightVisible: false,
       mobileSurface: "terminal",
+      resourceTabs: [],
+      activeResourceId: null,
     });
     expect(both["project-b"]).toEqual({
       bottomVisible: false,
       rightVisible: true,
       mobileSurface: "resource",
+      resourceTabs: [],
+      activeResourceId: null,
     });
   });
 
@@ -40,6 +46,38 @@ describe("project workspace surface state", () => {
       bottomVisible: true,
       rightVisible: true,
       mobileSurface: "resource",
+      resourceTabs: [],
+      activeResourceId: null,
     });
+  });
+
+  it("creates, reuses, closes, and isolates project resource tabs", () => {
+    let states = openProjectResourceInState({}, {
+      projectId: "project-a",
+      path: "src/main.ts",
+      line: 2,
+    }, "timeline");
+    states = openProjectResourceInState(states, {
+      projectId: "project-a",
+      path: "src/main.ts",
+      line: 9,
+    }, "timeline");
+    states = openProjectResourceInState(states, {
+      projectId: "project-b",
+      path: "README.md",
+    }, "tool");
+
+    expect(states["project-a"]?.resourceTabs).toEqual([
+      expect.objectContaining({ path: "src/main.ts", line: 9, openedFrom: "timeline" }),
+    ]);
+    expect(states["project-b"]?.resourceTabs).toHaveLength(1);
+    states = closeProjectResourceInState(states, "project-a", "src/main.ts");
+    expect(states["project-a"]).toMatchObject({
+      resourceTabs: [],
+      activeResourceId: null,
+      rightVisible: false,
+      mobileSurface: "conversation",
+    });
+    expect(states["project-b"]?.resourceTabs).toHaveLength(1);
   });
 });

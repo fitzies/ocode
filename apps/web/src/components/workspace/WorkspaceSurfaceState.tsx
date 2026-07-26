@@ -1,8 +1,10 @@
+import type { ProjectResourceReference } from "@anvil/protocol";
 import { createContext, type ReactNode, useCallback, useContext, useMemo, useState } from "react";
 
 import {
   DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE,
   type MobileWorkspaceSurface,
+  type ProjectResourceOpenSource,
   type ProjectWorkspaceSurfaceState,
 } from "@/lib/workspace";
 
@@ -35,12 +37,54 @@ export function activateProjectWorkspaceSurface(
   });
 }
 
+export function openProjectResourceInState(
+  states: WorkspaceSurfaceStateByProject,
+  reference: ProjectResourceReference,
+  source: ProjectResourceOpenSource,
+): WorkspaceSurfaceStateByProject {
+  const current = states[reference.projectId] ?? DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE;
+  const id = reference.path;
+  const tab = { ...reference, id, openedFrom: source };
+  const existing = current.resourceTabs.findIndex((candidate) => candidate.id === id);
+  const resourceTabs = existing < 0
+    ? [...current.resourceTabs, tab]
+    : current.resourceTabs.map((candidate, index) => index === existing ? { ...candidate, ...tab } : candidate);
+  return updateProjectWorkspaceSurfaceState(states, reference.projectId, {
+    resourceTabs,
+    activeResourceId: id,
+    rightVisible: true,
+    mobileSurface: "resource",
+  });
+}
+
+export function closeProjectResourceInState(
+  states: WorkspaceSurfaceStateByProject,
+  projectId: string,
+  resourceId: string,
+): WorkspaceSurfaceStateByProject {
+  const current = states[projectId] ?? DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE;
+  const index = current.resourceTabs.findIndex((tab) => tab.id === resourceId);
+  if (index < 0) return states;
+  const resourceTabs = current.resourceTabs.filter((tab) => tab.id !== resourceId);
+  const activeResourceId = current.activeResourceId === resourceId
+    ? resourceTabs[Math.min(index, resourceTabs.length - 1)]?.id ?? null
+    : current.activeResourceId;
+  return updateProjectWorkspaceSurfaceState(states, projectId, {
+    resourceTabs,
+    activeResourceId,
+    ...(!resourceTabs.length ? { rightVisible: false, mobileSurface: "conversation" as const } : {}),
+  });
+}
+
 type WorkspaceSurfaceContextValue = {
   projectId: string | null;
   state: ProjectWorkspaceSurfaceState;
   setBottomVisible(visible: boolean): void;
   setRightVisible(visible: boolean): void;
   setMobileSurface(surface: MobileWorkspaceSurface): void;
+  openProjectResource(reference: ProjectResourceReference, source: ProjectResourceOpenSource): void;
+  selectProjectResource(resourceId: string): void;
+  closeProjectResource(resourceId: string): void;
 };
 
 const WorkspaceSurfaceContext = createContext<WorkspaceSurfaceContextValue | null>(null);
@@ -76,6 +120,18 @@ export function WorkspaceSurfaceProvider({
       ...(!visible && state.mobileSurface === "resource" ? { mobileSurface: "conversation" as const } : {}),
     }),
     setMobileSurface: activate,
+    openProjectResource: (reference, source) => {
+      setStates((current) => openProjectResourceInState(current, reference, source));
+    },
+    selectProjectResource: (resourceId) => update({
+      activeResourceId: resourceId,
+      rightVisible: true,
+      mobileSurface: "resource",
+    }),
+    closeProjectResource: (resourceId) => {
+      if (!projectId) return;
+      setStates((current) => closeProjectResourceInState(current, projectId, resourceId));
+    },
   }), [activate, projectId, state, update]);
 
   return <WorkspaceSurfaceContext.Provider value={value}>{children}</WorkspaceSurfaceContext.Provider>;

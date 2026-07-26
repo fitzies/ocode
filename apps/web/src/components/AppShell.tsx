@@ -1,4 +1,11 @@
-import type { ArtifactReference, CapabilityCatalog } from "@anvil/protocol";
+import {
+  resolveProjectResourceReference,
+  type ArtifactReference,
+  type CapabilityCatalog,
+  type ProjectResourceContentBlock,
+  type SessionSummary,
+  type TimelineEntry,
+} from "@anvil/protocol";
 import {
   Cancel01Icon,
   ComputerIcon,
@@ -41,12 +48,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { anvilClient, type DeliveryMode } from "../lib/anvilClient";
 import { isTerminalInputTarget } from "../lib/keyboardScope";
+import { shouldAutoOpenProjectResource } from "../lib/workspace";
 import { equalAppShellSnapshots, selectAppShellSnapshot } from "../lib/appShellSnapshot";
 import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
 import { InteractionPanel } from "./InteractionDialog";
 import { Sidebar } from "./Sidebar";
 import { Timeline } from "./Timeline";
+import { ProjectResourceSurface } from "./resource/ProjectResourceSurface";
 import { ProjectTerminalSurface } from "./terminal/ProjectTerminalSurface";
 import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
 import { WorkspaceSurfaceProvider, useWorkspaceSurfaces } from "./workspace/WorkspaceSurfaceState";
@@ -63,8 +72,47 @@ type LiveIndicators = {
   };
 };
 
+function TimelineWithResources({ session, entries, loading, onSuggestion }: {
+  session: SessionSummary;
+  entries: TimelineEntry[];
+  loading: boolean;
+  onSuggestion: (prompt: string) => void;
+}) {
+  const { openProjectResource } = useWorkspaceSurfaces();
+  return (
+    <Timeline
+      session={session}
+      entries={entries}
+      loading={loading}
+      onSuggestion={onSuggestion}
+      onOpenProjectResource={(block: ProjectResourceContentBlock) => {
+        openProjectResource(resolveProjectResourceReference(block, session), "timeline");
+      }}
+    />
+  );
+}
+
+function LiveProjectResourceAutoOpen() {
+  const { openProjectResource } = useWorkspaceSurfaces();
+  const consumed = useRef(new Set<string>());
+  useEffect(() => anvilClient.subscribeProjectResourceCompletions((completion) => {
+    const snapshot = anvilClient.getSnapshot();
+    if (!shouldAutoOpenProjectResource(completion.sessionId, snapshot.workspaceLocation)) return;
+    const session = snapshot.sessions.find((candidate) => candidate.id === completion.sessionId);
+    if (!session) return;
+    for (const block of completion.blocks) {
+      const key = `${completion.sessionId}:${completion.toolCallId}:${block.id}`;
+      if (consumed.current.has(key)) continue;
+      consumed.current.add(key);
+      openProjectResource(resolveProjectResourceReference(block, session), "tool");
+    }
+  }), [openProjectResource]);
+  return null;
+}
+
 function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
   const { state, setBottomVisible, setMobileSurface } = useWorkspaceSurfaces();
+  const active = isMobile ? state.mobileSurface === "terminal" : state.bottomVisible;
   const open = () => {
     if (isMobile) setMobileSurface("terminal");
     else setBottomVisible(!state.bottomVisible);
@@ -72,10 +120,10 @@ function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
   return (
     <Button
       type="button"
-      variant={state.bottomVisible ? "secondary" : "ghost"}
+      variant={active ? "secondary" : "ghost"}
       size="icon-sm"
-      aria-label={state.bottomVisible ? "Hide project terminals" : "Show project terminals"}
-      aria-pressed={state.bottomVisible}
+      aria-label={active ? "Hide project terminals" : "Show project terminals"}
+      aria-pressed={active}
       onClick={open}
     >
       <HugeiconsIcon icon={ComputerTerminal01Icon} strokeWidth={2} />
@@ -128,7 +176,6 @@ function AppShellContent() {
   );
   const { isMobile, setOpenMobile } = useSidebar();
   const { theme, setTheme } = useTheme();
-  const [newProjectId, setNewProjectId] = useState("");
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);
@@ -165,9 +212,6 @@ function AppShellContent() {
   const activeCatalog = activeSession
     ? snapshot.catalogs[activeSession.id] ?? EMPTY_CATALOG
     : EMPTY_CATALOG;
-  const selectedProjectId = snapshot.projects.some((project) => project.id === newProjectId)
-    ? newProjectId
-    : activeProject?.id ?? snapshot.projects[0]?.id ?? "";
   const sidebarSnapshot = useMemo(() => ({
     projects: snapshot.projects,
     sessions: snapshot.sessions,
@@ -434,8 +478,6 @@ function AppShellContent() {
     <div className="app-shell">
       <Sidebar
         snapshot={sidebarSnapshot}
-        activeProjectId={activeProject?.id ?? null}
-        onSelectProject={anvilClient.selectProject}
         onSelectSession={anvilClient.selectSession}
         onCreateSession={startSession}
         onAddWorkspace={openAddWorkspace}
@@ -446,9 +488,11 @@ function AppShellContent() {
 
       <SidebarInset className="workspace">
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
+          <LiveProjectResourceAutoOpen />
           <ProjectWorkspace
             isMobile={isMobile}
             bottom={activeProject ? <ProjectTerminalSurface projectId={activeProject.id} isMobile={isMobile} /> : undefined}
+            right={activeProject ? <ProjectResourceSurface projectId={activeProject.id} /> : undefined}
             main={<div className="conversation-surface">
         <header className="session-header">
           <div className="header-title-group">
@@ -537,7 +581,7 @@ function AppShellContent() {
 
         {activeSession ? (
           <>
-            <Timeline
+            <TimelineWithResources
               key={activeSession.id}
               session={activeSession}
               entries={timeline}
@@ -583,26 +627,10 @@ function AppShellContent() {
               <p>
                 {snapshot.projects.length > 0
                   ? activeProject
-                    ? `Start a new thread in ${activeProject.name}, or choose an existing thread from the sidebar.`
-                    : "Choose a workspace and start the first thread."
+                    ? `Choose an existing thread, or use the + beside Threads to start one in ${activeProject.name}.`
+                    : "Filter the thread list by project, then use the + beside Threads to start a thread."
                   : "Add a workspace with the + in the sidebar."}
               </p>
-              {snapshot.projects.length > 0 && (
-                <div className="mt-2 grid w-full grid-cols-[1fr_auto] gap-2 text-left">
-                  <label className="col-span-2 text-[0.625rem] font-medium uppercase tracking-wider text-muted-foreground" htmlFor="new-session-project">Workspace</label>
-                  <Select value={selectedProjectId} onValueChange={setNewProjectId}>
-                    <SelectTrigger id="new-session-project" className="w-full">
-                      <SelectValue placeholder="Choose a workspace" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {snapshot.projects.map((project) => (
-                        <SelectItem key={project.id} value={project.id}>{project.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button type="button" onClick={() => startSession(selectedProjectId)}>Start thread</Button>
-                </div>
-              )}
             </div>
           </div>
         )}

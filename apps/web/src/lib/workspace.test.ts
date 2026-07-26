@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { locationForSession, reconcileWorkspaceLocation } from "./workspace";
+import { locationForSession, reconcileWorkspaceLocation, shouldAutoOpenProjectResource } from "./workspace";
 
 const projects = [
   { id: "project-a", name: "A", path: "/a" },
@@ -51,6 +51,15 @@ describe("workspace location", () => {
       sessions,
       "session-a",
     )).toEqual({ projectId: "project-b", sessionId: "session-b" });
+  });
+
+  it("checks live auto-open eligibility against the current location atomically", () => {
+    const beforeSwitch = { projectId: "project-a", sessionId: "session-a" };
+    const afterSwitch = { projectId: "project-b", sessionId: "session-b" };
+    expect(shouldAutoOpenProjectResource("session-a", beforeSwitch)).toBe(true);
+    expect(shouldAutoOpenProjectResource("session-a", afterSwitch)).toBe(false);
+    expect(shouldAutoOpenProjectResource("session-b", afterSwitch)).toBe(true);
+    expect(shouldAutoOpenProjectResource("session-b", null)).toBe(false);
   });
 
   it("falls back safely when the selected project or thread disappears", () => {

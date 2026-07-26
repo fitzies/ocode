@@ -323,6 +323,137 @@ describe("Pi RPC normalization", () => {
     expect(event).toHaveProperty("raw");
   });
 
+  it("normalizes live and restored open-file results into durable project resources", () => {
+    const details = {
+      kind: "anvil.open-file",
+      schemaVersion: 1,
+      path: "src/main.ts",
+      view: "source",
+      line: 8,
+      column: 3,
+    };
+    const [live] = normalizePiRpcRecord(state(), {
+      type: "tool_execution_end",
+      toolCallId: "call-open",
+      toolName: "anvil_open_file",
+      result: { content: [{ type: "text", text: "Ready to open src/main.ts." }], details },
+      isError: false,
+    });
+    const restored = normalizePiRpcRecord(state(), {
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: "call-restored-open",
+        toolName: "anvil_open_file",
+        content: [{ type: "text", text: "Ready to open src/main.ts." }],
+        details,
+        isError: false,
+      },
+    });
+
+    expect(live).toMatchObject({
+      type: "tool.completed",
+      payload: {
+        output: [{
+          id: "tool-call-open-project-resource",
+          type: "projectResource",
+          path: "src/main.ts",
+          view: "source",
+          line: 8,
+          column: 3,
+        }],
+        details,
+      },
+    });
+    expect(live).not.toHaveProperty("raw");
+    expect(restored.at(-1)).toMatchObject({
+      type: "tool.completed",
+      payload: { output: [{ type: "projectResource", path: "src/main.ts" }] },
+    });
+    expect(restored.every((event) => !("raw" in event))).toBe(true);
+  });
+
+  it("keeps malformed or failed open-file results on the generic fallback", () => {
+    for (const record of [
+      {
+        type: "tool_execution_end",
+        toolCallId: "call-bad-open",
+        toolName: "anvil_open_file",
+        result: {
+          content: [{ type: "text", text: "Malformed" }],
+          details: { kind: "anvil.open-file", schemaVersion: 1, path: "../secret" },
+        },
+        isError: false,
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "call-failed-open",
+        toolName: "anvil_open_file",
+        result: {
+          content: [{ type: "text", text: "Failed" }],
+          details: { kind: "anvil.open-file", schemaVersion: 1, path: "src/main.ts" },
+        },
+        isError: true,
+      },
+    ]) {
+      const [event] = normalizePiRpcRecord(state(), record);
+      expect(event).toMatchObject({
+        type: "tool.completed",
+        payload: { output: [{ type: "text" }] },
+      });
+      expect(event).toHaveProperty("raw");
+    }
+  });
+
+  it("does not infer cancellation from a successful open-file path", () => {
+    const [event] = normalizePiRpcRecord(state(), {
+      type: "tool_execution_end",
+      toolCallId: "call-cancelled-name",
+      toolName: "anvil_open_file",
+      result: {
+        content: [{ type: "text", text: "Ready to open aborted/cancelled.ts." }],
+        details: { kind: "anvil.open-file", schemaVersion: 1, path: "aborted/cancelled.ts" },
+      },
+      isError: false,
+    });
+    expect(event).toMatchObject({
+      type: "tool.completed",
+      payload: { status: "completed", output: [{ type: "projectResource", path: "aborted/cancelled.ts" }] },
+    });
+  });
+
+  it("keeps cancelled live and restored open-file results generic and non-clickable", () => {
+    const details = { kind: "anvil.open-file", schemaVersion: 1, path: "src/main.ts" };
+    const [live] = normalizePiRpcRecord(state(), {
+      type: "tool_execution_end",
+      toolCallId: "call-cancelled-open",
+      toolName: "anvil_open_file",
+      result: { content: [{ type: "text", text: "Command cancelled" }], details, cancelled: true },
+      isError: false,
+    });
+    const restored = normalizePiRpcRecord(state(), {
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: "call-restored-cancelled-open",
+        toolName: "anvil_open_file",
+        content: [{ type: "text", text: "Command cancelled" }],
+        details,
+        cancelled: true,
+        isError: false,
+      },
+    });
+
+    expect(live).toMatchObject({
+      type: "tool.completed",
+      payload: { status: "cancelled", output: [{ type: "text" }] },
+    });
+    expect(restored.at(-1)).toMatchObject({
+      type: "tool.completed",
+      payload: { status: "cancelled", output: [{ type: "text" }] },
+    });
+  });
+
   it("turns accumulated tool progress into replaceable output events", () => {
     const [event] = normalizePiRpcRecord(state(), {
       type: "tool_execution_update",

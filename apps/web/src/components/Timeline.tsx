@@ -1,7 +1,9 @@
+import { normalizeProjectResourcePath } from "@anvil/protocol";
 import type {
   ArtifactReference,
   ContentBlock,
   JsonValue,
+  ProjectResourceContentBlock,
   SessionSummary,
   TimelineEntry,
   ToolEntry,
@@ -30,6 +32,7 @@ import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "r
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
+import { Button } from "./ui/button";
 import { presentTool, type ToolCategory } from "./toolPresentation";
 
 interface TimelineProps {
@@ -37,6 +40,7 @@ interface TimelineProps {
   entries: TimelineEntry[];
   loading?: boolean;
   onSuggestion: (prompt: string) => void;
+  onOpenProjectResource?: (block: ProjectResourceContentBlock) => void;
 }
 
 const WORKING_MESSAGES = [
@@ -144,7 +148,11 @@ const MarkdownText = memo(function MarkdownText({
   );
 });
 
-function ContentBlocks({ blocks, compact = false }: { blocks: ContentBlock[]; compact?: boolean }) {
+function ContentBlocks({ blocks, compact = false, onOpenProjectResource }: {
+  blocks: ContentBlock[];
+  compact?: boolean;
+  onOpenProjectResource?: (block: ProjectResourceContentBlock) => void;
+}) {
   if (!blocks.length) return null;
   return (
     <div className={compact ? "content-blocks content-blocks--compact" : "content-blocks"}>
@@ -159,6 +167,14 @@ function ContentBlocks({ blocks, compact = false }: { blocks: ContentBlock[]; co
         }
         if (block.type === "inlineHtml") {
           return <InlineHtmlArtifact key={block.id} block={block} />;
+        }
+        if (block.type === "projectResource") {
+          return (
+            <div className="project-resource-block" key={block.id}>
+              <span><strong>{block.path.split("/").at(-1)}</strong><small>{block.path}{block.line ? `:${block.line}${block.column ? `:${block.column}` : ""}` : ""}</small></span>
+              <Button type="button" size="sm" variant="outline" onClick={() => onOpenProjectResource?.(block)}>Open file</Button>
+            </div>
+          );
         }
         if (block.type === "image") {
           const source = block.url ?? (block.data ? `data:${block.mimeType};base64,${block.data}` : undefined);
@@ -206,7 +222,19 @@ function firstTextOutput(entry: ToolEntry): string | undefined {
   return text.length > 120 ? `${text.slice(0, 119)}…` : text;
 }
 
-function TimelineItem({ entry, entering = false }: { entry: TimelineEntry; entering?: boolean }) {
+export function trustedFileToolResource(entry: ToolEntry): ProjectResourceContentBlock | undefined {
+  if (entry.status !== "completed" || !["write", "edit"].includes(entry.name)) return undefined;
+  if (!entry.arguments || typeof entry.arguments !== "object" || Array.isArray(entry.arguments)) return undefined;
+  const path = (entry.arguments as Record<string, JsonValue>).path;
+  if (typeof path !== "string" || normalizeProjectResourcePath(path) !== path) return undefined;
+  return { id: `${entry.id}-project-resource`, type: "projectResource", path, view: "auto" };
+}
+
+function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
+  entry: TimelineEntry;
+  entering?: boolean;
+  onOpenProjectResource: (block: ProjectResourceContentBlock) => void;
+}) {
   const entranceClass = entering ? " timeline-entry--entering" : "";
   const reasoningStartedEmpty = useRef(entry.kind === "reasoning" && !entry.content).current;
   if (entry.kind === "message") {
@@ -215,7 +243,7 @@ function TimelineItem({ entry, entering = false }: { entry: TimelineEntry; enter
     const messageClass = entry.role === "user" ? "user-message" : entry.role === "assistant" ? "assistant-message" : "system-message";
     return (
       <article className={`${messageClass} message-status--${entry.status}${entranceClass}`}>
-        <ContentBlocks blocks={visibleContent} />
+        <ContentBlocks blocks={visibleContent} onOpenProjectResource={onOpenProjectResource} />
         {entry.status === "streaming" && entry.role === "user" && entry.id.startsWith("optimistic-")
           ? <span className="message-pending" role="status">Sending…</span>
           : entry.status === "streaming" && hasVisibleContent(visibleContent) && <span className="stream-caret" aria-label="Streaming" />}
@@ -268,6 +296,7 @@ function TimelineItem({ entry, entering = false }: { entry: TimelineEntry; enter
       );
     }
     const presentation = presentTool(entry);
+    const fileToolResource = trustedFileToolResource(entry);
     const failureText = entry.status === "failed" ? firstTextOutput(entry) : undefined;
     const summaryDetail = failureText && presentation.category === "generic"
       ? `${entry.name} · ${failureText}`
@@ -287,7 +316,8 @@ function TimelineItem({ entry, entering = false }: { entry: TimelineEntry; enter
           <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
         </summary>
         <div className="tool-detail">
-          {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact /></section>}
+          {fileToolResource && <section className="tool-output"><span className="detail-label">File</span><ContentBlocks blocks={[fileToolResource]} compact onOpenProjectResource={onOpenProjectResource} /></section>}
+          {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact onOpenProjectResource={onOpenProjectResource} /></section>}
           <JsonDetails label="Arguments" value={entry.arguments} />
           <JsonDetails label="Details" value={entry.details} />
           <JsonDetails label="Raw RPC event" value={entry.raw} />
@@ -353,9 +383,13 @@ function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   return rows;
 }
 
-function TimelineRowView({ row, entering = false }: { row: TimelineRow; entering?: boolean }) {
+function TimelineRowView({ row, entering = false, onOpenProjectResource }: {
+  row: TimelineRow;
+  entering?: boolean;
+  onOpenProjectResource: (block: ProjectResourceContentBlock) => void;
+}) {
   const animateEntrance = useRef(entering).current;
-  if (row.kind === "entry") return <TimelineItem entry={row.entry} entering={animateEntrance} />;
+  if (row.kind === "entry") return <TimelineItem entry={row.entry} entering={animateEntrance} onOpenProjectResource={onOpenProjectResource} />;
   const completed = row.tools.filter((tool) => tool.status === "completed").length;
   const running = row.tools.filter((tool) => tool.status === "running").length;
   const queued = row.tools.filter((tool) => tool.status === "queued").length;
@@ -387,12 +421,12 @@ function TimelineRowView({ row, entering = false }: { row: TimelineRow; entering
         <span className="tool-batch-progress-complete" style={{ width: `${(completed / row.tools.length) * 100}%` }} />
         <span className="tool-batch-progress-error" style={{ width: `${((failed + cancelled) / row.tools.length) * 100}%` }} />
       </div>
-      {row.tools.map((tool) => <TimelineItem key={tool.id} entry={tool} />)}
+      {row.tools.map((tool) => <TimelineItem key={tool.id} entry={tool} onOpenProjectResource={onOpenProjectResource} />)}
     </section>
   );
 }
 
-export const Timeline = memo(function Timeline({ session, entries, loading = false }: TimelineProps) {
+export const Timeline = memo(function Timeline({ session, entries, loading = false, onOpenProjectResource = () => undefined }: TimelineProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -543,12 +577,12 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
                       ref={virtualizer.measureElement}
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
-                      <TimelineRowView row={row} entering={enteringRowKeys.has(row.key)} />
+                      <TimelineRowView row={row} entering={enteringRowKeys.has(row.key)} onOpenProjectResource={onOpenProjectResource} />
                     </div>
                   );
                 })}
               </div>
-            ) : rows.map((row) => <TimelineRowView key={row.key} row={row} entering={enteringRowKeys.has(row.key)} />)}
+            ) : rows.map((row) => <TimelineRowView key={row.key} row={row} entering={enteringRowKeys.has(row.key)} onOpenProjectResource={onOpenProjectResource} />)}
           </div>
           {showWorkingStatus && (
             <div className="working-status" role="status" aria-live="polite">

@@ -8,6 +8,7 @@ import dialogQueue from "./dialog-queue.json";
 import failureUnknown from "./failure-unknown.json";
 import ordinaryRun from "./ordinary-run.json";
 import parallelTools from "./parallel-tools.json";
+import resourceOpen from "./resource-open.json";
 
 export interface FixtureDefinition {
   id: string;
@@ -117,6 +118,6 @@ function parseFixture(value: unknown): FixtureDefinition {
   return value as FixtureDefinition;
 }
 
-export const fixtures = [ordinaryRun, parallelTools, dialogQueue, failureUnknown].map(parseFixture);
+export const fixtures = [ordinaryRun, parallelTools, dialogQueue, failureUnknown, resourceOpen].map(parseFixture);
 
 export const fixtureById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));

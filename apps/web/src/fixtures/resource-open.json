@@ -1,0 +1,67 @@
+{
+  "id": "resource-open",
+  "name": "Project resource",
+  "description": "A successful and malformed anvil_open_file result for resource fallback coverage.",
+  "baseTimestamp": "2026-07-23T10:00:00.000Z",
+  "project": {
+    "id": "anvil",
+    "name": "Anvil",
+    "path": "/home/oli/code/anvil"
+  },
+  "session": {
+    "id": "fixture-resource-open",
+    "projectId": "anvil",
+    "title": "Inspect resource",
+    "updatedAt": "2026-07-23T10:00:00.000Z",
+    "status": "idle",
+    "modelId": "openai/gpt-5.4",
+    "thinkingLevel": "medium"
+  },
+  "records": [
+    {
+      "at": 0,
+      "record": {
+        "type": "tool_execution_start",
+        "toolCallId": "open-readme",
+        "toolName": "anvil_open_file",
+        "args": { "path": "README.md", "view": "preview" }
+      }
+    },
+    {
+      "at": 80,
+      "record": {
+        "type": "tool_execution_end",
+        "toolCallId": "open-readme",
+        "toolName": "anvil_open_file",
+        "isError": false,
+        "result": {
+          "content": [{ "type": "text", "text": "Ready to open README.md." }],
+          "details": {
+            "kind": "anvil.open-file",
+            "schemaVersion": 1,
+            "path": "README.md",
+            "view": "preview",
+            "line": 1
+          }
+        }
+      }
+    },
+    {
+      "at": 120,
+      "record": {
+        "type": "tool_execution_end",
+        "toolCallId": "open-malformed",
+        "toolName": "anvil_open_file",
+        "isError": false,
+        "result": {
+          "content": [{ "type": "text", "text": "Malformed reference retained generically." }],
+          "details": {
+            "kind": "anvil.open-file",
+            "schemaVersion": 99,
+            "path": "../secret"
+          }
+        }
+      }
+    }
+  ]
+}

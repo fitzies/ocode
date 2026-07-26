@@ -28,6 +28,20 @@ describe("FixtureAnvilClient", () => {
     expect(client.getSnapshot().sessions.find((session) => session.id === sessionId)?.settled).toBe(false);
   });
 
+  it("keeps project navigation separate until a thread is selected", () => {
+    const client = new FixtureAnvilClient();
+    const project = client.getSnapshot().projects[0]!;
+    const session = client.getSnapshot().sessions.find((candidate) => candidate.projectId === project.id)!;
+
+    client.selectProject(project.id);
+    expect(client.getSnapshot().workspaceLocation).toEqual({ projectId: project.id, sessionId: null });
+    expect(client.getSnapshot().activeSessionId).toBeNull();
+
+    client.selectSession(session.id);
+    expect(client.getSnapshot().workspaceLocation).toEqual({ projectId: project.id, sessionId: session.id });
+    expect(client.getSnapshot().activeSessionId).toBe(session.id);
+  });
+
   it("creates sessions in the explicitly selected project", () => {
     const client = new FixtureAnvilClient();
     const projectId = client.getSnapshot().projects.at(-1)?.id;

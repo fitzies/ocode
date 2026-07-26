@@ -9,7 +9,7 @@ import {
   Sun03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { useTheme } from "@/components/theme-provider";
@@ -45,6 +45,8 @@ import { Composer, type ComposerAttachment, updateComposerDraft } from "./Compos
 import { InteractionPanel } from "./InteractionDialog";
 import { Sidebar } from "./Sidebar";
 import { Timeline } from "./Timeline";
+import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
+import { WorkspaceSurfaceProvider, useWorkspaceSurfaces } from "./workspace/WorkspaceSurfaceState";
 import { AddWorkspaceDialog, DeleteThreadDialog } from "./WorkspaceDialogs";
 
 const EMPTY_CATALOG: CapabilityCatalog = { models: [], commands: [], skills: [] };
@@ -57,6 +59,30 @@ type LiveIndicators = {
     weekly?: { usedPercent: number; resetAt?: number };
   };
 };
+
+function ProjectWorkspace({
+  main,
+  bottom,
+  right,
+  isMobile,
+}: {
+  main: ReactNode;
+  bottom?: ReactNode;
+  right?: ReactNode;
+  isMobile: boolean;
+}) {
+  const { state, setMobileSurface } = useWorkspaceSurfaces();
+  return (
+    <WorkspaceLayout
+      isMobile={isMobile}
+      main={main}
+      bottom={state.bottomVisible ? bottom : undefined}
+      right={state.rightVisible ? right : undefined}
+      mobileSurface={state.mobileSurface}
+      onMobileSurfaceChange={setMobileSurface}
+    />
+  );
+}
 
 export function AppShell() {
   return (
@@ -90,12 +116,11 @@ function AppShellContent() {
   const [rebuildError, setRebuildError] = useState<string>();
   const gitIndicatorsByProject = useRef(new Map<string, LiveIndicators["git"]>());
   const terminalSequences = useRef<Map<string, number> | null>(null);
-  const activeSession =
-    snapshot.sessions.find((session) => session.id === snapshot.activeSessionId) ??
-    snapshot.sessions[0];
-
+  const activeSession = snapshot.workspaceLocation?.sessionId
+    ? snapshot.sessions.find((session) => session.id === snapshot.workspaceLocation?.sessionId)
+    : undefined;
   const activeProject = snapshot.projects.find(
-    (project) => project.id === activeSession?.projectId,
+    (project) => project.id === snapshot.workspaceLocation?.projectId,
   );
   const activeSessionPending = activeSession
     ? anvilClient.isSessionPending(activeSession.id)
@@ -119,7 +144,7 @@ function AppShellContent() {
     : EMPTY_CATALOG;
   const selectedProjectId = snapshot.projects.some((project) => project.id === newProjectId)
     ? newProjectId
-    : snapshot.projects[0]?.id ?? "";
+    : activeProject?.id ?? snapshot.projects[0]?.id ?? "";
   const sidebarSnapshot = useMemo(() => ({
     projects: snapshot.projects,
     sessions: snapshot.sessions,
@@ -351,16 +376,16 @@ function AppShellContent() {
     const onKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        const projectId = activeSession?.projectId ??
+        const projectId = activeProject?.id ??
           (snapshot.projects.length === 1 ? snapshot.projects[0]?.id : undefined);
         if (projectId) startSession(projectId);
       }
       const threadShortcut = /^Digit([1-9])$/.exec(event.code);
-      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && threadShortcut && activeSession) {
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && threadShortcut && activeProject) {
         event.preventDefault();
         const threadIndex = Number(threadShortcut[1]) - 1;
         const target = snapshot.sessions.filter(
-          (session) => session.projectId === activeSession.projectId,
+          (session) => session.projectId === activeProject.id,
         )[threadIndex];
         if (target) {
           anvilClient.selectSession(target.id);
@@ -370,9 +395,9 @@ function AppShellContent() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeSession, isMobile, setOpenMobile, snapshot.projects, snapshot.sessions, startSession]);
+  }, [activeProject, isMobile, setOpenMobile, snapshot.projects, snapshot.sessions, startSession]);
 
-  if (!activeSession && snapshot.connection !== "connected") {
+  if (!snapshot.workspaceLocation && snapshot.connection !== "connected") {
     return (
       <main className="app-loading" role="status" aria-live="polite">
         <span className="forge-spinner" aria-hidden="true" />
@@ -385,6 +410,8 @@ function AppShellContent() {
     <div className="app-shell">
       <Sidebar
         snapshot={sidebarSnapshot}
+        activeProjectId={activeProject?.id ?? null}
+        onSelectProject={anvilClient.selectProject}
         onSelectSession={anvilClient.selectSession}
         onCreateSession={startSession}
         onAddWorkspace={openAddWorkspace}
@@ -394,6 +421,10 @@ function AppShellContent() {
       />
 
       <SidebarInset className="workspace">
+        <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
+          <ProjectWorkspace
+            isMobile={isMobile}
+            main={<div className="conversation-surface">
         <header className="session-header">
           <div className="header-title-group">
             <SidebarTrigger className="menu-trigger" aria-label="Toggle sidebar" />
@@ -401,7 +432,7 @@ function AppShellContent() {
               <h1>
                 {activeSession ? (
                   <><span className="session-heading-repo">{activeProject?.name.toLowerCase() ?? "unknown"}</span> / {activeSession.title}</>
-                ) : "No thread selected"}
+                ) : activeProject ? activeProject.name : "No workspace selected"}
               </h1>
             </div>
           </div>
@@ -522,10 +553,12 @@ function AppShellContent() {
           <div className="app-loading app-loading--workspace">
             <div className="empty-workspace">
               <HugeiconsIcon icon={ServerStack01Icon} strokeWidth={2} className="size-6" />
-              <strong>No threads yet</strong>
+              <strong>{activeProject ? "No thread selected" : "No threads yet"}</strong>
               <p>
                 {snapshot.projects.length > 0
-                  ? "Choose a workspace and start the first thread."
+                  ? activeProject
+                    ? `Start a new thread in ${activeProject.name}, or choose an existing thread from the sidebar.`
+                    : "Choose a workspace and start the first thread."
                   : "Add a workspace with the + in the sidebar."}
               </p>
               {snapshot.projects.length > 0 && (
@@ -547,6 +580,9 @@ function AppShellContent() {
             </div>
           </div>
         )}
+            </div>}
+          />
+        </WorkspaceSurfaceProvider>
       </SidebarInset>
 
       {addWorkspaceOpen && (

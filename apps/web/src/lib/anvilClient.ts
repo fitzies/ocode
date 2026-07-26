@@ -34,6 +34,11 @@ import {
 
 import { PromptOutbox } from "./promptOutbox";
 import { ThreadCache, summaryBootstrapFromSnapshot } from "./threadCache";
+import {
+  locationForSession,
+  reconcileWorkspaceLocation,
+  type WorkspaceLocation,
+} from "./workspace";
 import { fixtureById, fixtureCatalog, fixtures, type FixtureDefinition } from "../fixtures";
 
 export type DeliveryMode = "prompt" | "steer" | "followUp";
@@ -51,6 +56,7 @@ export interface ReplayStatus {
 }
 
 export interface AnvilClientSnapshot extends AnvilSnapshot {
+  workspaceLocation: WorkspaceLocation | null;
   replay: ReplayStatus;
   clientError?: string;
   readThroughSequences: Record<string, number>;
@@ -72,6 +78,7 @@ export interface AnvilClient {
   getSnapshot(): AnvilClientSnapshot;
   subscribe(listener: () => void): () => void;
   dispatch(command: AnvilClientCommand): void;
+  selectProject(projectId: string): void;
   selectSession(sessionId: string): void;
   createProject(name: string, path: string): Promise<void>;
   createSession(projectId: string): void;
@@ -104,6 +111,19 @@ const uniqueById = <T extends { id: string }>(items: T[]) =>
 
 const initialProjects = uniqueById(fixtures.map((fixture) => fixture.project));
 const initialSessions = fixtures.map((fixture) => fixture.session);
+
+function reconcileClientWorkspace(snapshot: AnvilClientSnapshot): AnvilClientSnapshot {
+  const workspaceLocation = reconcileWorkspaceLocation(
+    snapshot.workspaceLocation ?? undefined,
+    snapshot.projects,
+    snapshot.sessions,
+    snapshot.activeSessionId,
+  );
+  const activeSessionId = workspaceLocation?.sessionId ?? null;
+  return workspaceLocation === snapshot.workspaceLocation && activeSessionId === snapshot.activeSessionId
+    ? snapshot
+    : { ...snapshot, workspaceLocation, activeSessionId };
+}
 
 function timestamp() {
   return new Date().toISOString();
@@ -368,6 +388,7 @@ export class FixtureAnvilClient implements AnvilClient {
     const initialFixture = fixtures[0]!;
     this.snapshot = {
       ...base,
+      workspaceLocation: initialFixture.session ? locationForSession(initialFixture.session) : null,
       readThroughSequences: Object.fromEntries(
         base.sessions.flatMap((session) => session.lastTerminalSequence
           ? [[session.id, session.lastTerminalSequence] as const]
@@ -426,12 +447,25 @@ export class FixtureAnvilClient implements AnvilClient {
     }
   };
 
+  selectProject = (projectId: string) => {
+    if (!this.snapshot.projects.some((project) => project.id === projectId)) return;
+    this.pauseReplay();
+    this.snapshot = {
+      ...this.snapshot,
+      workspaceLocation: { projectId, sessionId: null },
+      activeSessionId: null,
+    };
+    this.emit();
+  };
+
   selectSession = (sessionId: string) => {
-    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) return;
     this.pauseReplay();
     const fixture = fixtureById.get(sessionId);
     this.snapshot = {
       ...this.snapshot,
+      workspaceLocation: locationForSession(session),
       activeSessionId: sessionId,
       replay: fixture
         ? {
@@ -475,6 +509,7 @@ export class FixtureAnvilClient implements AnvilClient {
     };
     this.snapshot = {
       ...this.snapshot,
+      workspaceLocation: locationForSession(session),
       activeSessionId: id,
       sessions: [session, ...this.snapshot.sessions],
       timelines: { ...this.snapshot.timelines, [id]: [] },
@@ -835,6 +870,7 @@ export class FixtureAnvilClient implements AnvilClient {
     this.pauseReplay();
     this.snapshot = {
       ...this.snapshot,
+      workspaceLocation: locationForSession(fixture.session),
       activeSessionId: fixture.session.id,
       replay: {
         ...this.snapshot.replay,
@@ -857,6 +893,7 @@ export class FixtureAnvilClient implements AnvilClient {
     this.pauseReplay();
     this.snapshot = {
       ...resetSessionState(this.snapshot, fixture.session.id),
+      workspaceLocation: locationForSession(fixture.session),
       activeSessionId: fixture.session.id,
       readThroughSequences: this.snapshot.readThroughSequences,
       hydratingSessionIds: [],
@@ -897,6 +934,7 @@ export class FixtureAnvilClient implements AnvilClient {
     );
     this.snapshot = {
       ...rebuilt,
+      workspaceLocation: locationForSession(fixture.session),
       activeSessionId: fixture.session.id,
       readThroughSequences: this.snapshot.readThroughSequences,
       hydratingSessionIds: [],
@@ -985,6 +1023,7 @@ export class FixtureAnvilClient implements AnvilClient {
       const nextCursor = cursor + 1;
       this.snapshot = {
         ...base,
+        workspaceLocation: this.snapshot.workspaceLocation,
         readThroughSequences: this.snapshot.readThroughSequences,
         hydratingSessionIds: this.snapshot.hydratingSessionIds,
         replay: {
@@ -1038,6 +1077,7 @@ export class FixtureAnvilClient implements AnvilClient {
     const replay = this.snapshot.replay;
     this.snapshot = {
       ...applyAnvilEvent(this.snapshot, event),
+      workspaceLocation: this.snapshot.workspaceLocation,
       replay,
       readThroughSequences: this.snapshot.readThroughSequences,
       hydratingSessionIds: this.snapshot.hydratingSessionIds,
@@ -1046,6 +1086,7 @@ export class FixtureAnvilClient implements AnvilClient {
   }
 
   private emit() {
+    this.snapshot = reconcileClientWorkspace(this.snapshot);
     this.listeners.forEach((listener) => listener());
   }
 }
@@ -1059,6 +1100,7 @@ export interface ForgeAnvilClientOptions {
 export class ForgeAnvilClient implements AnvilClient {
   private snapshot: AnvilClientSnapshot = {
     ...createEmptySnapshot(),
+    workspaceLocation: null,
     connection: "reconnecting",
     readThroughSequences: {},
     hydratingSessionIds: [],
@@ -1131,9 +1173,25 @@ export class ForgeAnvilClient implements AnvilClient {
     void this.sendCommand(command);
   };
 
+  selectProject = (projectId: string) => {
+    if (!this.snapshot.projects.some((project) => project.id === projectId)) return;
+    this.snapshot = {
+      ...this.snapshot,
+      workspaceLocation: { projectId, sessionId: null },
+      activeSessionId: null,
+    };
+    this.emit();
+    void this.persistShell();
+  };
+
   selectSession = (sessionId: string) => {
-    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
-    this.snapshot = { ...this.snapshot, activeSessionId: sessionId };
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session) return;
+    this.snapshot = {
+      ...this.snapshot,
+      workspaceLocation: locationForSession(session),
+      activeSessionId: sessionId,
+    };
     this.emit();
     if (this.detailApiEnabled) void this.hydrateSession(sessionId);
     this.touchDetail(sessionId);
@@ -1180,7 +1238,10 @@ export class ForgeAnvilClient implements AnvilClient {
       resolveSettled,
     };
     this.pendingCreates.set(sessionId, pending);
-    this.snapshot = addOptimisticSession(this.snapshot, pending.session);
+    this.snapshot = {
+      ...addOptimisticSession(this.snapshot, pending.session),
+      workspaceLocation: locationForSession(pending.session),
+    };
     this.emit();
     void this.sendCommand(command, false, pending);
   };
@@ -1446,6 +1507,7 @@ export class ForgeAnvilClient implements AnvilClient {
       const value: unknown = await response.json();
       await this.promptOutbox.restore();
       const previousActiveSessionId = this.snapshot.activeSessionId;
+      const previousWorkspaceLocation = this.snapshot.workspaceLocation;
       const createsToRetry: PendingSessionCreate[] = [];
       let cursor: number;
 
@@ -1454,6 +1516,7 @@ export class ForgeAnvilClient implements AnvilClient {
         const restored = reconcileSnapshotAndTail(this.snapshot, value.snapshot, value.events);
         this.snapshot = {
           ...restored,
+          workspaceLocation: previousWorkspaceLocation,
           readThroughSequences: this.snapshot.readThroughSequences,
           hydratingSessionIds: [],
           replay: this.snapshot.replay,
@@ -1508,9 +1571,16 @@ export class ForgeAnvilClient implements AnvilClient {
       const preferredSessionId = [previousActiveSessionId, restored.activeSessionId]
         .find((sessionId) => sessionId && restored.sessions.some((session) => session.id === sessionId)) ??
         restored.sessions[0]?.id ?? null;
+      const workspaceLocation = reconcileWorkspaceLocation(
+        previousWorkspaceLocation ?? undefined,
+        restored.projects,
+        restored.sessions,
+        preferredSessionId,
+      );
       this.snapshot = {
         ...restored,
-        activeSessionId: preferredSessionId,
+        workspaceLocation,
+        activeSessionId: workspaceLocation?.sessionId ?? null,
         connection: "connected",
         clientError: undefined,
       };
@@ -1522,7 +1592,7 @@ export class ForgeAnvilClient implements AnvilClient {
         terminalSequenceAtBootstrap: session.lastTerminalSequence ?? 0,
       })));
       void this.persistShell();
-      if (this.detailApiEnabled && preferredSessionId) void this.hydrateSession(preferredSessionId);
+      if (this.detailApiEnabled && workspaceLocation?.sessionId) void this.hydrateSession(workspaceLocation.sessionId);
       for (const session of this.snapshot.sessions) {
         if (this.pendingCreates.get(session.id)?.state !== "creating") this.promptOutbox.drain(session.id);
       }
@@ -1542,12 +1612,20 @@ export class ForgeAnvilClient implements AnvilClient {
     const activeSessionId = cached.activeSessionId && cached.bootstrap.sessions.some(
       (session) => session.id === cached.activeSessionId,
     ) ? cached.activeSessionId : cached.bootstrap.sessions[0]?.id ?? null;
+    const sessions = sortSessionsByActivity(cached.bootstrap.sessions);
+    const workspaceLocation = reconcileWorkspaceLocation(
+      cached.workspaceLocation ?? undefined,
+      cached.bootstrap.projects,
+      sessions,
+      activeSessionId,
+    );
     this.snapshot = {
       ...this.snapshot,
       capturedAt: cached.bootstrap.capturedAt,
       projects: cached.bootstrap.projects,
-      sessions: sortSessionsByActivity(cached.bootstrap.sessions),
-      activeSessionId,
+      sessions,
+      workspaceLocation,
+      activeSessionId: workspaceLocation?.sessionId ?? null,
       connection: "reconnecting",
       lastSequence: 0,
     };
@@ -1706,7 +1784,7 @@ export class ForgeAnvilClient implements AnvilClient {
       this.snapshot.projects,
       this.snapshot.sessions,
       this.snapshot.lastSequence,
-    ), this.snapshot.activeSessionId);
+    ), this.snapshot.activeSessionId, this.snapshot.workspaceLocation);
   }
 
   private schedulePersist(sessionId: string): void {
@@ -1769,6 +1847,7 @@ export class ForgeAnvilClient implements AnvilClient {
         const eventApplied = next.lastSequence === event.sequence;
         this.snapshot = {
           ...next,
+          workspaceLocation: this.snapshot.workspaceLocation,
           connection: "connected",
           replay,
           readThroughSequences: this.snapshot.readThroughSequences,
@@ -1924,6 +2003,7 @@ export class ForgeAnvilClient implements AnvilClient {
   }
 
   private emit(): void {
+    this.snapshot = reconcileClientWorkspace(this.snapshot);
     this.listeners.forEach((listener) => listener());
   }
 }

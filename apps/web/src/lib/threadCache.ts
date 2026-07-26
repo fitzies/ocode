@@ -7,6 +7,8 @@ import {
   type AnvilSummaryBootstrap,
 } from "@anvil/protocol";
 
+import type { WorkspaceLocation } from "./workspace";
+
 const DATABASE_NAME = "anvil-thread-cache";
 const DATABASE_VERSION = 1;
 const DETAIL_STORE = "details";
@@ -29,6 +31,7 @@ interface ShellRecord {
   key: "shell";
   bootstrap: AnvilSummaryBootstrap;
   activeSessionId: string | null;
+  workspaceLocation?: WorkspaceLocation | null;
   persistedAt: number;
 }
 
@@ -80,20 +83,32 @@ export class ThreadCache {
   private databasePromise?: Promise<IDBDatabase | undefined>;
   private readonly memory = new Map<string, MemoryRecord>();
 
-  async readShell(): Promise<{ bootstrap: AnvilSummaryBootstrap; activeSessionId: string | null } | undefined> {
+  async readShell(): Promise<{
+    bootstrap: AnvilSummaryBootstrap;
+    activeSessionId: string | null;
+    workspaceLocation?: WorkspaceLocation | null;
+  } | undefined> {
     const database = await this.database();
     if (!database) return undefined;
     try {
       const transaction = database.transaction(META_STORE, "readonly");
       const record = await requestValue(transaction.objectStore(META_STORE).get("shell")) as ShellRecord | undefined;
       if (!record || !isAnvilSummaryBootstrap(record.bootstrap)) return undefined;
-      return { bootstrap: record.bootstrap, activeSessionId: record.activeSessionId };
+      return {
+        bootstrap: record.bootstrap,
+        activeSessionId: record.activeSessionId,
+        workspaceLocation: record.workspaceLocation,
+      };
     } catch {
       return undefined;
     }
   }
 
-  async writeShell(bootstrap: AnvilSummaryBootstrap, activeSessionId: string | null): Promise<void> {
+  async writeShell(
+    bootstrap: AnvilSummaryBootstrap,
+    activeSessionId: string | null,
+    workspaceLocation?: WorkspaceLocation | null,
+  ): Promise<void> {
     if (!isAnvilSummaryBootstrap(bootstrap)) return;
     const database = await this.database();
     if (!database) return;
@@ -103,6 +118,7 @@ export class ThreadCache {
         key: "shell",
         bootstrap,
         activeSessionId,
+        workspaceLocation,
         persistedAt: Date.now(),
       } satisfies ShellRecord);
       await transactionDone(transaction);

@@ -10,6 +10,8 @@ function renderSnapshot(snapshot: AnvilClientSnapshot): string {
     <SidebarProvider>
       <Sidebar
         snapshot={snapshot}
+        activeProjectId={snapshot.workspaceLocation?.projectId ?? null}
+        onSelectProject={() => undefined}
         onSelectSession={() => undefined}
         onCreateSession={() => undefined}
         onAddWorkspace={() => undefined}
@@ -43,6 +45,16 @@ describe("Sidebar thread ordering", () => {
     expect(markup).toContain(`${project.name}/feature/sidebar`);
     expect(markup).toContain('aria-label="Create thread"');
     expect(markup).not.toContain(">Unsettled<");
+  });
+
+  it("renders workspace navigation separately from thread filters", () => {
+    const client = new FixtureAnvilClient();
+    const markup = renderSidebar(client);
+
+    expect(markup).toContain('aria-label="Navigate to workspace"');
+    expect(markup).toContain('aria-label="Filter threads by project"');
+    expect(markup).toContain("workspace-navigation-label\">Workspace");
+    expect(markup).toContain(">Threads</span>");
   });
 
   it("hides the settle action while a thread is running", () => {

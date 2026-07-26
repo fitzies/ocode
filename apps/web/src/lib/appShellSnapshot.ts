@@ -5,6 +5,7 @@ export type AppShellSnapshot = Pick<
   | "projects"
   | "sessions"
   | "activeSessionId"
+  | "workspaceLocation"
   | "timelines"
   | "catalogs"
   | "pendingInteractions"
@@ -23,10 +24,11 @@ const EMPTY_TIMELINE: AnvilClientSnapshot["timelines"][string] = [];
 const EMPTY_CATALOG: AnvilClientSnapshot["catalogs"][string] = { models: [], commands: [], skills: [] };
 const EMPTY_QUEUE: AnvilClientSnapshot["queues"][string] = { steering: [], followUp: [] };
 
-function selectedSessionId(snapshot: Pick<AnvilClientSnapshot, "sessions" | "activeSessionId">): string | undefined {
-  return snapshot.sessions.some((session) => session.id === snapshot.activeSessionId)
-    ? snapshot.activeSessionId ?? undefined
-    : snapshot.sessions[0]?.id;
+function selectedSessionId(snapshot: Pick<AnvilClientSnapshot, "sessions" | "workspaceLocation">): string | undefined {
+  const sessionId = snapshot.workspaceLocation?.sessionId;
+  return snapshot.sessions.some((session) => session.id === sessionId)
+    ? sessionId ?? undefined
+    : undefined;
 }
 
 export function selectAppShellSnapshot(snapshot: AnvilClientSnapshot): AppShellSnapshot {
@@ -35,6 +37,7 @@ export function selectAppShellSnapshot(snapshot: AnvilClientSnapshot): AppShellS
     projects: snapshot.projects,
     sessions: snapshot.sessions,
     activeSessionId: snapshot.activeSessionId,
+    workspaceLocation: snapshot.workspaceLocation,
     timelines: sessionId ? { [sessionId]: snapshot.timelines[sessionId] ?? EMPTY_TIMELINE } : {},
     catalogs: sessionId ? { [sessionId]: snapshot.catalogs[sessionId] ?? EMPTY_CATALOG } : {},
     pendingInteractions: sessionId
@@ -65,6 +68,7 @@ export function equalAppShellSnapshots(left: AppShellSnapshot, right: AppShellSn
     left.projects !== right.projects ||
     left.sessions !== right.sessions ||
     left.activeSessionId !== right.activeSessionId ||
+    left.workspaceLocation !== right.workspaceLocation ||
     left.connection !== right.connection ||
     left.sequenceGap !== right.sequenceGap ||
     left.clientError !== right.clientError ||

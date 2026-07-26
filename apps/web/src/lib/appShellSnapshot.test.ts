@@ -31,6 +31,7 @@ const sessions: SessionSummary[] = [
 function snapshot(): AnvilClientSnapshot {
   return {
     ...createEmptySnapshot({ sessions, activeSessionId: "session-active" }),
+    workspaceLocation: { projectId: "project-1", sessionId: "session-active" },
     replay: { fixtureId: "test", playing: false, cursor: 0, total: 0, speed: 1 },
     readThroughSequences: {},
     hydratingSessionIds: [],

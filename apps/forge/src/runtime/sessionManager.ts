@@ -23,6 +23,7 @@ import {
 
 import type { ForgeConfig } from "../config.ts";
 import { ForgeEventService } from "../events/eventService.ts";
+import { EventProjectResolver, type ProjectResolver } from "../projects/projectResolver.ts";
 import { ForgeDatabase, type RuntimeSessionRecord } from "../store/database.ts";
 import { createPiRpcProcess, type RpcRecord, type RpcSubprocess } from "../rpc/subprocess.ts";
 import { WorkspaceFileIndex } from "./workspaceFiles.ts";
@@ -31,6 +32,7 @@ interface SessionManagerOptions {
   defaultToolTimeoutMs?: number;
   defaultBashTimeoutMs?: number;
   idleRuntimeTimeoutMs?: number;
+  projectResolver?: ProjectResolver;
 }
 
 type StreamDeltaEvent = Extract<UnsequencedAnvilEvent, { type: "message.delta" | "reasoning.delta" }>;
@@ -144,7 +146,7 @@ function detectedImageMediaType(bytes: Buffer): string | undefined {
 }
 
 export class SessionManager {
-  private readonly projects = new Map<string, ProjectSummary>();
+  private readonly projectResolver: ProjectResolver;
   private readonly runtimes = new Map<string, ManagedSession>();
   private readonly starting = new Map<string, Promise<ManagedSession>>();
   private readonly inFlightCommands = new Map<string, Promise<AnvilCommandResponse>>();
@@ -161,8 +163,8 @@ export class SessionManager {
     private readonly events: ForgeEventService,
     private readonly options: SessionManagerOptions = {},
   ) {
+    this.projectResolver = options.projectResolver ?? new EventProjectResolver(events);
     const restored = events.currentSnapshot();
-    for (const project of restored.projects) this.projects.set(project.id, project);
     for (const project of restored.projects) this.refreshProjectBranch(project.id);
     this.cleanupOrphanSessionDirectories(new Set(restored.sessions.map((session) => session.id)));
     const staleInteractions = restored.pendingInteractions;
@@ -227,7 +229,7 @@ export class SessionManager {
   searchFiles = async (sessionId: string, query: string, limit: number): Promise<string[] | undefined> => {
     const stored = this.database.getSession(sessionId);
     if (!stored) return undefined;
-    const project = this.projects.get(stored.session.projectId);
+    const project = this.projectResolver.resolveProject(stored.session.projectId);
     if (!project) return undefined;
     return this.workspaceFiles.search(project.path, query, limit);
   };
@@ -528,10 +530,11 @@ export class SessionManager {
     } catch {
       return commandResponse(command, false, { error: "Workspace path does not exist or is not accessible" });
     }
-    if ([...this.projects.values()].some((project) => project.path === path)) {
+    const projects = this.events.projectSummaries();
+    if (projects.some((project) => project.path === path)) {
       return commandResponse(command, false, { error: "That workspace path is already configured" });
     }
-    if ([...this.projects.values()].some((project) => project.name.toLowerCase() === name.toLowerCase())) {
+    if (projects.some((project) => project.name.toLowerCase() === name.toLowerCase())) {
       return commandResponse(command, false, { error: "A workspace with that name already exists" });
     }
 
@@ -545,14 +548,13 @@ export class SessionManager {
       project,
       domainEvent("project.upserted", { project }, null),
     );
-    this.projects.set(project.id, project);
     return commandResponse(command, true, { data: { projectId: project.id } });
   }
 
   private createSession(
     command: Extract<AnvilClientCommand, { type: "session.create" }>,
   ): AnvilCommandResponse {
-    const project = this.projects.get(command.payload.projectId);
+    const project = this.projectResolver.resolveProject(command.payload.projectId);
     if (!project) return commandResponse(command, false, { error: "Project is not configured on Forge" });
     const sessionId = command.payload.sessionId;
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(sessionId)) {
@@ -715,7 +717,7 @@ export class SessionManager {
   } | undefined> {
     const stored = this.database.getSession(sessionId);
     if (!stored) return undefined;
-    const project = this.projects.get(stored.session.projectId);
+    const project = this.projectResolver.resolveProject(stored.session.projectId);
     if (!project) return undefined;
     const runtime = this.runtimes.get(sessionId);
     if (!runtime?.rpc.running) return { projectPath: project.path };
@@ -756,7 +758,7 @@ export class SessionManager {
   }
 
   private async startRuntime(stored: RuntimeSessionRecord): Promise<ManagedSession> {
-    const project = this.projects.get(stored.session.projectId);
+    const project = this.projectResolver.resolveProject(stored.session.projectId);
     if (!project) throw new Error("The session project is no longer configured");
     const baseTimestamp = Date.now();
     const adapter = createPiRpcAdapterState({
@@ -1091,7 +1093,7 @@ export class SessionManager {
   }
 
   private refreshProjectBranch(projectId: string): void {
-    const project = this.projects.get(projectId);
+    const project = this.projectResolver.resolveProject(projectId);
     if (!project) return;
     const branch = gitBranch(project.path);
     const affected = this.events.sessionSummariesForProject(projectId).filter(

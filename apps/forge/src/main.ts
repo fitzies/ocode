@@ -6,6 +6,7 @@ import { ArtifactStore } from "./artifacts/artifactStore.ts";
 import { loadForgeConfig } from "./config.ts";
 import { ForgeEventService } from "./events/eventService.ts";
 import { ForgeHttpServer } from "./http/server.ts";
+import { EventProjectResolver } from "./projects/projectResolver.ts";
 import { LiveIndicatorsService } from "./runtime/indicators.ts";
 import { SessionManager } from "./runtime/sessionManager.ts";
 import { ForgeDatabase } from "./store/database.ts";
@@ -18,7 +19,8 @@ async function main(): Promise<void> {
   const database = new ForgeDatabase(config.databasePath);
   const artifacts = new ArtifactStore(config.artifactDir);
   const events = new ForgeEventService(database, config.projects, artifacts);
-  const sessions = new SessionManager(config, database, events);
+  const projects = new EventProjectResolver(events);
+  const sessions = new SessionManager(config, database, events, { projectResolver: projects });
   const indicators = new LiveIndicatorsService(sessions);
   let shutdownPromise: Promise<void> | undefined;
   let server: ForgeHttpServer;

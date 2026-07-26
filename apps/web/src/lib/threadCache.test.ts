@@ -52,14 +52,30 @@ afterEach(() => vi.unstubAllGlobals());
 describe("ThreadCache", () => {
   it("persists shell, detail, and local read state across cache instances", async () => {
     const writer = new ThreadCache();
-    await writer.writeShell(summary, detail.sessionId);
+    const workspaceLocation = { projectId: "anvil", sessionId: detail.sessionId };
+    await writer.writeShell(summary, detail.sessionId, workspaceLocation);
     await writer.writeDetail(detail);
     await writer.writeReadThrough(detail.sessionId, 41);
 
     const reader = new ThreadCache();
-    expect(await reader.readShell()).toEqual({ bootstrap: summary, activeSessionId: detail.sessionId });
+    expect(await reader.readShell()).toEqual({
+      bootstrap: summary,
+      activeSessionId: detail.sessionId,
+      workspaceLocation,
+    });
     expect(await reader.readDetail(detail.sessionId)).toEqual(detail);
     expect(await reader.readThrough(detail.sessionId)).toBe(41);
+  });
+
+  it("persists a project-only workspace location", async () => {
+    const writer = new ThreadCache();
+    const workspaceLocation = { projectId: "anvil", sessionId: null };
+    await writer.writeShell(summary, null, workspaceLocation);
+
+    expect(await new ThreadCache().readShell()).toMatchObject({
+      activeSessionId: null,
+      workspaceLocation,
+    });
   });
 
   it("does not replace the last settled entry with a streaming snapshot", async () => {

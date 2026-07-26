@@ -66,6 +66,10 @@ export class ForgeEventService extends EventEmitter {
     return project ? { ...project } : undefined;
   }
 
+  projectSummaries(): ProjectSummary[] {
+    return this.snapshot.projects.map((project) => ({ ...project }));
+  }
+
   sessionSummary(sessionId: string): SessionSummary | undefined {
     const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
     return session ? { ...session } : undefined;

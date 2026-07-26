@@ -2,6 +2,7 @@ import type { ArtifactReference, CapabilityCatalog } from "@anvil/protocol";
 import {
   Cancel01Icon,
   ComputerIcon,
+  ComputerTerminal01Icon,
   Moon02Icon,
   RefreshIcon,
   ServerStack01Icon,
@@ -39,12 +40,14 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { anvilClient, type DeliveryMode } from "../lib/anvilClient";
+import { isTerminalInputTarget } from "../lib/keyboardScope";
 import { equalAppShellSnapshots, selectAppShellSnapshot } from "../lib/appShellSnapshot";
 import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
 import { InteractionPanel } from "./InteractionDialog";
 import { Sidebar } from "./Sidebar";
 import { Timeline } from "./Timeline";
+import { ProjectTerminalSurface } from "./terminal/ProjectTerminalSurface";
 import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
 import { WorkspaceSurfaceProvider, useWorkspaceSurfaces } from "./workspace/WorkspaceSurfaceState";
 import { AddWorkspaceDialog, DeleteThreadDialog } from "./WorkspaceDialogs";
@@ -59,6 +62,26 @@ type LiveIndicators = {
     weekly?: { usedPercent: number; resetAt?: number };
   };
 };
+
+function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
+  const { state, setBottomVisible, setMobileSurface } = useWorkspaceSurfaces();
+  const open = () => {
+    if (isMobile) setMobileSurface("terminal");
+    else setBottomVisible(!state.bottomVisible);
+  };
+  return (
+    <Button
+      type="button"
+      variant={state.bottomVisible ? "secondary" : "ghost"}
+      size="icon-sm"
+      aria-label={state.bottomVisible ? "Hide project terminals" : "Show project terminals"}
+      aria-pressed={state.bottomVisible}
+      onClick={open}
+    >
+      <HugeiconsIcon icon={ComputerTerminal01Icon} strokeWidth={2} />
+    </Button>
+  );
+}
 
 function ProjectWorkspace({
   main,
@@ -374,6 +397,7 @@ function AppShellContent() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (isTerminalInputTarget(event.target)) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
         const projectId = activeProject?.id ??
@@ -424,6 +448,7 @@ function AppShellContent() {
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
           <ProjectWorkspace
             isMobile={isMobile}
+            bottom={activeProject ? <ProjectTerminalSurface projectId={activeProject.id} isMobile={isMobile} /> : undefined}
             main={<div className="conversation-surface">
         <header className="session-header">
           <div className="header-title-group">
@@ -438,6 +463,7 @@ function AppShellContent() {
           </div>
 
           <div className="header-actions">
+            {activeProject && <TerminalSurfaceToggle isMobile={isMobile} />}
             {indicators.git && (
               <span className="git-diff-stat" aria-label={`${indicators.git.additions} lines added, ${indicators.git.deletions} lines deleted`}>
                 <span className="git-additions">+{indicators.git.additions}</span>

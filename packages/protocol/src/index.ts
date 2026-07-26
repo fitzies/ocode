@@ -1,3 +1,5 @@
+export * from "@anvil/protocol/terminal";
+
 export const ANVIL_PROTOCOL_VERSION = 6 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
 

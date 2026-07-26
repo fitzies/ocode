@@ -3,6 +3,7 @@
 ## Requirements
 
 - Node.js 22.5 or newer; Node.js 24 LTS is recommended.
+- A working C/C++ build toolchain for `node-pty` when a matching prebuild is unavailable.
 - Pi installed and configured for the account running Forge.
 - Every repository explicitly listed in the Forge configuration.
 - Tailscale installed on Forge. Do not enable Funnel.
@@ -13,7 +14,9 @@ Copy `deploy/config.example.json` to `/home/forge/.config/anvil/config.json` and
 
 Configured projects seed the trusted workspace registry. The authenticated owner can add another Forge-local directory from the Workspaces `+` control; Forge validates and canonicalizes the path, then persists it in SQLite across restarts. This is a privileged action because Pi receives full access inside that directory.
 
-Environment overrides are documented in `.env.example`. Persistent data defaults to `/home/forge/.local/state/anvil`; keep that directory private and include the SQLite database, Pi session directory, and artifact directory in backups.
+Environment overrides are documented in `.env.example`. Persistent data defaults to `/home/forge/.local/state/anvil`; keep that directory private and include the SQLite database, Pi session directory, artifact directory, and `terminal-history` directory in backups. `ANVIL_TERMINAL_HISTORY_DIR` overrides the latter.
+
+Project terminals are owner-authenticated shells running with the Forge operating-system account's permissions. Their initial working directory is always the canonical trusted project root; this is not a filesystem sandbox. Terminal history may contain commands, output, and secrets. It is retained in mode-`0600` files, bounded to 5,000 lines and 512 KiB per terminal, and deleted when the terminal tab is explicitly closed. Forge permits at most eight running terminals per project, 64 KiB input messages, and bounded WebSocket client queues.
 
 Tool output, images, raw RPC records, or structured details larger than 256 KiB are externalized before they enter SQLite, snapshots, or SSE. Artifact files are mode `0600`, live outside the static web root, and are served only through the owner-authenticated `/api/v1/artifacts/:id` route. Deleting a thread removes its artifact metadata and files; startup removes files that have no durable metadata.
 
@@ -32,7 +35,7 @@ ANVIL_CONFIG=/path/to/config.json ANVIL_ALLOW_UNAUTHENTICATED=true corepack pnpm
 VITE_ANVIL_TRANSPORT=forge corepack pnpm dev:web
 ```
 
-Vite proxies `/api` to `http://127.0.0.1:3210`. Without `VITE_ANVIL_TRANSPORT=forge`, development continues to use deterministic fixtures.
+Vite proxies `/api` HTTP requests and WebSocket upgrades to `http://127.0.0.1:3210`. Without `VITE_ANVIL_TRANSPORT=forge`, conversation development continues to use deterministic fixtures; project terminals require Forge.
 
 ## Service installation
 
@@ -83,6 +86,6 @@ Settled thread details are cached in memory for five minutes and persisted in In
 
 After a Forge service restart, conversation history is rebuilt from SQLite and Pi session files. Commands left pending are marked unknown and are never replayed automatically. A persisted client prompt outbox retains drafts and stable command IDs, but surfaces unknown outcomes for user action instead of blindly duplicating side effects.
 
-Because systemd owns the Pi subprocess control group, an in-flight run cannot be truthfully reattached after a full Forge service restart. It is marked interrupted, pending dialogs are cancelled, and the next command restores the durable Pi session into a clean runtime. Browser disconnects and slow clients do not interrupt runs; slow SSE consumers are bounded and reconnect from their last delivered sequence.
+Because systemd owns the Pi and terminal subprocess control group, an in-flight run or PTY cannot be truthfully reattached after a full Forge service restart. Pi runs are marked interrupted, pending dialogs are cancelled, and the next command restores the durable Pi session into a clean runtime. Known terminal records and bounded history remain, but formerly running terminals are shown as interrupted and require an explicit restart. Browser disconnects do not interrupt Pi runs or PTYs; slow SSE/WebSocket consumers are bounded and reconnect from authoritative snapshots.
 
 Settling a thread stops its Pi subprocess immediately. Unsettled runtimes that remain idle for 15 minutes are also stopped without changing the thread's visible settled state. A later prompt lazily restores the durable Pi session before continuing.

@@ -3,7 +3,9 @@
 @import "./styles/shell.css";
 @import "./styles/timeline.css";
 @import "./styles/composer.css";
+@import "./styles/terminal.css";
 @import "./styles/responsive.css";
+@import "@xterm/xterm/css/xterm.css";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";

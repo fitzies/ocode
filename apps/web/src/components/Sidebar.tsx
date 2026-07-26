@@ -39,6 +39,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import type { AnvilClientSnapshot } from "../lib/anvilClient";
+import { isTerminalInputTarget } from "../lib/keyboardScope";
 
 export type SidebarSnapshot = Pick<
   AnvilClientSnapshot,
@@ -139,6 +140,7 @@ export const Sidebar = memo(function Sidebar({
 
   useEffect(() => {
     const focusSearch = (event: KeyboardEvent) => {
+      if (isTerminalInputTarget(event.target)) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         searchRef.current?.focus();

@@ -15,13 +15,14 @@ import {
   type InteractionRequest,
   type ProjectSummary,
   type SessionSummary,
+  type ShellTerminalMetadata,
 } from "@anvil/protocol";
 
 // Keep the specifier indirect until tsup's esbuild recognizes node:sqlite as a built-in.
 const sqliteModuleName = "node:sqlite";
 const { DatabaseSync } = await import(sqliteModuleName) as typeof import("node:sqlite");
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 const RETAINED_EVENT_COUNT = 100_000;
 const MAX_COMPACTION_ROWS_PER_CHECKPOINT = 1_000;
 
@@ -54,6 +55,12 @@ export interface RuntimeSessionRecord {
   session: SessionSummary;
   piSessionId?: string;
   piSessionFile?: string;
+}
+
+export interface StoredTerminalRecord {
+  metadata: ShellTerminalMetadata;
+  historyFile: string;
+  historyVersion: number;
 }
 
 export interface ArtifactRecord {
@@ -254,6 +261,79 @@ export class ForgeDatabase {
       piSessionId: typeof row.pi_session_id === "string" ? row.pi_session_id : undefined,
       piSessionFile: typeof row.pi_session_file === "string" ? row.pi_session_file : undefined,
     };
+  }
+
+  listTerminalRecords(projectId?: string): StoredTerminalRecord[] {
+    const rows = (projectId
+      ? this.database.prepare(`
+          SELECT project_id, terminal_id, label, status, created_at, updated_at, sequence,
+                 rows, cols, pid, exit_code, exit_signal, history_file, history_version
+          FROM terminal_records WHERE project_id = ? ORDER BY created_at ASC
+        `).all(projectId)
+      : this.database.prepare(`
+          SELECT project_id, terminal_id, label, status, created_at, updated_at, sequence,
+                 rows, cols, pid, exit_code, exit_signal, history_file, history_version
+          FROM terminal_records ORDER BY project_id ASC, created_at ASC
+        `).all()) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      metadata: {
+        projectId: String(row.project_id),
+        terminalId: String(row.terminal_id),
+        label: String(row.label),
+        status: String(row.status) as ShellTerminalMetadata["status"],
+        createdAt: String(row.created_at),
+        updatedAt: String(row.updated_at),
+        sequence: Number(row.sequence),
+        rows: Number(row.rows),
+        cols: Number(row.cols),
+        ...(row.pid === null ? {} : { pid: Number(row.pid) }),
+        ...(row.exit_code === null ? {} : { exitCode: Number(row.exit_code) }),
+        ...(row.exit_signal === null ? {} : { exitSignal: Number(row.exit_signal) }),
+      },
+      historyFile: String(row.history_file),
+      historyVersion: Number(row.history_version),
+    }));
+  }
+
+  upsertTerminalRecord(record: StoredTerminalRecord): void {
+    const terminal = record.metadata;
+    this.database.prepare(`
+      INSERT INTO terminal_records (
+        project_id, terminal_id, label, status, created_at, updated_at, sequence,
+        rows, cols, pid, exit_code, exit_signal, history_file, history_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(project_id, terminal_id) DO UPDATE SET
+        label = excluded.label,
+        status = excluded.status,
+        updated_at = excluded.updated_at,
+        sequence = excluded.sequence,
+        rows = excluded.rows,
+        cols = excluded.cols,
+        pid = excluded.pid,
+        exit_code = excluded.exit_code,
+        exit_signal = excluded.exit_signal,
+        history_file = excluded.history_file,
+        history_version = excluded.history_version
+    `).run(
+      terminal.projectId, terminal.terminalId, terminal.label, terminal.status,
+      terminal.createdAt, terminal.updatedAt, terminal.sequence, terminal.rows, terminal.cols,
+      terminal.pid ?? null, terminal.exitCode ?? null, terminal.exitSignal ?? null,
+      record.historyFile, record.historyVersion,
+    );
+  }
+
+  markRunningTerminalsInterrupted(timestamp = new Date().toISOString()): void {
+    this.database.prepare(`
+      UPDATE terminal_records
+      SET status = 'interrupted', updated_at = ?, pid = NULL, exit_code = NULL, exit_signal = NULL
+      WHERE status = 'running'
+    `).run(timestamp);
+  }
+
+  deleteTerminalRecord(projectId: string, terminalId: string): boolean {
+    return Number(this.database.prepare(`
+      DELETE FROM terminal_records WHERE project_id = ? AND terminal_id = ?
+    `).run(projectId, terminalId).changes) > 0;
   }
 
   beginCommand(command: AnvilClientCommand): "started" | "pending" | "unknown" | AnvilCommandResponse {
@@ -755,6 +835,32 @@ export class ForgeDatabase {
           value TEXT NOT NULL
         );
         PRAGMA user_version = 7;
+        COMMIT;
+      `);
+    }
+
+    if (version < 8) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE terminal_records (
+          project_id TEXT NOT NULL REFERENCES projects(id),
+          terminal_id TEXT NOT NULL,
+          label TEXT NOT NULL,
+          status TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          sequence INTEGER NOT NULL DEFAULT 0,
+          rows INTEGER NOT NULL,
+          cols INTEGER NOT NULL,
+          pid INTEGER,
+          exit_code INTEGER,
+          exit_signal INTEGER,
+          history_file TEXT NOT NULL,
+          history_version INTEGER NOT NULL DEFAULT 1,
+          PRIMARY KEY (project_id, terminal_id)
+        );
+        CREATE INDEX terminal_records_project_updated ON terminal_records(project_id, updated_at);
+        PRAGMA user_version = 8;
         COMMIT;
       `);
     }

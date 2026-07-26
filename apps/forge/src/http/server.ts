@@ -17,7 +17,10 @@ import {
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
+import { TerminalManager } from "../terminal/terminalManager.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
+import { authorizedOwner, sameOrigin } from "./security.ts";
+import { TerminalWebSocketChannel } from "./terminalWebSocket.ts";
 
 const MAX_COMMAND_BYTES = 2 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
@@ -31,6 +34,7 @@ export interface ForgeHttpServerOptions {
   indicators?: LiveIndicatorsService;
   searchFiles?: (sessionId: string, query: string, limit: number) => Promise<string[] | undefined>;
   requestRebuild?: () => Promise<void>;
+  terminals?: TerminalManager;
   instanceId?: string;
   ownerLogin?: string;
   webRoot?: string;
@@ -61,18 +65,6 @@ function sendJson(response: ServerResponse, status: number, value: unknown): voi
   response.end(body);
 }
 
-function sameOrigin(request: IncomingMessage): boolean {
-  const origin = request.headers.origin;
-  const host = request.headers.host;
-  if (!origin) return true;
-  if (!host) return false;
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
-}
-
 async function readBytes(request: IncomingMessage, maxBytes: number): Promise<Buffer> {
   const declaredLength = Number(request.headers["content-length"] ?? 0);
   if (Number.isFinite(declaredLength) && declaredLength > maxBytes) throw new Error("request_too_large");
@@ -95,6 +87,7 @@ export class ForgeHttpServer {
   private readonly server: Server;
   private readonly streams = new Set<ServerResponse>();
   private readonly instanceId: string;
+  private readonly terminalChannel?: TerminalWebSocketChannel;
 
   constructor(private readonly options: ForgeHttpServerOptions) {
     this.instanceId = options.instanceId ?? randomUUID();
@@ -107,6 +100,9 @@ export class ForgeHttpServer {
         sendJson(response, 500, apiError("internal_error", "Forge could not complete the request", true));
       });
     });
+    if (options.terminals) {
+      this.terminalChannel = new TerminalWebSocketChannel(this.server, options.terminals, options.ownerLogin);
+    }
   }
 
   async listen(host: string, port: number): Promise<void> {
@@ -121,6 +117,7 @@ export class ForgeHttpServer {
   }
 
   async close(): Promise<void> {
+    await this.terminalChannel?.close();
     for (const stream of this.streams) stream.end();
     this.streams.clear();
     await new Promise<void>((resolve, reject) => {
@@ -152,7 +149,7 @@ export class ForgeHttpServer {
       });
       return;
     }
-    if (url.pathname.startsWith("/api/") && !this.authorizedOwner(request)) {
+    if (url.pathname.startsWith("/api/") && !authorizedOwner(request, this.options.ownerLogin)) {
       sendJson(response, 403, apiError("owner_rejected", "Tailscale identity is not authorized"));
       return;
     }
@@ -265,12 +262,6 @@ export class ForgeHttpServer {
       if (await this.staticFile(request, response, url.pathname)) return;
     }
     sendJson(response, 404, apiError("not_found", "Route not found"));
-  }
-
-  private authorizedOwner(request: IncomingMessage): boolean {
-    if (!this.options.ownerLogin) return true;
-    const login = request.headers["tailscale-user-login"];
-    return typeof login === "string" && login === this.options.ownerLogin;
   }
 
   private async rebuild(request: IncomingMessage, response: ServerResponse): Promise<void> {

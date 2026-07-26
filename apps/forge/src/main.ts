@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { ArtifactStore } from "./artifacts/artifactStore.ts";
@@ -10,6 +11,8 @@ import { EventProjectResolver } from "./projects/projectResolver.ts";
 import { LiveIndicatorsService } from "./runtime/indicators.ts";
 import { SessionManager } from "./runtime/sessionManager.ts";
 import { ForgeDatabase } from "./store/database.ts";
+import { TerminalHistoryStore } from "./terminal/historyStore.ts";
+import { TerminalManager } from "./terminal/terminalManager.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -21,6 +24,10 @@ async function main(): Promise<void> {
   const events = new ForgeEventService(database, config.projects, artifacts);
   const projects = new EventProjectResolver(events);
   const sessions = new SessionManager(config, database, events, { projectResolver: projects });
+  const terminalHistory = new TerminalHistoryStore(
+    config.terminalHistoryDir ?? join(dirname(config.databasePath), "terminal-history"),
+  );
+  const terminals = new TerminalManager(database, projects, terminalHistory);
   const indicators = new LiveIndicatorsService(sessions);
   let shutdownPromise: Promise<void> | undefined;
   let server: ForgeHttpServer;
@@ -33,6 +40,7 @@ async function main(): Promise<void> {
       await Promise.all([
         server.close(),
         sessions.stopAll(),
+        terminals.stopAll(),
       ]);
       events.checkpoint();
       database.close();
@@ -45,6 +53,7 @@ async function main(): Promise<void> {
     artifacts,
     handleCommand: sessions.handleCommand,
     indicators,
+    terminals,
     searchFiles: sessions.searchFiles,
     requestRebuild: async () => {
       await execFileAsync("corepack", ["pnpm", "--filter", "@anvil/web", "build"], {

@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "build": "tsup src/main.ts --format esm --platform node --target node22 --out-dir dist --sourcemap --clean && tsup src/pi/anvilInlineArtifact.ts --format esm --platform node --target node22 --out-dir dist/pi --sourcemap",
+    "build": "tsup src/main.ts --format esm --platform node --target node22 --external node-pty --out-dir dist --sourcemap --clean && tsup src/pi/anvilInlineArtifact.ts --format esm --platform node --target node22 --out-dir dist/pi --sourcemap",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
@@ -17,10 +17,13 @@
     "@anvil/pi-rpc": "workspace:*",
     "@anvil/protocol": "workspace:*",
     "@anvil/state": "workspace:*",
-    "typebox": "^1.3.8"
+    "node-pty": "^1.1.0",
+    "typebox": "^1.3.8",
+    "ws": "^8.21.1"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
+    "@types/ws": "^8.18.1",
     "tsup": "^8.5.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.3",

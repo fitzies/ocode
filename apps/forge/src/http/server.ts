@@ -16,9 +16,11 @@ import {
 
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
+import { ProjectFileService } from "../projects/projectFileService.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
+import { ProjectFileRoutes } from "./projectFileRoutes.ts";
 import { authorizedOwner, sameOrigin } from "./security.ts";
 import { TerminalWebSocketChannel } from "./terminalWebSocket.ts";
 
@@ -32,6 +34,7 @@ export interface ForgeHttpServerOptions {
   artifacts?: ArtifactStore;
   handleCommand?: (command: AnvilClientCommand) => Promise<AnvilCommandResponse>;
   indicators?: LiveIndicatorsService;
+  projectFiles?: ProjectFileService;
   searchFiles?: (sessionId: string, query: string, limit: number) => Promise<string[] | undefined>;
   requestRebuild?: () => Promise<void>;
   terminals?: TerminalManager;
@@ -87,6 +90,7 @@ export class ForgeHttpServer {
   private readonly server: Server;
   private readonly streams = new Set<ServerResponse>();
   private readonly instanceId: string;
+  private readonly projectFileRoutes?: ProjectFileRoutes;
   private readonly terminalChannel?: TerminalWebSocketChannel;
 
   constructor(private readonly options: ForgeHttpServerOptions) {
@@ -100,6 +104,7 @@ export class ForgeHttpServer {
         sendJson(response, 500, apiError("internal_error", "Forge could not complete the request", true));
       });
     });
+    if (options.projectFiles) this.projectFileRoutes = new ProjectFileRoutes(options.projectFiles);
     if (options.terminals) {
       this.terminalChannel = new TerminalWebSocketChannel(this.server, options.terminals, options.ownerLogin);
     }
@@ -153,6 +158,7 @@ export class ForgeHttpServer {
       sendJson(response, 403, apiError("owner_rejected", "Tailscale identity is not authorized"));
       return;
     }
+    if (this.projectFileRoutes && await this.projectFileRoutes.handle(request, response, url)) return;
     if (request.method === "POST" && url.pathname === "/api/v1/admin/rebuild") {
       await this.rebuild(request, response);
       return;

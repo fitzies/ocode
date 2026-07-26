@@ -31,17 +31,29 @@ function parseJson(value: unknown): unknown {
   return JSON.parse(value);
 }
 
+function upgradeStoredResourceBlocks(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(upgradeStoredResourceBlocks);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.entries(record)
+    .filter(([key]) => !(record.type === "projectResource" && key === "projectId"))
+    .map(([key, child]) => [key, upgradeStoredResourceBlocks(child)]));
+}
+
 function upgradeStoredSnapshotProtocol(value: unknown): unknown {
   if (
-    Number(ANVIL_PROTOCOL_VERSION) === 6 &&
+    Number(ANVIL_PROTOCOL_VERSION) === 7 &&
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    (value as { protocolVersion?: unknown }).protocolVersion === 5
+    [5, 6].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
   ) {
-    // Protocol 6 only adds optional catalog metadata and a content-block variant,
-    // so protocol 5 snapshots remain structurally compatible.
-    return { ...(value as Record<string, unknown>), protocolVersion: ANVIL_PROTOCOL_VERSION };
+    // Protocol 7 adds strict session-relative project resource blocks. Older
+    // snapshots remain compatible after redundant persisted project IDs are removed.
+    return upgradeStoredResourceBlocks({
+      ...(value as Record<string, unknown>),
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+    });
   }
   return value;
 }
@@ -606,7 +618,7 @@ export class ForgeDatabase {
       sessionId: row.session_id,
       timestamp: row.timestamp,
       type: row.type,
-      payload: parseJson(row.payload_json),
+      payload: upgradeStoredResourceBlocks(parseJson(row.payload_json)),
       ...(row.raw_json === null ? {} : { raw: parseJson(row.raw_json) }),
     };
     if (!isAnvilEvent(candidate)) {

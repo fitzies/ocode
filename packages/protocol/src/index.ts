@@ -1,10 +1,20 @@
+import {
+  isArtifactReference,
+  isContentBlock,
+  isJsonValue,
+  type ArtifactContentBlock,
+  type ArtifactReference,
+  type ContentBlock,
+  type ImageContentBlock,
+  type JsonValue,
+} from "./content.js";
+
+export * from "@anvil/protocol/content";
+export * from "@anvil/protocol/resources";
 export * from "@anvil/protocol/terminal";
 
-export const ANVIL_PROTOCOL_VERSION = 6 as const;
+export const ANVIL_PROTOCOL_VERSION = 7 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
-
-export type JsonPrimitive = string | number | boolean | null;
-export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
 
 export type ConnectionState = "connected" | "reconnecting" | "offline";
 export type SessionStatus = "idle" | "running" | "waiting" | "failed";
@@ -70,82 +80,6 @@ export interface CapabilityCatalog {
   skills: SkillDescriptor[];
   modelsReady?: boolean;
 }
-
-export interface TextContentBlock {
-  id: string;
-  type: "text";
-  text: string;
-}
-
-export interface ImageContentBlock {
-  id: string;
-  type: "image";
-  mimeType: string;
-  alt?: string;
-  name?: string;
-  url?: string;
-  data?: string;
-}
-
-export interface DataContentBlock {
-  id: string;
-  type: "data";
-  label?: string;
-  data: JsonValue;
-}
-
-export interface ToolCallContentBlock {
-  id: string;
-  type: "toolCall";
-  toolCallId: string;
-  name: string;
-  arguments: JsonValue;
-}
-
-export interface UnknownContentBlock {
-  id: string;
-  type: "unknown";
-  contentType: string;
-  raw: JsonValue;
-}
-
-export interface ArtifactContentBlock {
-  id: string;
-  type: "artifact";
-  artifactId: string;
-  url: string;
-  mediaType: string;
-  byteLength: number;
-  name?: string;
-  preview?: string;
-}
-
-export interface ArtifactReference {
-  type: "artifactReference";
-  artifactId: string;
-  url: string;
-  mediaType: string;
-  byteLength: number;
-  name?: string;
-}
-
-export interface InlineHtmlContentBlock {
-  id: string;
-  type: "inlineHtml";
-  title: string;
-  html: string;
-  sourcePath?: string;
-  byteLength: number;
-}
-
-export type ContentBlock =
-  | TextContentBlock
-  | ImageContentBlock
-  | DataContentBlock
-  | ToolCallContentBlock
-  | UnknownContentBlock
-  | ArtifactContentBlock
-  | InlineHtmlContentBlock;
 
 interface TimelineEntryBase {
   id: string;
@@ -547,14 +481,6 @@ export interface AnvilCommandResponse {
   error?: string;
 }
 
-export function isJsonValue(value: unknown): value is JsonValue {
-  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
-  if (typeof value === "number") return Number.isFinite(value);
-  if (Array.isArray(value)) return value.every(isJsonValue);
-  if (typeof value !== "object") return false;
-  return Object.values(value as Record<string, unknown>).every(isJsonValue);
-}
-
 const ANVIL_EVENT_TYPES = new Set<AnvilEvent["type"]>([
   "connection.changed",
   "catalog.updated",
@@ -595,50 +521,6 @@ function hasStrings(value: Record<string, unknown>, ...keys: string[]) {
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
-}
-
-function isArtifactReference(value: unknown): value is ArtifactReference {
-  return isRecord(value) &&
-    value.type === "artifactReference" &&
-    hasStrings(value, "artifactId", "url", "mediaType") &&
-    value.url === `/api/v1/artifacts/${String(value.artifactId)}` &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value.artifactId)) &&
-    Number.isSafeInteger(value.byteLength) && Number(value.byteLength) >= 0 &&
-    (value.name === undefined || typeof value.name === "string");
-}
-
-function isContentBlock(value: unknown): boolean {
-  if (!isRecord(value) || !hasStrings(value, "id", "type")) return false;
-  switch (value.type) {
-    case "text":
-      return typeof value.text === "string";
-    case "image":
-      return typeof value.mimeType === "string" &&
-        (value.data === undefined || typeof value.data === "string") &&
-        (value.url === undefined || typeof value.url === "string");
-    case "data":
-      return isJsonValue(value.data);
-    case "toolCall":
-      return hasStrings(value, "toolCallId", "name") && isJsonValue(value.arguments);
-    case "unknown":
-      return typeof value.contentType === "string" && isJsonValue(value.raw);
-    case "artifact":
-      return hasStrings(value, "artifactId", "url", "mediaType") &&
-        /^\/[a-z0-9/_-]+$/i.test(String(value.url)) &&
-        value.url === `/api/v1/artifacts/${String(value.artifactId)}` &&
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value.artifactId)) &&
-        Number.isSafeInteger(value.byteLength) && Number(value.byteLength) >= 0 &&
-        (value.name === undefined || typeof value.name === "string") &&
-        (value.preview === undefined || typeof value.preview === "string");
-    case "inlineHtml":
-      return hasStrings(value, "title", "html") &&
-        Number.isSafeInteger(value.byteLength) &&
-        Number(value.byteLength) === new TextEncoder().encode(String(value.html)).byteLength &&
-        Number(value.byteLength) <= 192 * 1024 &&
-        (value.sourcePath === undefined || typeof value.sourcePath === "string");
-    default:
-      return false;
-  }
 }
 
 function isModelDescriptor(value: unknown): boolean {
@@ -764,7 +646,7 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
     case "message.delta":
       return hasStrings(value, "messageId", "blockId", "delta") &&
         (value.artifact === undefined || (
-          isRecord(value.artifact) && isContentBlock(value.artifact) && value.artifact.type === "artifact"
+          isRecord(value.artifact) && value.artifact.type === "artifact" && isContentBlock(value.artifact)
         ));
     case "message.completed":
       return hasStrings(value, "messageId") &&

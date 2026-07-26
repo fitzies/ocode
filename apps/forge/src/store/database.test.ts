@@ -123,8 +123,8 @@ describe("ForgeDatabase event journal", () => {
     database.close();
   });
 
-  it("upgrades structurally compatible protocol 5 snapshots", () => {
-    const directory = mkdtempSync(join(tmpdir(), "anvil-store-v5-snapshot-"));
+  it.each([5, 6])("upgrades structurally compatible protocol %i snapshots", (legacyVersion) => {
+    const directory = mkdtempSync(join(tmpdir(), `anvil-store-v${legacyVersion}-snapshot-`));
     const path = join(directory, "forge.sqlite");
     try {
       const first = new ForgeDatabase(path);
@@ -134,16 +134,77 @@ describe("ForgeDatabase event journal", () => {
       const raw = new DatabaseSync(path);
       const row = raw.prepare("SELECT snapshot_json FROM snapshots WHERE cursor = 0").get() as { snapshot_json: string };
       const snapshot = JSON.parse(row.snapshot_json) as Record<string, unknown>;
-      snapshot.protocolVersion = 5;
+      snapshot.protocolVersion = legacyVersion;
+      snapshot.projects = [{ id: "project-1", name: "Project", path: "/repo" }];
+      snapshot.sessions = [{
+        id: "session-1",
+        projectId: "project-1",
+        title: "Legacy resource",
+        updatedAt: "2026-07-23T01:00:00.000Z",
+        status: "idle",
+        modelId: "test/model",
+        thinkingLevel: "off",
+      }];
+      snapshot.timelines = {
+        "session-1": [{
+          id: "tool-legacy",
+          kind: "tool",
+          toolCallId: "call-legacy",
+          name: "anvil_open_file",
+          summary: "Open file",
+          status: "completed",
+          arguments: { path: "README.md" },
+          output: [{ id: "resource-legacy", type: "projectResource", projectId: "project-1", path: "README.md" }],
+          createdAt: "2026-07-23T01:00:00.000Z",
+        }],
+      };
       raw.prepare("UPDATE snapshots SET snapshot_json = ? WHERE cursor = 0").run(JSON.stringify(snapshot));
       raw.close();
 
       const reopened = new ForgeDatabase(path);
-      expect(reopened.latestSnapshot()?.snapshot).toMatchObject({
+      const restored = reopened.latestSnapshot()?.snapshot;
+      expect(restored).toMatchObject({
         protocolVersion: ANVIL_PROTOCOL_VERSION,
         connection: "offline",
         lastSequence: 0,
+        timelines: { "session-1": [{ output: [{ type: "projectResource", path: "README.md" }] }] },
       });
+      const entry = restored?.timelines["session-1"]?.[0];
+      expect(entry?.kind === "tool" ? entry.output[0] : undefined).not.toHaveProperty("projectId");
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("upgrades legacy project resource blocks in persisted journal events", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-store-resource-event-"));
+    const path = join(directory, "forge.sqlite");
+    try {
+      const first = new ForgeDatabase(path);
+      first.appendEvents([{
+        sessionId: "session-1",
+        timestamp: "2026-07-23T01:00:00.000Z",
+        type: "tool.completed",
+        payload: {
+          toolCallId: "call-1",
+          status: "completed",
+          output: [{ id: "resource-1", type: "projectResource", path: "README.md" }],
+        },
+      }]);
+      first.close();
+
+      const raw = new DatabaseSync(path);
+      const row = raw.prepare("SELECT payload_json FROM events WHERE sequence = 1").get() as { payload_json: string };
+      const payload = JSON.parse(row.payload_json) as { output: Array<Record<string, unknown>> };
+      payload.output[0]!.projectId = "project-1";
+      raw.prepare("UPDATE events SET payload_json = ? WHERE sequence = 1").run(JSON.stringify(payload));
+      raw.close();
+
+      const reopened = new ForgeDatabase(path);
+      const restored = reopened.readEventsAfter(0)[0];
+      expect(restored).toMatchObject({ payload: { output: [{ type: "projectResource", path: "README.md" }] } });
+      expect(restored?.type === "tool.completed" ? restored.payload.output[0] : undefined).not.toHaveProperty("projectId");
       reopened.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });

@@ -102,7 +102,7 @@ export function ProjectTerminalSurface({ projectId, isMobile }: { projectId: str
   const terminals = useSyncExternalStore(
     terminalClient.subscribe,
     () => terminalClient.terminals(projectId),
-    () => [],
+    () => terminalClient.terminals(projectId),
   );
   const connection = useSyncExternalStore(
     terminalClient.subscribe,

@@ -26,6 +26,12 @@ const terminal = {
 };
 
 describe("TerminalClient", () => {
+  it("returns a stable empty snapshot for useSyncExternalStore", () => {
+    const client = new TerminalClient(() => new FakeSocket(), "ws://test/api/v1/terminals/ws");
+
+    expect(client.terminals("missing")).toBe(client.terminals("missing"));
+  });
+
   it("reconciles project metadata and routes attach snapshots and live output", () => {
     const socket = new FakeSocket();
     const client = new TerminalClient(() => socket, "ws://test/api/v1/terminals/ws");

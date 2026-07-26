@@ -15,6 +15,7 @@ type SocketLike = Pick<WebSocket, "readyState" | "send" | "close" | "addEventLis
 type SocketFactory = (url: string) => SocketLike;
 
 const OPEN = 1;
+const EMPTY_TERMINALS: ShellTerminalMetadata[] = [];
 const MAX_QUEUED_MESSAGES = 100;
 const MAX_QUEUED_BYTES = 512 * 1024;
 const defaultSocketFactory: SocketFactory = (url) => new WebSocket(url);
@@ -40,7 +41,7 @@ export class TerminalClient {
   ) {}
 
   connectionState = () => this.state;
-  terminals = (projectId: string) => this.metadata.get(projectId) ?? [];
+  terminals = (projectId: string) => this.metadata.get(projectId) ?? EMPTY_TERMINALS;
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

@@ -300,6 +300,24 @@
   border-bottom: 1px solid color-mix(in oklab, var(--amber) 15%, transparent);
 }
 
+.reconciliation-banner--dismissible {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding-top: 2px;
+  padding-right: 10px;
+  padding-bottom: 2px;
+}
+
+.reconciliation-banner--dismissible > span {
+  min-width: 0;
+  flex: 1;
+}
+
+.reconciliation-banner-dismiss {
+  flex: 0 0 auto;
+  color: currentColor;
+}
 
 .completion-toasts {
   position: fixed;

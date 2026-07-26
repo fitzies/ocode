@@ -86,6 +86,7 @@ export interface AnvilClient {
   setModel(modelId: string): void;
   setThinkingLevel(level: ThinkingLevel): void;
   respondToInteraction(response: InteractionResponse): void;
+  clearClientError(): void;
   clearComposerDraft(sessionId: string): void;
   isSessionPending(sessionId: string): boolean;
   getSessionCreationError(sessionId: string): string | undefined;
@@ -793,6 +794,12 @@ export class FixtureAnvilClient implements AnvilClient {
   isSessionPending = () => false;
   getSessionCreationError = () => undefined;
 
+  clearClientError = () => {
+    if (!this.snapshot.clientError) return;
+    this.snapshot = { ...this.snapshot, clientError: undefined };
+    this.emit();
+  };
+
   markSessionRead = (sessionId: string) => {
     const sequence = this.snapshot.sessions.find((session) => session.id === sessionId)?.lastTerminalSequence;
     if (!sequence || (this.snapshot.readThroughSequences[sessionId] ?? 0) >= sequence) return;
@@ -1362,6 +1369,12 @@ export class ForgeAnvilClient implements AnvilClient {
     const request = this.snapshot.pendingInteractions.find((item) => item.id === response.requestId);
     if (!request) return;
     void this.sendCommand(this.command("interaction.respond", request.sessionId, response));
+  };
+
+  clearClientError = () => {
+    if (!this.snapshot.clientError) return;
+    this.snapshot = { ...this.snapshot, clientError: undefined };
+    this.emit();
   };
 
   clearComposerDraft = (sessionId: string) => {

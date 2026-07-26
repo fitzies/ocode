@@ -30,6 +30,21 @@ function parseJson(value: unknown): unknown {
   return JSON.parse(value);
 }
 
+function upgradeStoredSnapshotProtocol(value: unknown): unknown {
+  if (
+    Number(ANVIL_PROTOCOL_VERSION) === 6 &&
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as { protocolVersion?: unknown }).protocolVersion === 5
+  ) {
+    // Protocol 6 only adds optional catalog metadata and a content-block variant,
+    // so protocol 5 snapshots remain structurally compatible.
+    return { ...(value as Record<string, unknown>), protocolVersion: ANVIL_PROTOCOL_VERSION };
+  }
+  return value;
+}
+
 export interface StoredSnapshot {
   snapshot: AnvilSnapshot;
   cursor: number;
@@ -494,7 +509,7 @@ export class ForgeDatabase {
     `).all() as Array<Record<string, unknown>>;
     for (const row of rows) {
       try {
-        const snapshot = parseJson(row.snapshot_json);
+        const snapshot = upgradeStoredSnapshotProtocol(parseJson(row.snapshot_json));
         if (isAnvilSnapshot(snapshot)) return { snapshot, cursor: Number(row.cursor) };
       } catch {
         // Ignore corrupt or obsolete snapshots and continue toward a full journal replay.

@@ -146,6 +146,56 @@ describe("Timeline tool presentation", () => {
     expect(html).toContain("tool-event--file");
   });
 
+  it("renders an inline artifact loading state without generic tool chrome", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={{ ...session, status: "running" }}
+        entries={[tool({
+          name: "anvil_render_html_file",
+          arguments: { path: "artifacts/usage.html", title: "Usage preview" },
+        })]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Usage preview");
+    expect(html).toContain("Building preview…");
+    expect(html).toContain('data-slot="spinner"');
+    expect(html).not.toContain("tool-event--generic");
+  });
+
+  it("renders completed HTML artifacts in a sandboxed inline iframe", () => {
+    const artifactHtml = "<!doctype html><html><body><strong>34% used</strong></body></html>";
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[tool({
+          name: "anvil_render_html_file",
+          status: "completed",
+          arguments: { path: "artifacts/usage.html", title: "Usage preview" },
+          output: [{
+            id: "inline-html-1",
+            type: "inlineHtml",
+            title: "Usage preview",
+            html: artifactHtml,
+            sourcePath: "artifacts/usage.html",
+            byteLength: new TextEncoder().encode(artifactHtml).byteLength,
+          }],
+          endedAt: "2026-03-22T00:00:01.000Z",
+        })]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Usage preview");
+    expect(html).toContain("Connecting to preview…");
+    expect(html).toContain('sandbox="allow-scripts"');
+    expect(html).toContain('referrerPolicy="no-referrer"');
+    expect(html).toContain("Content-Security-Policy");
+    expect(html).toContain("connect-src &#x27;none&#x27;");
+    expect(html).not.toContain("tool-event--generic");
+  });
+
   it("shows subagents as delegated agents", () => {
     const html = renderToStaticMarkup(
       <Timeline

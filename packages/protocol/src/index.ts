@@ -1,4 +1,4 @@
-export const ANVIL_PROTOCOL_VERSION = 5 as const;
+export const ANVIL_PROTOCOL_VERSION = 6 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
 
 export type JsonPrimitive = string | number | boolean | null;
@@ -66,6 +66,7 @@ export interface CapabilityCatalog {
   models: ModelDescriptor[];
   commands: CommandDescriptor[];
   skills: SkillDescriptor[];
+  modelsReady?: boolean;
 }
 
 export interface TextContentBlock {
@@ -126,13 +127,23 @@ export interface ArtifactReference {
   name?: string;
 }
 
+export interface InlineHtmlContentBlock {
+  id: string;
+  type: "inlineHtml";
+  title: string;
+  html: string;
+  sourcePath?: string;
+  byteLength: number;
+}
+
 export type ContentBlock =
   | TextContentBlock
   | ImageContentBlock
   | DataContentBlock
   | ToolCallContentBlock
   | UnknownContentBlock
-  | ArtifactContentBlock;
+  | ArtifactContentBlock
+  | InlineHtmlContentBlock;
 
 interface TimelineEntryBase {
   id: string;
@@ -617,6 +628,12 @@ function isContentBlock(value: unknown): boolean {
         Number.isSafeInteger(value.byteLength) && Number(value.byteLength) >= 0 &&
         (value.name === undefined || typeof value.name === "string") &&
         (value.preview === undefined || typeof value.preview === "string");
+    case "inlineHtml":
+      return hasStrings(value, "title", "html") &&
+        Number.isSafeInteger(value.byteLength) &&
+        Number(value.byteLength) === new TextEncoder().encode(String(value.html)).byteLength &&
+        Number(value.byteLength) <= 192 * 1024 &&
+        (value.sourcePath === undefined || typeof value.sourcePath === "string");
     default:
       return false;
   }
@@ -636,7 +653,8 @@ function isCapabilityCatalog(value: unknown): boolean {
   return isRecord(value) &&
     Array.isArray(value.models) && value.models.every(isModelDescriptor) &&
     Array.isArray(value.commands) && value.commands.every((item) => isRecord(item) && hasStrings(item, "name", "source")) &&
-    Array.isArray(value.skills) && value.skills.every((item) => isRecord(item) && hasStrings(item, "name", "command"));
+    Array.isArray(value.skills) && value.skills.every((item) => isRecord(item) && hasStrings(item, "name", "command")) &&
+    (value.modelsReady === undefined || typeof value.modelsReady === "boolean");
 }
 
 function isSessionSummary(value: unknown): boolean {

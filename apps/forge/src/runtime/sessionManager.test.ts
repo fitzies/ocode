@@ -48,6 +48,7 @@ beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "anvil-runtime-"));
   const executable = join(directory, "fake-pi.mjs");
   writeFileSync(executable, `#!/usr/bin/env node
+    import { existsSync } from "node:fs";
     import { createInterface } from "node:readline";
     const input = createInterface({ input: process.stdin });
     const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
@@ -75,9 +76,13 @@ beforeEach(() => {
       } else if (request.type === "get_messages") {
         send({ type: "response", id: request.id, command: request.type, success: true, data: { messages: [] } });
       } else if (request.type === "get_available_models") {
-        send({ type: "response", id: request.id, command: request.type, success: true, data: { models: [
-          { id: "model-1", name: "Model One", provider: "test", reasoning: true, input: ["text"], thinkingLevelMap: { xhigh: null } }
-        ] }});
+        if (existsSync(sessionDir + "/fail-model-discovery")) {
+          send({ type: "response", id: request.id, command: request.type, success: false, error: "Model discovery unavailable" });
+        } else {
+          send({ type: "response", id: request.id, command: request.type, success: true, data: { models: [
+            { id: "model-1", name: "Model One", provider: "test", reasoning: true, input: ["text"], thinkingLevelMap: { xhigh: null } }
+          ] }});
+        }
       } else if (request.type === "get_commands") {
         send({ type: "response", id: request.id, command: request.type, success: true, data: { commands: [] } });
       } else if (request.type === "prompt") {
@@ -452,6 +457,54 @@ describe("SessionManager", () => {
       status: "failed",
     }));
     expect(database.getSession(sessionId)?.session.status).toBe("failed");
+  });
+
+  it("fails startup when Pi cannot load the model catalog", async () => {
+    const sessionDir = join(config.sessionDir, requestedSessionId);
+    mkdirSync(sessionDir, { recursive: true });
+    writeFileSync(join(sessionDir, "fail-model-discovery"), "");
+
+    await manager.handleCommand(command("create-model-failure", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+
+    await waitUntil(() => events.currentSnapshot().sessions.some(
+      (session) => session.id === requestedSessionId && session.status === "failed",
+    ));
+    expect(events.currentSnapshot().timelines[requestedSessionId]).toContainEqual(expect.objectContaining({
+      kind: "event",
+      category: "error",
+      message: "Model discovery unavailable",
+    }));
+  });
+
+  it("waits for a new session's model catalog before configuring it", async () => {
+    const created = await manager.handleCommand(command("create-configuring", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    const sessionId = (created.data as { sessionId: string }).sessionId;
+
+    const model = await manager.handleCommand(command("model-while-starting", "model.set", sessionId, {
+      modelId: "test/model-1",
+    }));
+
+    expect(model.success).toBe(true);
+  });
+
+  it("waits for a new session's model catalog before changing its thinking level", async () => {
+    const created = await manager.handleCommand(command("create-thinking", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    const sessionId = (created.data as { sessionId: string }).sessionId;
+
+    const thinking = await manager.handleCommand(command("thinking-while-starting", "thinking.set", sessionId, {
+      level: "high",
+    }));
+
+    expect(thinking.success).toBe(true);
   });
 
   it("rejects model and thinking settings outside the session catalog", async () => {

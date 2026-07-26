@@ -158,6 +158,46 @@ describe("protocol runtime guards", () => {
     })).toBe(false);
   });
 
+  it("validates bounded inline HTML content blocks", () => {
+    const html = "<!doctype html><p>Hello</p>";
+    const event = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-inline-html",
+      sequence: 1,
+      sessionId: "session-1",
+      timestamp: "2026-07-21T08:00:00.000Z",
+      type: "message.started",
+      payload: {
+        message: {
+          id: "message-1",
+          kind: "message",
+          role: "assistant",
+          status: "complete",
+          createdAt: "2026-07-21T08:00:00.000Z",
+          content: [{
+            id: "inline-html-1",
+            type: "inlineHtml",
+            title: "Greeting",
+            html,
+            sourcePath: "artifacts/greeting.html",
+            byteLength: new TextEncoder().encode(html).byteLength,
+          }],
+        },
+      },
+    };
+
+    expect(isAnvilEvent(event)).toBe(true);
+    expect(isAnvilEvent({
+      ...event,
+      payload: {
+        message: {
+          ...event.payload.message,
+          content: [{ ...event.payload.message.content[0], byteLength: 1 }],
+        },
+      },
+    })).toBe(false);
+  });
+
   it("validates workspace and deletion events", () => {
     const base = {
       protocolVersion: ANVIL_PROTOCOL_VERSION,

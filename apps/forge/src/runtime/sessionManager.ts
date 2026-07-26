@@ -306,6 +306,9 @@ export class SessionManager {
     if (stored.session.settled && command.type !== "prompt.send") {
       return commandResponse(command, false, { error: "Send a prompt to resume this settled thread" });
     }
+    if (command.type === "model.set" || command.type === "thinking.set") {
+      await this.starting.get(sessionId);
+    }
     const catalog = this.events.catalogForSession(sessionId);
     if (command.type === "model.set" && !catalog?.models.some(
       (model) => model.id === command.payload.modelId,
@@ -767,6 +770,9 @@ export class SessionManager {
       executable: this.config.piExecutable,
       cwd: project.path,
       sessionDir,
+      extraArgs: this.config.piExtensionPath
+        ? ["--extension", this.config.piExtensionPath]
+        : undefined,
     });
     const runtime: ManagedSession = {
       rpc,
@@ -818,7 +824,9 @@ export class SessionManager {
       const at = Math.max(0, Date.now() - runtime.baseTimestamp);
       this.events.append(normalizePiRpcRecord(runtime.adapter, state, at));
       await this.sendSuppressedRequest(runtime, { type: "get_messages" });
-      await rpc.sendRequest({ type: "get_available_models" });
+      const models = await rpc.sendRequest({ type: "get_available_models" });
+      const modelsError = rpcFailure(models);
+      if (modelsError) throw new Error(`Pi could not load models: ${modelsError}`);
       await rpc.sendRequest({ type: "get_commands" });
 
       this.syncSession(stored.session.id, {

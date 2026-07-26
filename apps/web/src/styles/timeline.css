@@ -140,6 +140,143 @@
   white-space: nowrap;
 }
 
+.inline-html-artifact-event {
+  margin: 22px 3% 28px 0;
+}
+.inline-html-artifact {
+  min-width: 0;
+  color: var(--legacy-text);
+}
+.inline-html-artifact-header,
+.inline-html-artifact-title,
+.inline-html-artifact-actions,
+.inline-html-artifact-loading,
+.inline-html-artifact-error {
+  display: flex;
+  align-items: center;
+}
+.inline-html-artifact-header {
+  min-height: 31px;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  gap: 12px;
+}
+.inline-html-artifact-title {
+  min-width: 0;
+  gap: 8px;
+}
+.inline-html-artifact-title strong {
+  overflow: hidden;
+  color: var(--legacy-text-high);
+  font-size: 10.5px;
+  font-weight: 590;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inline-html-artifact-title small {
+  overflow: hidden;
+  color: var(--legacy-text-faint);
+  font: 8px/1.3 "Geist Mono Variable", "Geist Mono", monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inline-html-artifact-actions {
+  flex: 0 0 auto;
+  gap: 2px;
+  opacity: 0.42;
+  transition: opacity 140ms ease;
+}
+.inline-html-artifact:hover .inline-html-artifact-actions,
+.inline-html-artifact:focus-within .inline-html-artifact-actions { opacity: 1; }
+.inline-html-artifact-actions button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  color: var(--legacy-text-low);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+}
+.inline-html-artifact-actions button:hover,
+.inline-html-artifact-actions button[aria-pressed="true"] {
+  color: var(--legacy-text-high);
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+}
+.inline-html-artifact-actions button:focus-visible {
+  outline: 1px solid var(--border-strong);
+  outline-offset: 1px;
+}
+.inline-html-artifact-canvas {
+  position: relative;
+  width: 100%;
+  min-height: 120px;
+  overflow: hidden;
+  background: transparent;
+  transition: height 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.inline-html-artifact-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  color-scheme: light dark;
+  background: transparent;
+  border: 0;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.inline-html-artifact--ready .inline-html-artifact-frame { opacity: 1; }
+.inline-html-artifact-loading,
+.inline-html-artifact-error {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  justify-content: center;
+  gap: 8px;
+  color: var(--legacy-text-low);
+  font-size: 10px;
+}
+.inline-html-artifact-error {
+  flex-direction: column;
+  color: var(--red);
+}
+.inline-html-artifact-error button {
+  padding: 4px 8px;
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 9px;
+}
+.inline-html-artifact--pending {
+  position: relative;
+  min-height: 132px;
+}
+.inline-html-artifact--pending > .inline-html-artifact-loading {
+  top: 31px;
+}
+.inline-html-artifact-source {
+  max-height: 360px;
+  margin: 8px 0 0;
+  padding: 11px 12px;
+  overflow: auto;
+  color: var(--legacy-text-low);
+  background: color-mix(in oklab, var(--foreground) 2.5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font: 9px/1.55 "Geist Mono Variable", "Geist Mono", monospace;
+  white-space: pre-wrap;
+}
+@media (hover: none) {
+  .inline-html-artifact-actions { opacity: 0.8; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inline-html-artifact-canvas,
+  .inline-html-artifact-frame,
+  .inline-html-artifact-actions { transition: none; }
+}
+
 .timeline-date {
   display: flex;
   align-items: center;

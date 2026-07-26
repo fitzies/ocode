@@ -125,6 +125,7 @@ describe("Pi RPC normalization", () => {
             id: "test/model-1",
             supportedThinkingLevels: ["off", "low", "medium", "high", "xhigh"],
           }],
+          modelsReady: true,
         },
       },
     });
@@ -226,6 +227,100 @@ describe("Pi RPC normalization", () => {
       });
       expect(settled).toEqual([]);
     }
+  });
+
+  it("normalizes completed inline HTML artifacts without duplicating source in raw details", () => {
+    const html = "<!doctype html><html><body><svg></svg></body></html>";
+    const [event] = normalizePiRpcRecord(state(), {
+      type: "tool_execution_end",
+      toolCallId: "call-artifact",
+      toolName: "anvil_render_html_file",
+      result: {
+        content: [{ type: "text", text: "Rendered Usage inline." }],
+        details: {
+          kind: "anvil.inline-html",
+          schemaVersion: 1,
+          title: "Usage",
+          sourcePath: "artifacts/usage.html",
+          byteLength: new TextEncoder().encode(html).byteLength,
+          html,
+        },
+      },
+      isError: false,
+    });
+
+    expect(event).toMatchObject({
+      type: "tool.completed",
+      payload: {
+        toolCallId: "call-artifact",
+        status: "completed",
+        output: [{
+          type: "inlineHtml",
+          title: "Usage",
+          html,
+          sourcePath: "artifacts/usage.html",
+        }],
+        details: {
+          kind: "anvil.inline-html",
+          schemaVersion: 1,
+          title: "Usage",
+        },
+      },
+    });
+    expect(event).not.toHaveProperty("raw");
+    const normalizedDetails = event.type === "tool.completed" ? event.payload.details : undefined;
+    expect(JSON.stringify(normalizedDetails)).not.toContain(html);
+  });
+
+  it("restores inline HTML artifacts from persisted Pi tool results", () => {
+    const html = "<div>Restored preview</div>";
+    const events = normalizePiRpcRecord(state(), {
+      type: "message_end",
+      message: {
+        role: "toolResult",
+        toolCallId: "call-restored-artifact",
+        toolName: "anvil_render_html_file",
+        content: [{ type: "text", text: "Rendered preview inline." }],
+        details: {
+          kind: "anvil.inline-html",
+          schemaVersion: 1,
+          title: "Restored preview",
+          byteLength: new TextEncoder().encode(html).byteLength,
+          html,
+        },
+        isError: false,
+      },
+    });
+
+    expect(events).toHaveLength(2);
+    expect(events[0]).toMatchObject({
+      type: "tool.started",
+      payload: { tool: { name: "anvil_render_html_file" } },
+    });
+    expect(events[1]).toMatchObject({
+      type: "tool.completed",
+      payload: { output: [{ type: "inlineHtml", html }] },
+    });
+    expect(events.every((event) => !("raw" in event))).toBe(true);
+  });
+
+  it("keeps malformed inline artifact envelopes on the generic tool fallback", () => {
+    const [event] = normalizePiRpcRecord(state(), {
+      type: "tool_execution_end",
+      toolCallId: "call-bad-artifact",
+      toolName: "anvil_render_html_file",
+      result: {
+        content: [{ type: "text", text: "No preview" }],
+        details: { kind: "anvil.inline-html", schemaVersion: 99, html: "<p>Bad</p>" },
+      },
+      isError: false,
+    });
+
+    expect(event).toMatchObject({
+      type: "tool.completed",
+      payload: { output: [{ type: "text", text: "No preview" }] },
+    });
+    expect(event).toHaveProperty("raw");
   });
 
   it("turns accumulated tool progress into replaceable output events", () => {

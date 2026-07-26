@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import type { UnsequencedAnvilEvent } from "@anvil/pi-rpc";
+import { ANVIL_PROTOCOL_VERSION } from "@anvil/protocol";
 import { applyAnvilEvents, createEmptySnapshot } from "@anvil/state";
 import { describe, expect, it } from "vitest";
 
@@ -120,6 +121,33 @@ describe("ForgeDatabase event journal", () => {
       event(null, "2026-07-23T01:00:06.000Z"),
     ])[0]?.sequence).toBe(6);
     database.close();
+  });
+
+  it("upgrades structurally compatible protocol 5 snapshots", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-store-v5-snapshot-"));
+    const path = join(directory, "forge.sqlite");
+    try {
+      const first = new ForgeDatabase(path);
+      first.saveSnapshot({ ...createEmptySnapshot(), connection: "offline" });
+      first.close();
+
+      const raw = new DatabaseSync(path);
+      const row = raw.prepare("SELECT snapshot_json FROM snapshots WHERE cursor = 0").get() as { snapshot_json: string };
+      const snapshot = JSON.parse(row.snapshot_json) as Record<string, unknown>;
+      snapshot.protocolVersion = 5;
+      raw.prepare("UPDATE snapshots SET snapshot_json = ? WHERE cursor = 0").run(JSON.stringify(snapshot));
+      raw.close();
+
+      const reopened = new ForgeDatabase(path);
+      expect(reopened.latestSnapshot()?.snapshot).toMatchObject({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        connection: "offline",
+        lastSequence: 0,
+      });
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it("rolls back session creation when its initial event is invalid", () => {

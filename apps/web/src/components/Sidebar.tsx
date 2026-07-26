@@ -1,6 +1,8 @@
 import { sortSessionsByActivity } from "@anvil/state";
 import {
   Add01Icon,
+  Archive01Icon,
+  ArchiveRestoreIcon,
   ArrowDown01Icon,
   Delete02Icon,
   MessageAdd01Icon,
@@ -224,6 +226,13 @@ export const Sidebar = memo(function Sidebar({
           )}
         </div>
         <ContextMenuContent className="w-40">
+          <ContextMenuItem
+            disabled={settling}
+            onSelect={() => void toggleSettled(session.id, !settled)}
+          >
+            <HugeiconsIcon icon={settled ? ArchiveRestoreIcon : Archive01Icon} strokeWidth={2} />
+            {settled ? "Unsettle thread" : "Settle thread"}
+          </ContextMenuItem>
           <ContextMenuItem variant="destructive" onSelect={() => onRequestDeleteSession(session.id)}>
             <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
             Delete thread
@@ -234,7 +243,7 @@ export const Sidebar = memo(function Sidebar({
   };
 
   return (
-    <SidebarPrimitive collapsible="offcanvas" aria-label="Projects and sessions">
+    <SidebarPrimitive variant="inset" collapsible="offcanvas" aria-label="Projects and sessions">
       <SidebarHeader className="gap-2 border-b border-sidebar-border p-2.5">
         <div className="flex min-h-8 items-center gap-1">
           <SidebarTrigger className="sidebar-close" aria-label="Close sidebar" />

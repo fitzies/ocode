@@ -1,5 +1,6 @@
 import type { ArtifactReference, CapabilityCatalog } from "@anvil/protocol";
 import {
+  Cancel01Icon,
   ComputerIcon,
   Moon02Icon,
   RefreshIcon,
@@ -462,8 +463,18 @@ function AppShellContent() {
           </div>
         )}
         {snapshot.clientError && (
-          <div className="reconciliation-banner" role="alert">
-            Forge command failed · {snapshot.clientError}
+          <div className="reconciliation-banner reconciliation-banner--dismissible" role="alert">
+            <span>Forge command failed · {snapshot.clientError}</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              className="reconciliation-banner-dismiss"
+              aria-label="Dismiss Forge error"
+              onClick={anvilClient.clearClientError}
+            >
+              <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+            </Button>
           </div>
         )}
 
@@ -485,6 +496,7 @@ function AppShellContent() {
               thinkingLevel={activeSession.thinkingLevel}
               status={activeSession.status}
               models={activeCatalog.models}
+              modelsReady={activeCatalog.modelsReady ?? activeCatalog.models.length > 0}
               commands={activeCatalog.commands}
               skills={activeCatalog.skills}
               queue={snapshot.queues[activeSession.id] ?? { steering: [], followUp: [] }}

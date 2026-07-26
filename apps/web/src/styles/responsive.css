@@ -116,6 +116,12 @@
 }
 
 @media (max-width: 640px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
   .session-header {
     min-height: 58px;
     padding-right: 9px;
@@ -155,8 +161,7 @@
 
   .composer-note,
   .send-hint,
-  .toolbar-divider,
-  .thinking-level {
+  .toolbar-divider {
     display: none;
   }
 
@@ -237,12 +242,22 @@
     display: none;
   }
 
-  .composer-tools .model-picker:nth-of-type(2) {
+  .composer-context {
     display: none;
   }
 
-  .model-select > span {
+  .model-select {
     max-width: 82px;
+  }
+
+  .model-select > span {
+    max-width: 58px;
+  }
+
+  .thinking-level {
+    max-width: 68px;
+    padding-right: 5px;
+    padding-left: 5px;
   }
 }
 

@@ -29,6 +29,7 @@ import {
 
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DeliveryMode, WorkspaceFile } from "../lib/anvilClient";
@@ -49,6 +50,7 @@ interface ComposerProps {
   thinkingLevel: ThinkingLevel;
   status: SessionStatus;
   models: ModelDescriptor[];
+  modelsReady: boolean;
   commands: CommandDescriptor[];
   skills: SkillDescriptor[];
   queue: SessionQueue;
@@ -164,6 +166,7 @@ export function Composer({
   thinkingLevel,
   status,
   models,
+  modelsReady,
   commands,
   skills,
   queue,
@@ -197,6 +200,7 @@ export function Composer({
   const hasPrompt = Boolean(prompt.trim()) || readyAttachments.length > 0;
   const visibleModels = useMemo(() => selectAnvilModels(models), [models]);
   const model = visibleModels.find((candidate) => candidate.id === modelId);
+  const modelsLoading = !modelsReady && status !== "failed";
   const queueCount = queue.steering.length + queue.followUp.length;
   const aboveWidgets = widgets.filter((widget) => widget.placement === "aboveEditor");
   const belowWidgets = widgets.filter((widget) => widget.placement === "belowEditor");
@@ -533,9 +537,16 @@ export function Composer({
               <TooltipContent>Tag a workspace file</TooltipContent>
             </Tooltip>
             <span className="toolbar-divider" />
-            <Select value={model?.id} onValueChange={onModelChange} disabled={visibleModels.length === 0}>
-              <SelectTrigger size="sm" className="model-select max-w-32" aria-label="Model">
-                <SelectValue placeholder={visibleModels.length ? "Choose model" : "No models available"} />
+            <Select value={model?.id} onValueChange={onModelChange} disabled={modelsLoading || visibleModels.length === 0}>
+              <SelectTrigger
+                size="sm"
+                className={`model-select max-w-32${modelsLoading ? " model-select--loading" : ""}`}
+                aria-label={modelsLoading ? "Loading models" : "Model"}
+                aria-busy={modelsLoading}
+              >
+                {modelsLoading
+                  ? <Spinner className="size-3.5" aria-hidden="true" />
+                  : <SelectValue placeholder={visibleModels.length ? "Choose model" : "No models available"} />}
               </SelectTrigger>
               <SelectContent>
                 <SelectGroup>
@@ -544,7 +555,7 @@ export function Composer({
                 </SelectGroup>
               </SelectContent>
             </Select>
-            <Select value={thinkingLevel} onValueChange={(value) => onThinkingLevelChange(value as ThinkingLevel)} disabled={!model?.reasoning}>
+            <Select value={thinkingLevel} onValueChange={(value) => onThinkingLevelChange(value as ThinkingLevel)} disabled={modelsLoading || !model?.reasoning}>
               <SelectTrigger size="sm" className="thinking-level" aria-label="Reasoning level">
                 <SelectValue />
               </SelectTrigger>

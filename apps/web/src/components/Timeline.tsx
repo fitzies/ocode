@@ -29,6 +29,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
 import { presentTool, type ToolCategory } from "./toolPresentation";
 
 interface TimelineProps {
@@ -156,6 +157,9 @@ function ContentBlocks({ blocks, compact = false }: { blocks: ContentBlock[]; co
         if (block.type === "artifact") {
           return <ArtifactLink key={block.id} artifact={block} preview={block.preview} />;
         }
+        if (block.type === "inlineHtml") {
+          return <InlineHtmlArtifact key={block.id} block={block} />;
+        }
         if (block.type === "image") {
           const source = block.url ?? (block.data ? `data:${block.mimeType};base64,${block.data}` : undefined);
           return (
@@ -240,6 +244,29 @@ function TimelineItem({ entry, entering = false }: { entry: TimelineEntry; enter
   }
 
   if (entry.kind === "tool") {
+    const inlineHtml = entry.output.find((block) => block.type === "inlineHtml");
+    if (inlineHtml?.type === "inlineHtml" && entry.status === "completed") {
+      return (
+        <div className={`inline-html-artifact-event${entranceClass}`}>
+          <InlineHtmlArtifact block={inlineHtml} />
+        </div>
+      );
+    }
+    if (entry.name === "anvil_render_html_file" && (entry.status === "running" || entry.status === "queued")) {
+      const args = entry.arguments && typeof entry.arguments === "object" && !Array.isArray(entry.arguments)
+        ? entry.arguments as Record<string, JsonValue>
+        : {};
+      const title = typeof args.title === "string" && args.title.trim()
+        ? args.title
+        : typeof args.path === "string"
+          ? args.path.split("/").pop()?.replace(/\.html?$/i, "") || "HTML artifact"
+          : "HTML artifact";
+      return (
+        <div className={`inline-html-artifact-event${entranceClass}`}>
+          <InlineHtmlArtifactPending title={title} />
+        </div>
+      );
+    }
     const presentation = presentTool(entry);
     const failureText = entry.status === "failed" ? firstTextOutput(entry) : undefined;
     const summaryDetail = failureText && presentation.category === "generic"
@@ -305,12 +332,12 @@ function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   let index = 0;
   while (index < entries.length) {
     const entry = entries[index]!;
-    if (entry.kind === "tool" && entry.batchId) {
+    if (entry.kind === "tool" && entry.batchId && entry.name !== "anvil_render_html_file") {
       const tools: ToolEntry[] = [entry];
       let nextIndex = index + 1;
       while (nextIndex < entries.length) {
         const candidate = entries[nextIndex];
-        if (candidate?.kind !== "tool" || candidate.batchId !== entry.batchId) break;
+        if (candidate?.kind !== "tool" || candidate.batchId !== entry.batchId || candidate.name === "anvil_render_html_file") break;
         tools.push(candidate);
         nextIndex += 1;
       }

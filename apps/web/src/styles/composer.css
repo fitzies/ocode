@@ -190,6 +190,18 @@
   opacity: .48;
 }
 
+.model-select--loading,
+.model-select--loading:disabled {
+  width: 82px;
+  justify-content: center;
+  padding: 0;
+  opacity: 1;
+}
+
+.model-select--loading > svg:last-child {
+  display: none;
+}
+
 .model-select:hover:not(:disabled),
 .model-select[aria-expanded="true"]:not(:disabled),
 .thinking-level:hover,

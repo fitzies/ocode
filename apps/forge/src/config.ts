@@ -12,6 +12,7 @@ export interface ForgeConfig {
   sessionDir: string;
   artifactDir: string;
   piExecutable: string;
+  piExtensionPath?: string;
   ownerLogin?: string;
   webRoot: string;
   projects: ProjectSummary[];
@@ -47,6 +48,12 @@ function configuredProjects(value: unknown): ProjectSummary[] {
 
 export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): ForgeConfig {
   const stateDirectory = resolve(environment.ANVIL_DATA_DIR ?? join(homedir(), ".local", "state", "anvil"));
+  const moduleDirectory = dirname(fileURLToPath(import.meta.url));
+  const piExtensionPath = [
+    join(moduleDirectory, "pi", "anvilInlineArtifact.ts"),
+    join(moduleDirectory, "pi", "anvilInlineArtifact.js"),
+  ].find(existsSync);
+  if (!piExtensionPath) throw new Error("Bundled Anvil Pi extension is missing");
   const configPath = resolve(environment.ANVIL_CONFIG ?? join(homedir(), ".config", "anvil", "config.json"));
   if (!existsSync(configPath)) {
     throw new Error(`Forge config does not exist: ${configPath}`);
@@ -76,6 +83,7 @@ export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): F
     sessionDir: resolve(environment.ANVIL_SESSION_DIR ?? join(stateDirectory, "pi-sessions")),
     artifactDir: resolve(environment.ANVIL_ARTIFACT_DIR ?? join(stateDirectory, "artifacts")),
     piExecutable,
+    piExtensionPath,
     ownerLogin: allowUnauthenticated
       ? undefined
       : typeof file.ownerLogin === "string" ? file.ownerLogin : undefined,

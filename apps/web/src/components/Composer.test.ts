@@ -1,7 +1,10 @@
-import type { ModelDescriptor } from "@anvil/protocol";
+import type { ModelDescriptor, SessionStatus } from "@anvil/protocol";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
-import { activeFileMention, nextThinkingLevel, selectAnvilModels, updateComposerDraft } from "./Composer";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { Composer, activeFileMention, nextThinkingLevel, selectAnvilModels, updateComposerDraft } from "./Composer";
 
 const model = (id: string, name: string): ModelDescriptor => ({
   id,
@@ -10,6 +13,47 @@ const model = (id: string, name: string): ModelDescriptor => ({
   reasoning: true,
   input: ["text"],
   supportedThinkingLevels: ["medium", "high"],
+});
+
+function renderComposer(modelsReady: boolean, status: SessionStatus = "idle"): string {
+  return renderToStaticMarkup(createElement(TooltipProvider, null, createElement(Composer, {
+    sessionId: "session-1",
+    modelId: "unknown",
+    thinkingLevel: "off",
+    status,
+    models: [],
+    modelsReady,
+    commands: [],
+    skills: [],
+    queue: { steering: [], followUp: [] },
+    prompt: "",
+    widgets: [],
+    attachments: [],
+    onAttachFiles: () => undefined,
+    onRemoveAttachment: () => undefined,
+    onSearchFiles: async () => [],
+    onCancel: () => undefined,
+    onDraftConsumed: () => undefined,
+    onPromptChange: () => undefined,
+    onModelChange: () => undefined,
+    onThinkingLevelChange: () => undefined,
+    onSend: () => undefined,
+  })));
+}
+
+describe("Composer model loading", () => {
+  it("shows only a spinner while model discovery is pending", () => {
+    const html = renderComposer(false);
+
+    expect(html).toContain('aria-label="Loading models"');
+    expect(html).toContain('aria-busy="true"');
+    expect(html).toContain('data-slot="spinner"');
+  });
+
+  it("stops loading for a ready empty catalog or failed startup", () => {
+    expect(renderComposer(true)).not.toContain('data-slot="spinner"');
+    expect(renderComposer(false, "failed")).not.toContain('data-slot="spinner"');
+  });
 });
 
 describe("updateComposerDraft", () => {

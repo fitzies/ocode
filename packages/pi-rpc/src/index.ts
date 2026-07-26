@@ -47,7 +47,7 @@ export function createPiRpcAdapterState(input: {
     nextSequence: 1,
     baseTimestamp: new Date(input.baseTimestamp).getTime(),
     reasoningIds: {},
-    catalog: { models: [], commands: [], skills: [] },
+    catalog: { models: [], commands: [], skills: [], modelsReady: false },
     knownToolCallIds: new Set(),
     extensionStatuses: new Map(),
     extensionWidgets: new Map(),
@@ -117,6 +117,50 @@ function contentBlocks(value: unknown, prefix: string): ContentBlock[] {
     if (type === "thinking") return [];
     return [{ id, type: "unknown", contentType: type, raw: json(block) }];
   });
+}
+
+const INLINE_HTML_TOOL = "anvil_render_html_file";
+const MAX_INLINE_HTML_BYTES = 192 * 1024;
+
+function inlineHtmlBlock(
+  toolName: string,
+  detailsValue: unknown,
+  id: string,
+): Extract<ContentBlock, { type: "inlineHtml" }> | undefined {
+  if (toolName !== INLINE_HTML_TOOL) return undefined;
+  const details = recordOf(detailsValue);
+  if (
+    details.kind !== "anvil.inline-html" ||
+    details.schemaVersion !== 1 ||
+    typeof details.title !== "string" ||
+    !details.title.trim() ||
+    details.title.length > 120 ||
+    typeof details.html !== "string" ||
+    !details.html.trim()
+  ) return undefined;
+  const bytes = new TextEncoder().encode(details.html).byteLength;
+  if (bytes > MAX_INLINE_HTML_BYTES || (details.byteLength !== undefined && details.byteLength !== bytes)) return undefined;
+  const sourcePath = typeof details.sourcePath === "string" && details.sourcePath
+    ? details.sourcePath
+    : undefined;
+  return {
+    id,
+    type: "inlineHtml",
+    title: details.title,
+    html: details.html,
+    sourcePath,
+    byteLength: bytes,
+  };
+}
+
+function inlineHtmlMetadata(block: Extract<ContentBlock, { type: "inlineHtml" }>): JsonValue {
+  return {
+    kind: "anvil.inline-html",
+    schemaVersion: 1,
+    title: block.title,
+    byteLength: block.byteLength,
+    ...(block.sourcePath ? { sourcePath: block.sourcePath } : {}),
+  };
 }
 
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -311,7 +355,11 @@ export function normalizePiRpcRecord(
             };
           })
         : [];
-      state.catalog = { ...state.catalog, models: models.map((model) => ({ ...model, supportedThinkingLevels: [...model.supportedThinkingLevels] })) };
+      state.catalog = {
+        ...state.catalog,
+        models: models.map((model) => ({ ...model, supportedThinkingLevels: [...model.supportedThinkingLevels] })),
+        modelsReady: true,
+      };
       emit("catalog.updated", { catalog: state.catalog });
       return events;
     }
@@ -505,6 +553,10 @@ export function normalizePiRpcRecord(
     const role = stringOf(message.role);
     if (role === "toolResult") {
       const toolCallId = stringOf(message.toolCallId, `restored-tool-${state.nextSequence}`);
+      const toolName = stringOf(message.toolName, "unknown_tool");
+      const inlineHtml = message.isError === true
+        ? undefined
+        : inlineHtmlBlock(toolName, message.details, `tool-${toolCallId}-inline-html`);
       if (!state.knownToolCallIds.has(toolCallId)) {
         state.knownToolCallIds.add(toolCallId);
         emit("tool.started", {
@@ -512,25 +564,29 @@ export function normalizePiRpcRecord(
             id: `tool-${toolCallId}`,
             kind: "tool",
             toolCallId,
-            name: stringOf(message.toolName, "unknown_tool"),
-            summary: `Restored ${stringOf(message.toolName, "tool")} result`,
+            name: toolName,
+            summary: `Restored ${toolName} result`,
             status: "running",
             arguments: {},
             output: [],
             createdAt: timestamp,
             startedAt: timestamp,
-            raw,
+            ...(inlineHtml ? {} : { raw }),
           },
-        });
+        }, !inlineHtml);
       }
       emit("tool.completed", {
         toolCallId,
-        output: contentBlocks(message.content, `tool-${toolCallId}-result`),
-        details: message.details === undefined ? undefined : json(message.details),
+        output: inlineHtml
+          ? [inlineHtml]
+          : contentBlocks(message.content, `tool-${toolCallId}-result`),
+        details: inlineHtml
+          ? inlineHtmlMetadata(inlineHtml)
+          : message.details === undefined ? undefined : json(message.details),
         status: toolWasCancelled(message)
           ? "cancelled"
           : message.isError === true ? "failed" : "completed",
-      });
+      }, !inlineHtml);
       return events;
     }
     const id =
@@ -610,14 +666,26 @@ export function normalizePiRpcRecord(
   }
   if (type === "tool_execution_end") {
     const result = recordOf(record.result);
+    const toolCallId = stringOf(record.toolCallId);
+    const inlineHtml = record.isError === true
+      ? undefined
+      : inlineHtmlBlock(
+          stringOf(record.toolName),
+          result.details,
+          `tool-${toolCallId}-inline-html`,
+        );
     emit("tool.completed", {
-      toolCallId: stringOf(record.toolCallId),
-      output: contentBlocks(result.content, `tool-${stringOf(record.toolCallId)}-result`),
-      details: result.details === undefined ? undefined : json(result.details),
+      toolCallId,
+      output: inlineHtml
+        ? [inlineHtml]
+        : contentBlocks(result.content, `tool-${toolCallId}-result`),
+      details: inlineHtml
+        ? inlineHtmlMetadata(inlineHtml)
+        : result.details === undefined ? undefined : json(result.details),
       status: toolWasCancelled(result)
         ? "cancelled"
         : record.isError === true ? "failed" : "completed",
-    });
+    }, !inlineHtml);
     return events;
   }
   if (type === "queue_update") {

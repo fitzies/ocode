@@ -20,6 +20,7 @@ export interface FixtureDefinition {
 }
 
 export const fixtureCatalog: CapabilityCatalog = {
+  modelsReady: true,
   models: [
     {
       id: "openai/gpt-5.4",

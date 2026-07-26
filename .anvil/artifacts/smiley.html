@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A small smile</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: transparent; }
+    body {
+      min-height: 280px;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      color: #27251f;
+      font-family: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+    }
+    .portrait {
+      display: grid;
+      justify-items: center;
+      gap: 14px;
+    }
+    svg {
+      width: min(230px, 72vw);
+      height: auto;
+      overflow: visible;
+      filter: drop-shadow(0 18px 28px rgba(95, 67, 16, .13));
+    }
+    .face {
+      fill: #f6c94f;
+      stroke: #27251f;
+      stroke-width: 6;
+      stroke-dasharray: 700;
+      stroke-dashoffset: 700;
+      animation: draw 700ms cubic-bezier(.22, 1, .36, 1) forwards;
+    }
+    .eye {
+      fill: #27251f;
+      opacity: 0;
+      transform-box: fill-box;
+      transform-origin: center;
+      animation: pop 320ms cubic-bezier(.34, 1.56, .64, 1) forwards;
+    }
+    .eye.left { animation-delay: 620ms; }
+    .eye.right { animation-delay: 710ms; }
+    .smile {
+      fill: none;
+      stroke: #27251f;
+      stroke-width: 7;
+      stroke-linecap: round;
+      stroke-dasharray: 130;
+      stroke-dashoffset: 130;
+      animation: draw 480ms cubic-bezier(.22, 1, .36, 1) 880ms forwards;
+    }
+    .cheek {
+      fill: #ec806d;
+      opacity: 0;
+      animation: blush 420ms ease 1.18s forwards;
+    }
+    p {
+      margin: 0;
+      color: color-mix(in srgb, currentColor 62%, transparent);
+      font-size: 13px;
+      letter-spacing: .02em;
+      opacity: 0;
+      transform: translateY(5px);
+      animation: caption 420ms ease 1.3s forwards;
+    }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+    @keyframes pop {
+      from { opacity: 0; transform: scale(.35); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    @keyframes blush { to { opacity: .72; } }
+    @keyframes caption { to { opacity: 1; transform: translateY(0); } }
+    @media (prefers-color-scheme: dark) {
+      body { color: #f3efe4; }
+      .face { stroke: #f3efe4; }
+      .eye { fill: #342e22; }
+      .smile { stroke: #342e22; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .face, .eye, .smile, .cheek, p { animation: none; opacity: 1; transform: none; stroke-dashoffset: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="portrait" aria-label="A cheerful animated smiley face">
+    <svg viewBox="0 0 260 260" role="img" aria-labelledby="smiley-title smiley-description">
+      <title id="smiley-title">Smiley face</title>
+      <desc id="smiley-description">A warm yellow face with two eyes, rosy cheeks, and a curved smile.</desc>
+      <circle class="face" cx="130" cy="130" r="106" />
+      <ellipse class="cheek" cx="73" cy="151" rx="20" ry="10" />
+      <ellipse class="cheek" cx="187" cy="151" rx="20" ry="10" />
+      <circle class="eye left" cx="92" cy="108" r="10" />
+      <circle class="eye right" cx="168" cy="108" r="10" />
+      <path class="smile" d="M79 151 C96 192 164 192 181 151" />
+    </svg>
+    <p>A small smile for Forge.</p>
+  </main>
+</body>
+</html>

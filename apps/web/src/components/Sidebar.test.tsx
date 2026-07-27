@@ -41,7 +41,7 @@ describe("Sidebar thread ordering", () => {
     });
 
     expect(markup).toContain("Lowercase thread");
-    expect(markup).toContain(`${project.name}/feature/sidebar`);
+    expect(markup).toContain(`${project.name.toLowerCase()}/feature/sidebar`);
     expect(markup).toContain('aria-label="Create thread"');
     expect(markup).not.toContain(">Unsettled<");
   });

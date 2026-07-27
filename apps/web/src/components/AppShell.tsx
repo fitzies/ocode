@@ -56,6 +56,7 @@ import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
 import { InteractionPanel } from "./InteractionDialog";
 import { ProjectGitAction } from "./ProjectGitAction";
+import { SettingsPage } from "./SettingsPage";
 import { Sidebar } from "./Sidebar";
 import { Timeline } from "./Timeline";
 import { ProjectResourceSurface } from "./resource/ProjectResourceSurface";
@@ -123,7 +124,7 @@ function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
   return (
     <Button
       type="button"
-      variant={active ? "secondary" : "ghost"}
+      variant="outline"
       size="icon-sm"
       aria-label={active ? "Hide project terminals" : "Show project terminals"}
       aria-pressed={active}
@@ -200,6 +201,8 @@ function AppShellContent() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
   const [indicators, setIndicators] = useState<LiveIndicators>({});
@@ -250,6 +253,11 @@ function AppShellContent() {
   ]);
   const sendSuggestion = useCallback((prompt: string) => anvilClient.sendPrompt(prompt), []);
   const openAddWorkspace = useCallback(() => setAddWorkspaceOpen(true), []);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    requestAnimationFrame(() => settingsTrigger.current?.focus());
+  }, []);
   const requestDeleteSession = useCallback((sessionId: string) => {
     const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
     if (session) setSessionPendingDeletion({ id: session.id, title: session.title });
@@ -532,6 +540,14 @@ function AppShellContent() {
       />
 
       <SidebarInset className="workspace">
+        {settingsOpen ? (
+          <SettingsPage
+            connection={snapshot.connection}
+            projects={snapshot.projects}
+            theme={theme}
+            onClose={closeSettings}
+          />
+        ) : (
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
           <LiveProjectResourceAutoOpen />
           {activeProject && <TerminalShortcut isMobile={isMobile} />}
@@ -570,7 +586,7 @@ function AppShellContent() {
             {activeProject && <TerminalSurfaceToggle isMobile={isMobile} />}
             <Button
               ref={settingsTrigger}
-              variant="ghost"
+              variant="outline"
               size="icon-sm"
               aria-label="Open settings"
               onClick={openSettings}
@@ -666,6 +682,7 @@ function AppShellContent() {
             </div>}
           />
         </WorkspaceSurfaceProvider>
+        )}
       </SidebarInset>
 
       {addWorkspaceOpen && (

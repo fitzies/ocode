@@ -28,6 +28,7 @@ export class TerminalClient {
   private readonly terminalListeners = new Map<string, Set<(event: TerminalStreamEvent) => void>>();
   private readonly pending = new Map<string, { resolve(message: TerminalServerMessage): void; reject(error: Error): void }>();
   private readonly watchedProjects = new Set<string>();
+  private readonly listedProjects = new Set<string>();
   private readonly attached = new Set<string>();
   private reconnectTimer?: ReturnType<typeof setTimeout>;
   private retryMs = 1_000;
@@ -42,6 +43,7 @@ export class TerminalClient {
 
   connectionState = () => this.state;
   terminals = (projectId: string) => this.metadata.get(projectId) ?? EMPTY_TERMINALS;
+  projectLoaded = (projectId: string) => this.listedProjects.has(projectId);
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
@@ -49,6 +51,7 @@ export class TerminalClient {
 
   watchProject(projectId: string): () => void {
     this.watchedProjects.add(projectId);
+    if (this.listedProjects.delete(projectId)) this.emit();
     this.connect();
     if (this.socket?.readyState === OPEN) {
       this.socket.send(JSON.stringify({ protocolVersion: ANVIL_TERMINAL_PROTOCOL_VERSION, type: "terminal.list", requestId: crypto.randomUUID(), projectId }));
@@ -167,6 +170,7 @@ export class TerminalClient {
     socket.addEventListener("close", () => {
       if (this.socket !== socket) return;
       this.socket = undefined;
+      this.listedProjects.clear();
       this.setState("offline");
       const disconnected = new Error("Terminal connection was interrupted; retry the operation");
       for (const pending of this.pending.values()) pending.reject(disconnected);
@@ -195,7 +199,10 @@ export class TerminalClient {
       this.pending.get(value.requestId)?.resolve(value);
       this.pending.delete(value.requestId);
     }
-    if (value.type === "terminal.list") this.metadata.set(value.projectId, value.terminals);
+    if (value.type === "terminal.list") {
+      this.metadata.set(value.projectId, value.terminals);
+      this.listedProjects.add(value.projectId);
+    }
     else if (value.type === "terminal.metadata") {
       if (value.deleted || !value.terminal) {
         this.metadata.set(value.projectId, this.terminals(value.projectId).filter((terminal) => terminal.terminalId !== value.terminalId));

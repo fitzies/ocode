@@ -3,6 +3,7 @@ import type {
   CommandDescriptor,
   ExtensionWidget,
   ModelDescriptor,
+  ProjectWorkspaceKind,
   SessionQueue,
   SessionStatus,
   SkillDescriptor,
@@ -33,6 +34,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DeliveryMode, WorkspaceFile } from "../lib/anvilClient";
+import type { SubagentActivity } from "../lib/subagentActivity";
+import { SubagentActivityPopover } from "./SubagentActivityPopover";
 
 export interface ComposerAttachment {
   id: string;
@@ -60,6 +63,8 @@ interface ComposerProps {
   creationError?: string;
   widgets: ExtensionWidget[];
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+  workspaceKind?: ProjectWorkspaceKind;
+  subagents: SubagentActivity;
   attachments: ComposerAttachment[];
   onAttachFiles: (sessionId: string, files: File[]) => void;
   onRemoveAttachment: (sessionId: string, attachmentId: string) => void;
@@ -176,6 +181,8 @@ export function Composer({
   creationError,
   widgets,
   contextUsage,
+  workspaceKind,
+  subagents,
   attachments,
   onAttachFiles,
   onRemoveAttachment,
@@ -596,12 +603,18 @@ export function Composer({
         </div>
       </form>
       {belowWidgets.map((widget) => <Widget key={widget.key} widget={widget} />)}
-      <div className="composer-note">
-        {creationError
-          ? "Thread creation failed. Your text is preserved here so you can copy it before removing the thread."
-          : pending
-            ? "Starting thread… You can type while Forge connects."
-            : "Pi has full Forge access. Review consequential changes before using them."}
+      {(creationError || pending) && (
+        <div className={`composer-note${creationError ? " composer-note--error" : ""}`} role={creationError ? "alert" : "status"}>
+          {creationError
+            ? "Thread creation failed. Your text is preserved here so you can copy it before removing the thread."
+            : "Starting thread… You can type while Forge connects."}
+        </div>
+      )}
+      <div className="composer-status">
+        <span className="composer-status-workspace">
+          {workspaceKind === "worktree" ? "worktree" : "main workspace"}
+        </span>
+        <SubagentActivityPopover activity={subagents} />
       </div>
     </div>
   );

@@ -13,9 +13,10 @@ import {
   type ProjectSummary,
   type SessionSummary,
 } from "@anvil/protocol";
-import { applyAnvilEvents, createEmptySnapshot } from "@anvil/state";
+import { applyAnvilEvents, createEmptySnapshot, restoreLegacyUserActivity } from "@anvil/state";
 
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
+import { detectProjectWorkspaceKind } from "../projects/workspaceKind.ts";
 import { ForgeDatabase } from "../store/database.ts";
 
 export class ForgeEventService extends EventEmitter {
@@ -30,7 +31,10 @@ export class ForgeEventService extends EventEmitter {
   ) {
     super();
     database.syncProjects(projects);
-    const persistedProjects = database.listProjects();
+    const persistedProjects = database.listProjects().map((project) => ({
+      ...project,
+      workspaceKind: detectProjectWorkspaceKind(project.path),
+    }));
     const stored = database.latestSnapshot();
     let restored = stored?.snapshot ?? createEmptySnapshot({ projects: persistedProjects });
     while (true) {
@@ -39,6 +43,7 @@ export class ForgeEventService extends EventEmitter {
       restored = applyAnvilEvents(restored, tail);
       if (tail.length < 10_000) break;
     }
+    restored = restoreLegacyUserActivity(restored);
     this.snapshot = {
       ...restored,
       connection: "connected",
@@ -191,6 +196,12 @@ export class ForgeEventService extends EventEmitter {
 
   createSession(session: SessionSummary, event: UnsequencedAnvilEvent): AnvilEvent {
     const committed = this.database.createSessionWithEvent(session, event);
+    this.acceptCommitted([committed]);
+    return committed;
+  }
+
+  renameSession(sessionId: string, title: string, event: UnsequencedAnvilEvent): AnvilEvent {
+    const committed = this.database.renameSessionWithEvent(sessionId, title, event);
     this.acceptCommitted([committed]);
     return committed;
   }

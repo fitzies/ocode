@@ -22,7 +22,7 @@ import {
 const sqliteModuleName = "node:sqlite";
 const { DatabaseSync } = await import(sqliteModuleName) as typeof import("node:sqlite");
 
-const SCHEMA_VERSION = 8;
+const SCHEMA_VERSION = 9;
 const RETAINED_EVENT_COUNT = 100_000;
 const MAX_COMPACTION_ROWS_PER_CHECKPOINT = 1_000;
 
@@ -178,6 +178,29 @@ export class ForgeDatabase {
     }
   }
 
+  renameSessionWithEvent(
+    sessionId: string,
+    title: string,
+    event: UnsequencedAnvilEvent,
+  ): AnvilEvent {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const updated = this.database.prepare("UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?").run(
+        title,
+        event.timestamp,
+        sessionId,
+      );
+      if (Number(updated.changes) !== 1) throw new Error("Session not found");
+      const [committed] = this.insertEvents([event]);
+      if (!committed) throw new Error("Session rename did not produce an event");
+      this.database.exec("COMMIT");
+      return committed;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   setSessionSettledWithEvent(
     sessionId: string,
     settled: boolean,
@@ -206,7 +229,7 @@ export class ForgeDatabase {
         pi_session_id = COALESCE(?, pi_session_id),
         pi_session_file = COALESCE(?, pi_session_file),
         title = ?, model_id = ?, thinking_level = ?, status = ?, settled = ?, branch = ?, updated_at = ?,
-        last_activity_sequence = ?, last_terminal_sequence = ?, last_terminal_outcome = ?
+        last_user_message_at = ?, last_user_message_sequence = ?, last_activity_sequence = ?, last_terminal_sequence = ?, last_terminal_outcome = ?
       WHERE id = ?
     `).run(
       piState?.sessionId ?? null,
@@ -218,6 +241,8 @@ export class ForgeDatabase {
       session.settled ? 1 : 0,
       session.branch ?? null,
       session.updatedAt,
+      session.lastUserMessageAt ?? null,
+      session.lastUserMessageSequence ?? null,
       session.lastActivitySequence ?? 0,
       session.lastTerminalSequence ?? null,
       session.lastTerminalOutcome ?? null,
@@ -250,7 +275,7 @@ export class ForgeDatabase {
   getSession(id: string): RuntimeSessionRecord | undefined {
     const row = this.database.prepare(`
       SELECT id, project_id, title, model_id, thinking_level, status, settled, branch, updated_at,
-             last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
+             last_user_message_at, last_user_message_sequence, last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
              pi_session_id, pi_session_file
       FROM sessions WHERE id = ?
     `).get(id) as Record<string, unknown> | undefined;
@@ -266,6 +291,8 @@ export class ForgeDatabase {
         settled: Boolean(row.settled),
         ...(typeof row.branch === "string" ? { branch: row.branch } : {}),
         updatedAt: String(row.updated_at),
+        ...(row.last_user_message_at === null ? {} : { lastUserMessageAt: String(row.last_user_message_at) }),
+        ...(row.last_user_message_sequence === null ? {} : { lastUserMessageSequence: Number(row.last_user_message_sequence) }),
         lastActivitySequence: Number(row.last_activity_sequence ?? 0),
         ...(row.last_terminal_sequence === null ? {} : { lastTerminalSequence: Number(row.last_terminal_sequence) }),
         ...(row.last_terminal_outcome === null ? {} : { lastTerminalOutcome: String(row.last_terminal_outcome) as NonNullable<SessionSummary["lastTerminalOutcome"]> }),
@@ -631,9 +658,9 @@ export class ForgeDatabase {
     this.database.prepare(`
       INSERT INTO sessions (
         id, project_id, title, model_id, thinking_level, status, settled, branch,
-        last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
+        last_user_message_at, last_user_message_sequence, last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
         created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.projectId,
@@ -643,6 +670,8 @@ export class ForgeDatabase {
       session.status,
       session.settled ? 1 : 0,
       session.branch ?? null,
+      session.lastUserMessageAt ?? null,
+      session.lastUserMessageSequence ?? null,
       session.lastActivitySequence ?? 0,
       session.lastTerminalSequence ?? null,
       session.lastTerminalOutcome ?? null,
@@ -873,6 +902,16 @@ export class ForgeDatabase {
         );
         CREATE INDEX terminal_records_project_updated ON terminal_records(project_id, updated_at);
         PRAGMA user_version = 8;
+        COMMIT;
+      `);
+    }
+
+    if (version < 9) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ALTER TABLE sessions ADD COLUMN last_user_message_at TEXT;
+        ALTER TABLE sessions ADD COLUMN last_user_message_sequence INTEGER;
+        PRAGMA user_version = 9;
         COMMIT;
       `);
     }

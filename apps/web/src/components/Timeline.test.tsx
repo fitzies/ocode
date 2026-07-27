@@ -196,21 +196,59 @@ describe("Timeline tool presentation", () => {
     expect(html).not.toContain("tool-event--generic");
   });
 
-  it("shows subagents as delegated agents", () => {
+  it("shows only the Markdown-formatted subagent message and response when expanded", () => {
     const html = renderToStaticMarkup(
       <Timeline
-        session={{ ...session, status: "running" }}
+        session={session}
         entries={[tool({
           name: "subagent",
-          arguments: { agent: "researcher", task: "Review the Pi RPC documentation" },
+          status: "completed",
+          arguments: { agent: "researcher", task: "**Review** the Pi RPC documentation" },
+          output: [
+            { id: "agent-response", type: "text", text: "**Finding:**\n\n- RPC sessions are resumable" },
+            { id: "agent-internal", type: "data", label: "Internal result", data: { secret: "hidden output" } },
+            { id: "agent-html", type: "inlineHtml", title: "Hidden preview", html: "<strong>hidden preview</strong>", byteLength: 31 },
+          ],
+          details: { internalTrace: "hidden detail" },
+          raw: { type: "tool_execution_end", internalEvent: "hidden event" },
+          endedAt: "2026-03-22T00:00:01.000Z",
         })]}
         onSuggestion={() => undefined}
       />,
     );
 
     expect(html).toContain("Researcher agent");
-    expect(html).toContain("Review the Pi RPC documentation");
     expect(html).toContain("tool-event--agent");
+    expect(html).toContain(">Message<");
+    expect(html).toContain("<strong>Review</strong>");
+    expect(html).toContain(">Response<");
+    expect(html).toContain("<strong>Finding:</strong>");
+    expect(html).toContain("<li>RPC sessions are resumable</li>");
+    expect(html).not.toContain("Arguments");
+    expect(html).not.toContain("Raw RPC event");
+    expect(html).not.toContain("hidden detail");
+    expect(html).not.toContain("hidden event");
+    expect(html).not.toContain("hidden output");
+    expect(html).not.toContain("hidden preview");
+    expect(html).not.toContain("sandbox=");
+  });
+
+  it("shows a simple response placeholder while a subagent is running", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={{ ...session, status: "running" }}
+        entries={[tool({
+          name: "subagent",
+          arguments: { agent: "scout", task: "Find the relevant files" },
+        })]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Scout agent");
+    expect(html).toContain("Find the relevant files");
+    expect(html).toContain("Waiting for response…");
+    expect(html).not.toContain("Raw RPC event");
   });
 
   it("keeps unknown tool names and output available in the generic fallback", () => {

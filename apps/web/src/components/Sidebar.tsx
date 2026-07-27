@@ -5,13 +5,23 @@ import {
   ArchiveRestoreIcon,
   ArrowDown01Icon,
   Delete02Icon,
+  FileEditIcon,
   MessageAdd01Icon,
   Search01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -52,6 +62,7 @@ interface SidebarProps {
   onCreateSession: (projectId: string) => void;
   onAddWorkspace: () => void;
   onRequestDeleteSession: (sessionId: string) => void;
+  onRequestRenameSession: (sessionId: string) => void;
   onSetSessionSettled: (sessionId: string, settled: boolean) => Promise<void>;
   usage?: {
     fiveHour?: { usedPercent: number; resetAt?: number };
@@ -67,7 +78,10 @@ function RunningElapsed({ since }: { since: string }) {
     return () => window.clearInterval(timer);
   }, []);
 
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(since).getTime()) / 1_000));
+  const sinceMs = Date.parse(since);
+  const seconds = Number.isFinite(sinceMs)
+    ? Math.max(0, Math.floor((Date.now() - sinceMs) / 1_000))
+    : 0;
   const minutes = Math.floor(seconds / 60);
   const remainder = seconds % 60;
   return <span>{minutes > 0 ? `${minutes}m ${remainder}s` : `${seconds}s`}</span>;
@@ -123,38 +137,35 @@ export const Sidebar = memo(function Sidebar({
   onCreateSession,
   onAddWorkspace,
   onRequestDeleteSession,
+  onRequestRenameSession,
   onSetSessionSettled,
   usage,
 }: SidebarProps) {
+  const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [settledOpen, setSettledOpen] = useState(true);
   const [settlementPending, setSettlementPending] = useState<Set<string>>(new Set());
-  const searchRef = useRef<HTMLInputElement>(null);
   const { isMobile, setOpenMobile } = useSidebar();
-  const normalizedQuery = query.trim().toLowerCase();
 
   useEffect(() => {
-    const focusSearch = (event: KeyboardEvent) => {
+    const openSearch = (event: KeyboardEvent) => {
       if (isTerminalInputTarget(event.target)) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
-        searchRef.current?.focus();
+        setSearchOpen(true);
       }
     };
-    window.addEventListener("keydown", focusSearch);
-    return () => window.removeEventListener("keydown", focusSearch);
+    window.addEventListener("keydown", openSearch);
+    return () => window.removeEventListener("keydown", openSearch);
   }, []);
 
   const closeMobile = () => {
     if (isMobile) setOpenMobile(false);
   };
 
-  const visibleSessions = sortSessionsByActivity(snapshot.sessions.filter((session) => {
-    const project = snapshot.projects.find((candidate) => candidate.id === session.projectId);
-    return (!projectFilter || session.projectId === projectFilter) &&
-      (!normalizedQuery || session.title.toLowerCase().includes(normalizedQuery) || project?.name.toLowerCase().includes(normalizedQuery));
-  }));
+  const sortedSessions = sortSessionsByActivity(snapshot.sessions);
+  const visibleSessions = sortedSessions.filter((session) => !projectFilter || session.projectId === projectFilter);
   const unsettledSessions = visibleSessions.filter((session) => !session.settled);
   const settledSessions = visibleSessions.filter((session) => session.settled);
 
@@ -185,7 +196,7 @@ export const Sidebar = memo(function Sidebar({
 
     return (
       <ContextMenu key={session.id}>
-        <div className={`session-item ${settled ? "session-item--settled" : ""}`}>
+        <div className={`session-item ${settled ? "session-item--settled" : ""} ${session.status === "running" ? "session-item--running" : ""}`}>
           <ContextMenuTrigger asChild>
             <button
               className={`session-row ${active ? "session-row--active" : ""}`}
@@ -207,7 +218,9 @@ export const Sidebar = memo(function Sidebar({
                   <span className="session-context-copy" title={`${project?.name.toLowerCase() ?? "unknown"}/${branch}`}>{project?.name.toLowerCase() ?? "unknown"}/{branch}</span>
                   <span className={`session-recency ${completedUnviewed ? "session-recency--completed" : ""}`}>
                     {session.status === "running"
-                      ? <RunningElapsed since={session.updatedAt} />
+                      ? session.lastUserMessageAt
+                        ? <RunningElapsed since={session.lastUserMessageAt} />
+                        : <span>Running</span>
                       : <span>{completedUnviewed ? "Completed" : formatUpdatedAt(session.updatedAt)}</span>}
                   </span>
                 </span>
@@ -228,6 +241,10 @@ export const Sidebar = memo(function Sidebar({
           )}
         </div>
         <ContextMenuContent className="w-40">
+          <ContextMenuItem onSelect={() => onRequestRenameSession(session.id)}>
+            <HugeiconsIcon icon={FileEditIcon} strokeWidth={2} />
+            Rename thread
+          </ContextMenuItem>
           <ContextMenuItem
             disabled={settling}
             onSelect={() => void toggleSettled(session.id, !settled)}
@@ -255,12 +272,14 @@ export const Sidebar = memo(function Sidebar({
           <div className="relative min-w-0 flex-1">
             <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <SidebarInput
-              ref={searchRef}
-              className="pr-9 pl-8 text-[0.65625rem] font-normal"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
+              className="cursor-pointer pr-9 pl-8 text-[0.65625rem] font-normal"
+              readOnly
+              value=""
               placeholder="Search threads"
-              aria-label="Search all threads"
+              aria-label="Open thread search"
+              aria-haspopup="dialog"
+              onClick={() => setSearchOpen(true)}
+              onFocus={() => setSearchOpen(true)}
             />
             <kbd className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 font-mono text-[0.5625rem] text-muted-foreground">⌘K</kbd>
           </div>
@@ -329,13 +348,13 @@ export const Sidebar = memo(function Sidebar({
       </SidebarHeader>
 
       <SidebarContent className="overflow-x-hidden px-2 py-2">
-        {snapshot.projects.length === 0 && !normalizedQuery && <div className="px-2 py-3 text-xs text-muted-foreground">Add a Forge directory to begin.</div>}
-        {(normalizedQuery || projectFilter) && visibleSessions.length === 0 && <div className="px-2 py-3 text-xs text-muted-foreground">No matching threads</div>}
+        {snapshot.projects.length === 0 && <div className="px-2 py-3 text-xs text-muted-foreground">Add a Forge directory to begin.</div>}
+        {projectFilter && visibleSessions.length === 0 && <div className="px-2 py-3 text-xs text-muted-foreground">No matching threads</div>}
 
         <section className="thread-section" aria-label="Unsettled threads">
           <div className="session-list">{unsettledSessions.map((session) => renderSession(session, false))}</div>
           {unsettledSessions.length === 0 && visibleSessions.length > 0 && <div className="thread-empty">Everything here is settled.</div>}
-          {unsettledSessions.length === 0 && visibleSessions.length === 0 && !normalizedQuery && !projectFilter && <div className="thread-empty">Nothing needs your attention.</div>}
+          {unsettledSessions.length === 0 && visibleSessions.length === 0 && !projectFilter && <div className="thread-empty">Nothing needs your attention.</div>}
         </section>
 
         {settledSessions.length > 0 && (
@@ -355,6 +374,59 @@ export const Sidebar = memo(function Sidebar({
           </Collapsible>
         )}
       </SidebarContent>
+
+      <CommandDialog
+        open={searchOpen}
+        onOpenChange={(open) => {
+          setSearchOpen(open);
+          if (!open) setQuery("");
+        }}
+        title="Search threads"
+        description="Search and open a thread"
+        className="sm:max-w-lg"
+      >
+        <Command shouldFilter>
+          <CommandInput
+            autoFocus
+            value={query}
+            onValueChange={setQuery}
+            placeholder="Search threads…"
+            aria-label="Search threads"
+          />
+          <CommandList>
+            <CommandEmpty>No threads found.</CommandEmpty>
+            <CommandGroup heading="Threads">
+              {sortedSessions.map((session) => {
+                const project = snapshot.projects.find((candidate) => candidate.id === session.projectId);
+                const displayTitle = capitalizeTitle(session.title);
+                const branch = session.branch ?? "unknown";
+                return (
+                  <CommandItem
+                    key={session.id}
+                    value={`${displayTitle} ${project?.name ?? "unknown"} ${branch}`}
+                    onSelect={() => {
+                      onSelectSession(session.id);
+                      setSearchOpen(false);
+                      setQuery("");
+                      closeMobile();
+                    }}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{displayTitle}</span>
+                      <span className="block truncate text-[0.625rem] text-muted-foreground">
+                        {project?.name.toLowerCase() ?? "unknown"}/{branch}
+                      </span>
+                    </span>
+                    {session.settled && <span className="ml-auto text-[0.625rem] text-muted-foreground">Settled</span>}
+                    {!session.settled && session.status === "running" && <span className="session-spinner ml-auto" role="status" aria-label="Working" />}
+                    {!session.settled && session.status === "waiting" && <span className="ml-auto text-[0.625rem] text-amber-600 dark:text-amber-400">Needs you</span>}
+                  </CommandItem>
+                );
+              })}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </CommandDialog>
 
       <SidebarFooter className="border-t border-sidebar-border p-3 pb-5">
         {usage && (usage.fiveHour || usage.weekly) && (

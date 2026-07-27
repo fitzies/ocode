@@ -30,6 +30,7 @@ describe("TerminalClient", () => {
     const client = new TerminalClient(() => new FakeSocket(), "ws://test/api/v1/terminals/ws");
 
     expect(client.terminals("missing")).toBe(client.terminals("missing"));
+    expect(client.projectLoaded("missing")).toBe(false);
   });
 
   it("reconciles project metadata and routes attach snapshots and live output", () => {
@@ -64,6 +65,7 @@ describe("TerminalClient", () => {
     });
 
     expect(client.terminals("project-a")).toEqual([terminal]);
+    expect(client.projectLoaded("project-a")).toBe(true);
     expect(received).toEqual(["terminal.snapshot", "terminal.output"]);
     const sentTypes = socket.sent.map((item) => JSON.parse(item).type);
     expect(sentTypes.filter((type) => type === "terminal.list")).toHaveLength(1);

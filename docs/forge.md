@@ -36,6 +36,12 @@ The bundled `anvil_open_file` Pi tool requires a trusted workspace, accepts only
 
 Resource tabs are client-local and project-scoped. There is no project file explorer or project-scoped tree/search API: resources open only from live agent requests or explicit timeline actions, including validated project-relative paths on successful write/edit tools. File viewing is read-only: editing, create/rename/delete, arbitrary binary download, SVG preview, development-server preview, and filesystem watching are not implemented. Changes are detected by ETag with stale-while-revalidate checks when a resource is refreshed or the client regains focus.
 
+## Project Git action
+
+The authenticated header action reads project Git state from `GET /api/v1/projects/:projectId/git/status`. When changes exist, `POST /api/v1/projects/:projectId/git/generate-message` builds the proposed all-files commit in a temporary Git index and asks an ephemeral, tool-disabled Pi process for a subject line. `POST /api/v1/projects/:projectId/git/commit-and-push` accepts that subject and a fingerprint bound to the reviewed branch, HEAD, and proposed tree, rejects workspace drift, stages with `git add -A`, commits, and pushes only the checked-out branch with an explicit refspec. A clean branch with local commits skips generation and only pushes. Mutating routes require same-origin requests in addition to owner authentication.
+
+The action never force-pushes or automatically pulls/rebases. It rejects detached HEADs, conflicts, missing or ambiguous remotes, concurrent project Git operations, and stale generated messages. If commit succeeds but push fails, the API reports that partial outcome so the client changes to a retryable **Push** action. Pi generation disables tools, extensions, skills, templates, themes, context files, and session persistence; the active thread contributes only its selected model.
+
 Forge keeps a snapshot-backed tail of 100,000 journal events for reconnection and gradually compacts older rows during checkpoints. Clients whose cursor predates that tail receive a reset and restore from authoritative snapshots. Compaction makes SQLite pages reusable but does not immediately shrink the database file on disk.
 
 ## Development
@@ -52,6 +58,8 @@ VITE_ANVIL_TRANSPORT=forge corepack pnpm dev:web
 ```
 
 Vite proxies `/api` HTTP requests and WebSocket upgrades to `http://127.0.0.1:3210`. Without `VITE_ANVIL_TRANSPORT=forge`, conversation development continues to use deterministic fixtures; project terminals require Forge.
+
+Stop the system service before starting a development Forge that uses the same data directory. Forge takes an exclusive instance lock before opening SQLite, so a second process cannot mutate the journal even when it uses a different port. Use a separate `ANVIL_DATA_DIR` when production and development instances must run at the same time.
 
 ## Service installation
 

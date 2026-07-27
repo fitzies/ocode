@@ -684,6 +684,12 @@ button:disabled {
   opacity: 0;
 }
 
+.session-item--running:hover .session-recency,
+.session-item--running:focus-within .session-recency,
+.session-item--running .session-row--active .session-recency {
+  opacity: 1;
+}
+
 .session-settle:hover,
 .session-settle:focus-visible {
   color: var(--legacy-text-high);

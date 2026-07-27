@@ -101,6 +101,24 @@ describe("protocol runtime guards", () => {
     })).toBe(true);
     expect(isAnvilClientCommand({
       ...command,
+      type: "session.rename",
+      sessionId: "session-1",
+      payload: { title: "  A clearer thread title  " },
+    })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.rename",
+      sessionId: "session-1",
+      payload: { title: "   " },
+    })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.rename",
+      sessionId: "session-1",
+      payload: { title: "x".repeat(121) },
+    })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
       type: "session.settled",
       sessionId: "session-1",
       payload: { settled: true },
@@ -223,6 +241,12 @@ describe("protocol runtime guards", () => {
       type: "session.settled",
       payload: { settled: true },
     })).toBe(true);
+    expect(isAnvilEvent({
+      ...base,
+      sessionId: "session-1",
+      type: "session.prompted",
+      payload: {},
+    })).toBe(true);
   });
 
   it("requires a bootstrap tail to follow its snapshot cursor", () => {
@@ -266,6 +290,8 @@ describe("protocol runtime guards", () => {
       status: "idle",
       modelId: "test/model",
       thinkingLevel: "medium",
+      lastUserMessageAt: "2026-07-21T07:59:00.000Z",
+      lastUserMessageSequence: 4,
       lastActivitySequence: 4,
       lastTerminalSequence: 4,
       lastTerminalOutcome: "completed",
@@ -274,10 +300,18 @@ describe("protocol runtime guards", () => {
       protocolVersion: ANVIL_PROTOCOL_VERSION,
       capturedAt: session.updatedAt,
       connection: "connected",
-      projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+      projects: [{ id: "anvil", name: "Anvil", path: "/repo", workspaceKind: "worktree" }],
       sessions: [session],
       cursor: 4,
     })).toBe(true);
+    expect(isAnvilSummaryBootstrap({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      capturedAt: session.updatedAt,
+      connection: "connected",
+      projects: [{ id: "anvil", name: "Anvil", path: "/repo", workspaceKind: "unknown" }],
+      sessions: [session],
+      cursor: 4,
+    })).toBe(false);
     expect(isAnvilSessionDetailSync({
       protocolVersion: ANVIL_PROTOCOL_VERSION,
       mode: "reset",
@@ -301,6 +335,14 @@ describe("protocol runtime guards", () => {
       connection: "connected",
       projects: [],
       sessions: [{ ...session, lastActivitySequence: -1 }],
+      cursor: 4,
+    })).toBe(false);
+    expect(isAnvilSummaryBootstrap({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      capturedAt: session.updatedAt,
+      connection: "connected",
+      projects: [],
+      sessions: [{ ...session, lastUserMessageAt: "not-a-timestamp" }],
       cursor: 4,
     })).toBe(false);
   });

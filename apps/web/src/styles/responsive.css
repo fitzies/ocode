@@ -128,7 +128,11 @@
   }
 
   .session-heading h1 {
-    max-width: 47vw;
+    max-width: 28vw;
+  }
+
+  .git-diff-stat {
+    display: none;
   }
 
   .connection-chip,
@@ -159,10 +163,14 @@
     padding: 8px 10px 9px;
   }
 
-  .composer-note,
   .send-hint,
   .toolbar-divider {
     display: none;
+  }
+
+  .composer-status {
+    gap: 8px;
+    font-size: 8px;
   }
 
   .model-select > span {
@@ -258,6 +266,16 @@
     max-width: 68px;
     padding-right: 5px;
     padding-left: 5px;
+  }
+}
+
+@media (max-width: 380px) {
+  .session-header {
+    gap: 8px;
+  }
+
+  .header-actions {
+    gap: 4px;
   }
 }
 

@@ -12,6 +12,8 @@ import {
 } from "@anvil/pi-rpc";
 import {
   ANVIL_PROTOCOL_VERSION,
+  normalizeSessionTitle,
+  SESSION_TITLE_MAX_LENGTH,
   type AnvilClientCommand,
   type AnvilCommandResponse,
   type AnvilEvent,
@@ -24,6 +26,7 @@ import {
 import type { ForgeConfig } from "../config.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { EventProjectResolver, type ProjectResolver } from "../projects/projectResolver.ts";
+import { detectProjectWorkspaceKind } from "../projects/workspaceKind.ts";
 import { ForgeDatabase, type RuntimeSessionRecord } from "../store/database.ts";
 import { createPiRpcProcess, type RpcRecord, type RpcSubprocess } from "../rpc/subprocess.ts";
 import { WorkspaceFileIndex } from "./workspaceFiles.ts";
@@ -305,7 +308,12 @@ export class SessionManager {
     if (!sessionId) return commandResponse(command, false, { error: "A session is required" });
     const stored = this.database.getSession(sessionId);
     if (!stored) return commandResponse(command, false, { error: "Session not found" });
-    if (stored.session.settled && command.type !== "prompt.send") {
+    if (command.type === "session.rename" && !normalizeSessionTitle(command.payload.title)) {
+      return commandResponse(command, false, {
+        error: `Thread title must be non-empty and at most ${SESSION_TITLE_MAX_LENGTH} characters`,
+      });
+    }
+    if (stored.session.settled && command.type !== "prompt.send" && command.type !== "session.rename") {
       return commandResponse(command, false, { error: "Send a prompt to resume this settled thread" });
     }
     if (command.type === "model.set" || command.type === "thinking.set") {
@@ -437,10 +445,32 @@ export class SessionManager {
           message,
           ...(images.length ? { images } : {}),
         });
+        if (response.success) {
+          this.events.append([domainEvent("session.prompted", {}, sessionId)]);
+          this.syncSession(sessionId);
+        }
         if (response.success && command.payload.attachments?.length) {
           this.events.consumeAttachments(
             stored.session.id,
             command.payload.attachments.map((attachment) => attachment.artifactId),
+          );
+        }
+        return response;
+      }
+      if (command.type === "session.rename") {
+        const title = normalizeSessionTitle(command.payload.title)!;
+        if (this.events.sessionSummary(sessionId)?.title === title) {
+          return commandResponse(command, true);
+        }
+        const response = await this.sendRpc(command, runtime, {
+          type: "set_session_name",
+          name: title,
+        });
+        if (response.success && this.events.sessionSummary(sessionId)?.title !== title) {
+          this.events.renameSession(
+            sessionId,
+            title,
+            domainEvent("session.configured", { title }, sessionId),
           );
         }
         return response;
@@ -543,6 +573,7 @@ export class SessionManager {
       id: `${slug}-${randomUUID().slice(0, 8)}`,
       name,
       path,
+      workspaceKind: detectProjectWorkspaceKind(path),
     };
     this.events.createProject(
       project,

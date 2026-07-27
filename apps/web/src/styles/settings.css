@@ -1,0 +1,712 @@
+.settings-page {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 72% -12%, color-mix(in oklab, var(--foreground) 2.8%, transparent), transparent 27rem),
+    var(--background);
+}
+
+.settings-page-header {
+  flex: 0 0 auto;
+}
+
+.settings-page button:disabled,
+.settings-page [data-slot="select-trigger"]:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.settings-page-header .session-heading h1 {
+  color: var(--legacy-text-high);
+}
+
+.settings-layout {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  grid-template-columns: 212px minmax(0, 1fr);
+}
+
+.settings-nav {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  padding: 28px 18px 20px 22px;
+  background: color-mix(in oklab, var(--foreground) 1.5%, transparent);
+  border-right: 1px solid var(--border);
+}
+
+.settings-nav-heading {
+  padding: 0 9px 9px;
+  color: var(--legacy-text-faint);
+  font-size: 9px;
+  font-weight: 650;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.settings-nav-items {
+  display: grid;
+  gap: 2px;
+}
+
+.settings-nav-items button {
+  display: flex;
+  width: 100%;
+  min-height: 34px;
+  align-items: center;
+  padding: 7px 9px;
+  gap: 9px;
+  color: var(--legacy-text-low);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.settings-nav-items button:hover {
+  color: var(--legacy-text-high);
+  background: color-mix(in oklab, var(--foreground) 4.5%, transparent);
+}
+
+.settings-nav-items button.is-active {
+  color: var(--legacy-text-high);
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 3.5%, transparent);
+}
+
+.settings-nav-items button svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+  color: var(--legacy-text-faint);
+}
+
+.settings-nav-items button.is-active svg {
+  color: var(--legacy-text);
+}
+
+.settings-nav-items button span {
+  font-size: 11.5px;
+  font-weight: 520;
+}
+
+.settings-nav-note {
+  display: flex;
+  align-items: flex-start;
+  margin-top: auto;
+  padding: 14px 8px 0;
+  gap: 8px;
+  color: var(--legacy-text-faint);
+  border-top: 1px solid var(--border);
+}
+
+.settings-nav-note svg {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.settings-nav-note p {
+  margin: 0;
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.settings-content {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.settings-content-inner {
+  width: min(760px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: 52px 0 42px;
+  animation: settings-content-in 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes settings-content-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.settings-content-header {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 40px;
+  gap: 14px;
+}
+
+.settings-content-header > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.settings-content-header > span svg {
+  width: 17px;
+  height: 17px;
+}
+
+.settings-content-header h2 {
+  margin: -2px 0 3px;
+  color: var(--legacy-text-high);
+  font-size: 22px;
+  font-weight: 610;
+  letter-spacing: -0.035em;
+}
+
+.settings-content-header p,
+.settings-group-heading p,
+.settings-row-copy p,
+.settings-action-row p,
+.settings-runtime-card p {
+  margin: 0;
+  color: var(--legacy-text-low);
+  line-height: 1.5;
+}
+
+.settings-content-header p {
+  max-width: 540px;
+  font-size: 11.5px;
+}
+
+.settings-group {
+  margin-bottom: 34px;
+}
+
+.settings-group-heading {
+  margin-bottom: 10px;
+}
+
+.settings-group-heading h3 {
+  margin: 0;
+  color: var(--legacy-text);
+  font-size: 11px;
+  font-weight: 620;
+  letter-spacing: 0.005em;
+}
+
+.settings-group-heading p {
+  margin-top: 3px;
+  font-size: 10px;
+}
+
+.settings-group-panel {
+  overflow: hidden;
+  background: color-mix(in oklab, var(--card) 72%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--foreground) 2%, transparent);
+}
+
+.settings-row,
+.settings-action-row {
+  display: flex;
+  min-height: 67px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px;
+  gap: 28px;
+}
+
+.settings-row + .settings-row,
+.settings-action-row + .settings-action-row {
+  border-top: 1px solid var(--border);
+}
+
+.settings-row--start {
+  align-items: flex-start;
+}
+
+.settings-row-copy,
+.settings-action-row > div {
+  min-width: 0;
+}
+
+.settings-row-copy strong,
+.settings-action-row strong,
+.settings-workspace-copy strong {
+  display: block;
+  color: var(--legacy-text);
+  font-size: 11px;
+  font-weight: 570;
+}
+
+.settings-row-copy p,
+.settings-action-row p {
+  max-width: 465px;
+  margin-top: 3px;
+  font-size: 9.75px;
+}
+
+.settings-row-control {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.settings-switch {
+  position: relative;
+  width: 31px;
+  height: 18px;
+  flex: 0 0 auto;
+  padding: 0;
+  background: color-mix(in oklab, var(--foreground) 13%, transparent);
+  border: 1px solid color-mix(in oklab, var(--foreground) 10%, transparent);
+  border-radius: 999px;
+  transition: background-color 140ms ease;
+}
+
+.settings-switch::before {
+  position: absolute;
+  content: "";
+  inset: -7px;
+}
+
+.settings-switch span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: color-mix(in oklab, var(--foreground) 50%, var(--background));
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
+  transition: transform 140ms ease, background-color 140ms ease;
+}
+
+.settings-switch[data-state="checked"] {
+  background: var(--foreground);
+  border-color: var(--foreground);
+}
+
+.settings-switch[data-state="checked"] span {
+  background: var(--background);
+  transform: translateX(13px);
+}
+
+.settings-select {
+  min-width: 116px;
+  justify-content: space-between;
+}
+
+.settings-select--wide {
+  min-width: 154px;
+}
+
+.settings-theme-picker {
+  display: grid;
+  width: 246px;
+  grid-template-columns: repeat(3, 1fr);
+  padding: 3px;
+  gap: 3px;
+  background: color-mix(in oklab, var(--foreground) 3.5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.settings-theme-picker button {
+  display: flex;
+  height: 52px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--legacy-text-faint);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.settings-theme-picker button:hover:not(:disabled) {
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 3.5%, transparent);
+}
+
+.settings-theme-picker button.is-active {
+  color: var(--legacy-text-high);
+  background: var(--background);
+  box-shadow: 0 1px 3px color-mix(in oklab, black 18%, transparent), inset 0 0 0 1px var(--border);
+}
+
+.settings-theme-picker button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.settings-theme-picker button span {
+  font-size: 9px;
+  font-weight: 550;
+}
+
+.settings-capability-summary {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.settings-capability-summary div {
+  display: flex;
+  min-height: 72px;
+  justify-content: center;
+  flex-direction: column;
+  padding: 15px 17px;
+}
+
+.settings-capability-summary div + div {
+  border-left: 1px solid var(--border);
+}
+
+.settings-capability-summary span {
+  color: var(--legacy-text-faint);
+  font-size: 9px;
+}
+
+.settings-capability-summary strong {
+  margin-top: 3px;
+  color: var(--legacy-text);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.settings-workspace-list {
+  display: grid;
+}
+
+.settings-workspace {
+  display: grid;
+  min-height: 66px;
+  grid-template-columns: 30px minmax(0, 1fr) auto auto;
+  align-items: center;
+  padding: 10px 12px 10px 15px;
+  gap: 11px;
+}
+
+.settings-workspace + .settings-workspace {
+  border-top: 1px solid var(--border);
+}
+
+.settings-workspace-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  color: var(--legacy-text-low);
+  background: color-mix(in oklab, var(--foreground) 4.5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.settings-workspace-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.settings-workspace-copy {
+  min-width: 0;
+}
+
+.settings-workspace-copy small {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: var(--legacy-text-faint);
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-trust-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--green);
+  font-size: 9px;
+  font-weight: 550;
+}
+
+.settings-trust-badge svg {
+  width: 11px;
+  height: 11px;
+}
+
+.settings-panel-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px 12px;
+  background: color-mix(in oklab, var(--foreground) 1.8%, transparent);
+  border-top: 1px solid var(--border);
+}
+
+.settings-empty-row {
+  padding: 24px 16px;
+  color: var(--legacy-text-low);
+  font-size: 10px;
+  text-align: center;
+}
+
+.settings-status-label,
+.settings-code-value {
+  color: var(--legacy-text-low);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.settings-status-label--success {
+  color: var(--green);
+}
+
+.settings-code-value {
+  padding: 4px 7px;
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 9px;
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.settings-runtime-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  align-items: center;
+  margin-bottom: 34px;
+  padding: 17px;
+  gap: 14px;
+  background:
+    linear-gradient(120deg, color-mix(in oklab, var(--foreground) 3%, transparent), transparent 60%),
+    color-mix(in oklab, var(--card) 76%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.settings-runtime-mark {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  color: var(--legacy-text);
+  background: color-mix(in oklab, var(--foreground) 5%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.settings-runtime-mark svg {
+  width: 19px;
+  height: 19px;
+}
+
+.settings-runtime-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--amber);
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 8.5px;
+  font-weight: 580;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.settings-runtime-state i {
+  width: 5px;
+  height: 5px;
+  background: currentColor;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 12%, transparent);
+}
+
+.settings-runtime-state.is-connected {
+  color: var(--green);
+}
+
+.settings-runtime-card h3 {
+  margin: 3px 0 2px;
+  color: var(--legacy-text-high);
+  font-size: 13px;
+  font-weight: 590;
+}
+
+.settings-runtime-card p {
+  font-size: 9.5px;
+}
+
+.settings-action-row {
+  min-height: 74px;
+}
+
+.settings-action-row > button {
+  flex: 0 0 auto;
+}
+
+.settings-action-row--danger strong,
+.settings-action-row--danger p {
+  color: var(--destructive);
+}
+
+.settings-content-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  color: var(--legacy-text-faint);
+  font-family: "Geist Mono Variable", "Geist Mono", monospace;
+  font-size: 8px;
+  border-top: 1px solid var(--border);
+}
+
+@media (max-width: 760px) {
+  .settings-page-header > button span {
+    display: none;
+  }
+
+  .settings-layout {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .settings-nav {
+    display: block;
+    flex: 0 0 auto;
+    padding: 8px 10px;
+    overflow-x: auto;
+    background: color-mix(in oklab, var(--background) 92%, transparent);
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    scrollbar-width: none;
+  }
+
+  .settings-nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .settings-nav-heading,
+  .settings-nav-note {
+    display: none;
+  }
+
+  .settings-nav-items {
+    display: flex;
+    width: max-content;
+    gap: 3px;
+  }
+
+  .settings-nav-items button {
+    width: auto;
+    min-height: 44px;
+    padding: 7px 10px;
+  }
+
+  .settings-content-inner {
+    width: auto;
+    margin: 0;
+    padding: 30px 16px 36px;
+  }
+
+  .settings-content-header {
+    margin-bottom: 30px;
+  }
+
+  .settings-content-header h2 {
+    font-size: 20px;
+  }
+
+  .settings-row,
+  .settings-action-row {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .settings-row-control {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .settings-theme-picker {
+    width: 100%;
+  }
+
+  .settings-select,
+  .settings-select--wide {
+    width: 100%;
+  }
+
+  .settings-workspace {
+    grid-template-columns: 30px minmax(0, 1fr) auto;
+  }
+
+  .settings-workspace > button {
+    display: none;
+  }
+
+  .settings-runtime-card {
+    grid-template-columns: 38px minmax(0, 1fr);
+    padding: 14px;
+  }
+
+  .settings-runtime-card > button {
+    grid-column: 1 / -1;
+    justify-self: stretch;
+  }
+}
+
+@media (max-width: 420px) {
+  .settings-nav-items button {
+    gap: 6px;
+  }
+
+  .settings-nav-items button span {
+    font-size: 10.5px;
+  }
+
+  .settings-content-header > span {
+    display: none;
+  }
+
+  .settings-capability-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .settings-capability-summary div {
+    min-height: 58px;
+  }
+
+  .settings-capability-summary div + div {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+
+  .settings-trust-badge {
+    display: none;
+  }
+
+  .settings-workspace {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-content-inner {
+    animation: none;
+  }
+}

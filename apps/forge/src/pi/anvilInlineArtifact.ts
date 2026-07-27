@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import { open, realpath } from "node:fs/promises";
-import { basename, extname, isAbsolute, relative, resolve } from "node:path";
+import { basename, extname, isAbsolute, relative, resolve, sep } from "node:path";
 
 import { normalizeProjectResourcePath } from "@anvil/protocol";
 import { Type } from "typebox";
@@ -79,7 +79,7 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
         throw new Error("Artifact path must stay inside the trusted workspace");
       }
 
-      const handle = await open(lexicalPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      const handle = await open(lexicalPath, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
       let targetPath: string;
       let bytes: Buffer;
       try {
@@ -123,7 +123,7 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
       }
       if (!html.trim()) throw new Error("Artifact file is empty");
 
-      const sourcePath = relative(workspaceRoot, targetPath);
+      const sourcePath = relative(workspaceRoot, targetPath).split(sep).join("/");
       const title = (typeof params.title === "string" ? params.title.trim().slice(0, 120) : "") || basename(targetPath, extname(targetPath));
       return {
         content: [{ type: "text", text: `Rendered ${title} inline.` }],

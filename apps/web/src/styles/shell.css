@@ -212,6 +212,22 @@
   gap: 7px;
 }
 
+.project-git-action {
+  font-variant-numeric: tabular-nums;
+}
+
+.project-git-action--busy svg {
+  animation: git-action-pulse 900ms ease-in-out infinite;
+}
+
+@keyframes git-action-pulse {
+  50% { opacity: 0.42; transform: scale(0.88); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-git-action--busy svg { animation: none; }
+}
+
 .settings-control {
   position: relative;
 }

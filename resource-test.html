@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resource Test</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; }
+    body { max-width: 42rem; margin: 0 auto; padding: 2rem; line-height: 1.5; color: #25313b; background: #f5f7f8; }
+    main { padding: 1.5rem; background: white; border: 1px solid #d9e0e5; border-radius: 10px; }
+    h1 { margin-top: 0; color: #123b4a; }
+    button { padding: .6rem .9rem; border: 0; border-radius: 6px; color: white; background: #167d8d; cursor: pointer; }
+    button:focus-visible { outline: 3px solid #f0a35b; outline-offset: 2px; }
+    #message { min-height: 1.5em; margin-bottom: 0; color: #167d8d; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>HTML Resource Test</h1>
+    <p>This is a basic HTML test page with a heading, paragraph, list, and button.</p>
+    <ul>
+      <li>Semantic markup</li>
+      <li>Responsive viewport</li>
+      <li>Basic styling</li>
+    </ul>
+    <button type="button" onclick="document.querySelector('#message').textContent = 'Button works!'">
+      Test button
+    </button>
+    <p id="message" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>

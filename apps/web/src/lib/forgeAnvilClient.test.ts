@@ -1,4 +1,4 @@
-import { ANVIL_PROTOCOL_VERSION, type AnvilEvent, type SessionSummary } from "@anvil/protocol";
+import { ANVIL_PROTOCOL_VERSION, type AnvilEvent, type CapabilityCatalog, type SessionSummary } from "@anvil/protocol";
 import { createEmptySnapshot } from "@anvil/state";
 import { describe, expect, it } from "vitest";
 
@@ -41,6 +41,20 @@ const session: SessionSummary = {
   status: "idle",
   modelId: "test/model-1",
   thinkingLevel: "medium",
+};
+
+const sessionCatalog: CapabilityCatalog = {
+  modelsReady: true,
+  models: [{
+    id: "test/model-1",
+    provider: "test",
+    name: "Model One",
+    reasoning: true,
+    input: ["text"],
+    supportedThinkingLevels: ["off", "medium", "high", "xhigh"],
+  }],
+  commands: [],
+  skills: [],
 };
 
 describe("ForgeAnvilClient", () => {
@@ -237,7 +251,7 @@ describe("ForgeAnvilClient", () => {
     });
   });
 
-  it("promotes the active session immediately when a prompt is sent", async () => {
+  it("promotes the active session when Forge accepts its prompt", async () => {
     const stream = new FakeEventSource();
     const olderSession = { ...session, id: "session-older", title: "Older session" };
     const snapshot = createEmptySnapshot({
@@ -267,11 +281,22 @@ describe("ForgeAnvilClient", () => {
 
     client.sendPrompt("Move this thread to the top");
 
+    expect(client.getSnapshot().sessions[0]?.lastUserMessageAt).toBeUndefined();
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-prompted",
+      sequence: 1,
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "session.prompted",
+      payload: {},
+    }));
+
     expect(client.getSnapshot().sessions.map((candidate) => candidate.id)).toEqual([
       session.id,
       olderSession.id,
     ]);
-    expect(client.getSnapshot().sessions[0]?.updatedAt).not.toBe(session.updatedAt);
+    expect(client.getSnapshot().sessions[0]?.lastUserMessageAt).toBe("2026-07-23T01:00:01.000Z");
     expect(client.getSnapshot().timelines[session.id]?.at(-1)).toMatchObject({
       id: expect.stringMatching(/^optimistic-/),
       kind: "message",
@@ -647,7 +672,7 @@ describe("ForgeAnvilClient", () => {
     expect(client.getSnapshot().activeSessionId).toBe(session.id);
   });
 
-  it("sends workspace creation, settlement, and session deletion commands", async () => {
+  it("sends workspace creation, rename, settlement, and session deletion commands", async () => {
     const stream = new FakeEventSource();
     const snapshot = createEmptySnapshot({
       projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
@@ -675,13 +700,17 @@ describe("ForgeAnvilClient", () => {
     });
     await waitUntil(() => client.getSnapshot().sessions.length === 1);
 
+    await expect(client.renameSession(session.id, "   ")).rejects.toThrow("non-empty");
+    await expect(client.renameSession(session.id, "x".repeat(121))).rejects.toThrow("at most 120");
     client.createProject("Tools", "/home/oli/code/tools");
+    client.renameSession(session.id, "  Renamed thread  ");
     client.setSessionSettled(session.id, true);
     client.deleteSession(session.id);
-    await waitUntil(() => bodies.length === 3);
+    await waitUntil(() => bodies.length === 4);
 
     expect(bodies).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "project.create", sessionId: null, payload: { name: "Tools", path: "/home/oli/code/tools" } }),
+      expect.objectContaining({ type: "session.rename", sessionId: session.id, payload: { title: "Renamed thread" } }),
       expect.objectContaining({ type: "session.settled", sessionId: session.id, payload: { settled: true } }),
       expect.objectContaining({ type: "session.delete", sessionId: null, payload: { sessionId: session.id } }),
     ]));
@@ -720,6 +749,7 @@ describe("ForgeAnvilClient", () => {
     const snapshot = createEmptySnapshot({
       projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
       sessions: [session],
+      catalogs: { [session.id]: sessionCatalog },
     });
     const bodies: Array<{ id: string; type: string; payload: { level: string } }> = [];
     const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -744,7 +774,13 @@ describe("ForgeAnvilClient", () => {
     });
     await waitUntil(() => client.getSnapshot().sessions.length === 1);
 
-    client.setThinkingLevel("high");
+    client.setThinkingLevel(session.id, "" as never);
+    client.setThinkingLevel(session.id, "max");
+    client.setThinkingLevel(session.id, session.thinkingLevel);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(bodies).toHaveLength(0);
+
+    client.setThinkingLevel(session.id, "high");
     expect(client.getSnapshot().sessions[0]?.thinkingLevel).toBe("high");
     await waitUntil(() => client.getSnapshot().clientError === "Thinking level is unavailable");
 
@@ -760,6 +796,7 @@ describe("ForgeAnvilClient", () => {
     const snapshot = createEmptySnapshot({
       projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
       sessions: [session],
+      catalogs: { [session.id]: sessionCatalog },
     });
     const commands: Array<{ id: string }> = [];
     const responses: Array<(response: Response) => void> = [];
@@ -786,8 +823,8 @@ describe("ForgeAnvilClient", () => {
       error: "Thinking level is unavailable",
     }));
 
-    client.setThinkingLevel("high");
-    client.setThinkingLevel("xhigh");
+    client.setThinkingLevel(session.id, "high");
+    client.setThinkingLevel(session.id, "xhigh");
     await waitUntil(() => commands.length === 1);
     expect(client.getSnapshot().sessions[0]?.thinkingLevel).toBe("xhigh");
 
@@ -817,11 +854,39 @@ describe("ForgeAnvilClient", () => {
     await waitUntil(() => client.getSnapshot().sessions[0]?.thinkingLevel === "high");
   });
 
-  it("sends typed commands to Forge", async () => {
+  it("sends only available model changes to the explicitly bound session", async () => {
     const stream = new FakeEventSource();
+    const otherSession = { ...session, id: "session-2", title: "Other session" };
     const snapshot = createEmptySnapshot({
       projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
-      sessions: [session],
+      sessions: [session, otherSession],
+      activeSessionId: otherSession.id,
+      catalogs: {
+        [session.id]: {
+          modelsReady: true,
+          models: [
+            {
+              id: "test/model-1",
+              provider: "test",
+              name: "Model One",
+              reasoning: true,
+              input: ["text"],
+              supportedThinkingLevels: ["medium", "high"],
+            },
+            {
+              id: "test/model-2",
+              provider: "test",
+              name: "Model Two",
+              reasoning: true,
+              input: ["text"],
+              supportedThinkingLevels: ["medium", "high"],
+            },
+          ],
+          commands: [],
+          skills: [],
+        },
+        [otherSession.id]: { modelsReady: false, models: [], commands: [], skills: [] },
+      },
     });
     const bodies: unknown[] = [];
     const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -843,8 +908,15 @@ describe("ForgeAnvilClient", () => {
       fetch: fetcher as typeof fetch,
       createEventSource: () => stream as unknown as EventSource,
     });
-    await waitUntil(() => client.getSnapshot().sessions.length === 1);
-    client.setModel("test/model-2");
+    await waitUntil(() => client.getSnapshot().sessions.length === 2);
+    expect(client.getSnapshot().activeSessionId).toBe(otherSession.id);
+    client.setModel(session.id, "");
+    client.setModel(session.id, "test/not-available");
+    client.setModel(session.id, session.modelId);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(bodies).toHaveLength(0);
+
+    client.setModel(session.id, "test/model-2");
     await waitUntil(() => bodies.length === 1);
 
     expect(bodies[0]).toMatchObject({

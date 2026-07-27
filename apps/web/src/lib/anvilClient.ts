@@ -4,6 +4,8 @@ import {
   isAnvilBootstrap,
   isAnvilSessionDetailSync,
   isAnvilSummaryBootstrap,
+  normalizeSessionTitle,
+  SESSION_TITLE_MAX_LENGTH,
   type AnvilClientCommand,
   type AnvilCommandResponse,
   type AnvilEvent,
@@ -92,6 +94,7 @@ export interface AnvilClient {
   createProject(name: string, path: string): Promise<void>;
   createSession(projectId: string): void;
   deleteSession(sessionId: string): Promise<void>;
+  renameSession(sessionId: string, title: string): Promise<void>;
   setSessionSettled(sessionId: string, settled: boolean): Promise<void>;
   sendPrompt(content: string, mode?: DeliveryMode, attachments?: ArtifactReference[]): Promise<boolean>;
   uploadAttachment(sessionId: string, file: File): Promise<ArtifactReference>;
@@ -99,8 +102,8 @@ export interface AnvilClient {
   searchFiles(sessionId: string, query: string): Promise<WorkspaceFile[]>;
   rebuildWebApp(): Promise<void>;
   cancelActiveRun(): void;
-  setModel(modelId: string): void;
-  setThinkingLevel(level: ThinkingLevel): void;
+  setModel(sessionId: string, modelId: string): void;
+  setThinkingLevel(sessionId: string, level: ThinkingLevel): void;
   respondToInteraction(response: InteractionResponse): void;
   clearClientError(): void;
   clearComposerDraft(sessionId: string): void;
@@ -141,6 +144,7 @@ function timestamp() {
 function promoteSession(
   snapshot: AnvilClientSnapshot,
   sessionId: string,
+  sentAt = timestamp(),
 ): AnvilClientSnapshot {
   const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
   if (!session) return snapshot;
@@ -149,8 +153,9 @@ function promoteSession(
     sessions: sortSessionsByActivity([
       {
         ...session,
-        updatedAt: timestamp(),
-        lastActivitySequence: Math.max(session.lastActivitySequence ?? 0, snapshot.lastSequence + 1),
+        updatedAt: sentAt,
+        lastUserMessageAt: sentAt,
+        lastUserMessageSequence: Math.max(session.lastUserMessageSequence ?? 0, snapshot.lastSequence + 1),
       },
       ...snapshot.sessions.filter((candidate) => candidate.id !== sessionId),
     ]),
@@ -191,6 +196,8 @@ function addOptimisticPrompt(
   sessionId: string,
   commandId: string,
   content: string,
+  createdAt = timestamp(),
+  delivery: DeliveryMode = "prompt",
 ): AnvilClientSnapshot {
   const id = optimisticMessageId(commandId);
   if ((snapshot.timelines[sessionId] ?? []).some((entry) => entry.id === id)) return snapshot;
@@ -206,7 +213,8 @@ function addOptimisticPrompt(
           role: "user",
           content: [{ id: `${id}-text`, type: "text", text: content }],
           status: "streaming",
-          createdAt: timestamp(),
+          createdAt,
+          raw: { delivery },
         },
       ],
     },
@@ -437,6 +445,9 @@ export class FixtureAnvilClient implements AnvilClient {
       case "session.delete":
         this.deleteSession(command.payload.sessionId);
         break;
+      case "session.rename":
+        if (command.sessionId) this.renameSession(command.sessionId, command.payload.title);
+        break;
       case "session.settled":
         if (command.sessionId) this.setSessionSettled(command.sessionId, command.payload.settled);
         break;
@@ -447,10 +458,10 @@ export class FixtureAnvilClient implements AnvilClient {
         this.cancelActiveRun();
         break;
       case "model.set":
-        this.setModel(command.payload.modelId);
+        if (command.sessionId) this.setModel(command.sessionId, command.payload.modelId);
         break;
       case "thinking.set":
-        this.setThinkingLevel(command.payload.level);
+        if (command.sessionId) this.setThinkingLevel(command.sessionId, command.payload.level);
         break;
       case "interaction.respond":
         this.respondToInteraction(command.payload);
@@ -516,7 +527,6 @@ export class FixtureAnvilClient implements AnvilClient {
       modelId: model?.id ?? "unknown",
       thinkingLevel: model?.supportedThinkingLevels.includes("high") ? "high" : "off",
       branch: "main",
-      lastActivitySequence: this.snapshot.lastSequence + 1,
     };
     this.snapshot = {
       ...this.snapshot,
@@ -536,6 +546,13 @@ export class FixtureAnvilClient implements AnvilClient {
     for (const timer of this.simulationTimers.get(sessionId) ?? []) clearTimeout(timer);
     this.simulationTimers.delete(sessionId);
     this.applyLocal("session.deleted", { sessionId }, sessionId);
+  };
+
+  renameSession = async (sessionId: string, value: string) => {
+    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
+    const title = normalizeSessionTitle(value);
+    if (!title) throw new Error(`Thread title must be non-empty and at most ${SESSION_TITLE_MAX_LENGTH} characters`);
+    this.applyLocal("session.configured", { title }, sessionId);
   };
 
   setSessionSettled = async (sessionId: string, settled: boolean) => {
@@ -796,26 +813,22 @@ export class FixtureAnvilClient implements AnvilClient {
     );
   };
 
-  setModel = (modelId: string) => {
-    const session = this.activeSession();
-    const model = session
-      ? this.snapshot.catalogs[session.id]?.models.find((candidate) => candidate.id === modelId)
-      : undefined;
-    if (!session || !model) return;
+  setModel = (sessionId: string, modelId: string) => {
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    const model = this.snapshot.catalogs[sessionId]?.models.find((candidate) => candidate.id === modelId);
+    if (!session || !model || session.modelId === modelId) return;
     const thinkingLevel = model.supportedThinkingLevels.includes(session.thinkingLevel)
       ? session.thinkingLevel
       : model.supportedThinkingLevels[0] ?? "off";
     this.upsertLocalSession({ ...session, modelId, thinkingLevel, updatedAt: timestamp() });
   };
 
-  setThinkingLevel = (thinkingLevel: ThinkingLevel) => {
-    const session = this.activeSession();
-    const model = session
-      ? this.snapshot.catalogs[session.id]?.models.find(
-          (candidate) => candidate.id === session.modelId,
-        )
-      : undefined;
-    if (!session || !model?.supportedThinkingLevels.includes(thinkingLevel)) return;
+  setThinkingLevel = (sessionId: string, thinkingLevel: ThinkingLevel) => {
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    const model = this.snapshot.catalogs[sessionId]?.models.find(
+      (candidate) => candidate.id === session?.modelId,
+    );
+    if (!session || session.thinkingLevel === thinkingLevel || !model?.supportedThinkingLevels.includes(thinkingLevel)) return;
     this.upsertLocalSession({ ...session, thinkingLevel, updatedAt: timestamp() });
   };
 
@@ -1245,7 +1258,6 @@ export class ForgeAnvilClient implements AnvilClient {
         status: "idle" as const,
         modelId: "unknown",
         thinkingLevel: "off" as const,
-        lastActivitySequence: this.snapshot.lastSequence + 1,
       },
       command,
       previousActiveSessionId: this.snapshot.activeSessionId,
@@ -1261,6 +1273,13 @@ export class ForgeAnvilClient implements AnvilClient {
     };
     this.emit();
     void this.sendCommand(command, false, pending);
+  };
+
+  renameSession = async (sessionId: string, value: string) => {
+    if (!this.snapshot.sessions.some((session) => session.id === sessionId)) return;
+    const title = normalizeSessionTitle(value);
+    if (!title) throw new Error(`Thread title must be non-empty and at most ${SESSION_TITLE_MAX_LENGTH} characters`);
+    await this.sendCommand(this.command("session.rename", sessionId, { title }), true);
   };
 
   setSessionSettled = async (sessionId: string, settled: boolean) => {
@@ -1310,7 +1329,14 @@ export class ForgeAnvilClient implements AnvilClient {
       delivery,
       ...(attachments.length ? { attachments } : {}),
     }) as Extract<AnvilClientCommand, { type: "prompt.send" }>;
-    this.snapshot = addOptimisticPrompt(promoteSession(this.snapshot, sessionId), sessionId, command.id, prompt);
+    this.snapshot = addOptimisticPrompt(
+      this.snapshot,
+      sessionId,
+      command.id,
+      prompt,
+      command.timestamp,
+      delivery,
+    );
     this.emit();
 
     const accepted = this.promptOutbox.enqueue({ command, content: prompt });
@@ -1382,16 +1408,19 @@ export class ForgeAnvilClient implements AnvilClient {
     void this.sendCommand(this.command("run.cancel", this.snapshot.activeSessionId, {}));
   };
 
-  setModel = (modelId: string) => {
-    if (!this.snapshot.activeSessionId) return;
-    void this.sendCommand(this.command("model.set", this.snapshot.activeSessionId, { modelId }));
+  setModel = (sessionId: string, modelId: string) => {
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    const available = this.snapshot.catalogs[sessionId]?.models.some((model) => model.id === modelId);
+    if (!session || !available || session.modelId === modelId) return;
+    void this.sendCommand(this.command("model.set", sessionId, { modelId }));
   };
 
-  setThinkingLevel = (level: ThinkingLevel) => {
-    const sessionId = this.snapshot.activeSessionId;
-    if (!sessionId) return;
+  setThinkingLevel = (sessionId: string, level: ThinkingLevel) => {
     const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
-    if (!session || session.thinkingLevel === level) return;
+    const model = this.snapshot.catalogs[sessionId]?.models.find(
+      (candidate) => candidate.id === session?.modelId,
+    );
+    if (!session || session.thinkingLevel === level || !model?.supportedThinkingLevels.includes(level)) return;
 
     const pending = this.pendingThinkingChanges.get(sessionId) ?? {
       confirmedLevel: session.thinkingLevel,
@@ -1582,7 +1611,14 @@ export class ForgeAnvilClient implements AnvilClient {
       }
       for (const prompt of this.promptOutbox.queued()) {
         if (prompt.command.sessionId) {
-          restored = addOptimisticPrompt(restored, prompt.command.sessionId, prompt.command.id, prompt.content);
+          restored = addOptimisticPrompt(
+            restored,
+            prompt.command.sessionId,
+            prompt.command.id,
+            prompt.content,
+            prompt.command.timestamp,
+            prompt.command.payload.delivery,
+          );
         }
       }
       const preferredSessionId = [previousActiveSessionId, restored.activeSessionId]
@@ -1893,7 +1929,7 @@ export class ForgeAnvilClient implements AnvilClient {
             this.hydratedThrough.delete(event.payload.sessionId);
             void this.cache.deleteSession(event.payload.sessionId);
           }
-          if (["session.upserted", "session.deleted", "session.settled", "run.status", "message.started", "interaction.requested"].includes(event.type)) {
+          if (["session.upserted", "session.deleted", "session.settled", "session.prompted", "session.configured", "run.status", "message.started", "interaction.requested"].includes(event.type)) {
             void this.persistShell();
           }
         }

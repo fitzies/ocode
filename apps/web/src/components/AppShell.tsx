@@ -6,6 +6,7 @@ import {
   type SessionSummary,
   type TimelineEntry,
 } from "@anvil/protocol";
+import { sortSessionsByActivity } from "@anvil/state";
 import {
   Cancel01Icon,
   ComputerIcon,
@@ -47,19 +48,21 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { anvilClient, type DeliveryMode } from "../lib/anvilClient";
-import { isTerminalInputTarget } from "../lib/keyboardScope";
+import { isTerminalInputTarget, isTerminalToggleShortcut } from "../lib/keyboardScope";
 import { shouldAutoOpenProjectResource } from "../lib/workspace";
 import { equalAppShellSnapshots, selectAppShellSnapshot } from "../lib/appShellSnapshot";
+import { subagentActivityForSession } from "../lib/subagentActivity";
 import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
 import { InteractionPanel } from "./InteractionDialog";
+import { ProjectGitAction } from "./ProjectGitAction";
 import { Sidebar } from "./Sidebar";
 import { Timeline } from "./Timeline";
 import { ProjectResourceSurface } from "./resource/ProjectResourceSurface";
 import { ProjectTerminalSurface } from "./terminal/ProjectTerminalSurface";
 import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
 import { WorkspaceSurfaceProvider, useWorkspaceSurfaces } from "./workspace/WorkspaceSurfaceState";
-import { AddWorkspaceDialog, DeleteThreadDialog } from "./WorkspaceDialogs";
+import { AddWorkspaceDialog, DeleteThreadDialog, RenameThreadDialog } from "./WorkspaceDialogs";
 
 const EMPTY_CATALOG: CapabilityCatalog = { models: [], commands: [], skills: [] };
 
@@ -113,8 +116,8 @@ function LiveProjectResourceAutoOpen() {
 function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
   const { state, setBottomVisible, setMobileSurface } = useWorkspaceSurfaces();
   const active = isMobile ? state.mobileSurface === "terminal" : state.bottomVisible;
-  const open = () => {
-    if (isMobile) setMobileSurface("terminal");
+  const toggle = () => {
+    if (isMobile) setMobileSurface(active ? "conversation" : "terminal");
     else setBottomVisible(!state.bottomVisible);
   };
   return (
@@ -124,11 +127,29 @@ function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
       size="icon-sm"
       aria-label={active ? "Hide project terminals" : "Show project terminals"}
       aria-pressed={active}
-      onClick={open}
+      title="Project terminal (Ctrl+`)"
+      onClick={toggle}
     >
       <HugeiconsIcon icon={ComputerTerminal01Icon} strokeWidth={2} />
     </Button>
   );
+}
+
+function TerminalShortcut({ isMobile }: { isMobile: boolean }) {
+  const { state, setBottomVisible, setMobileSurface } = useWorkspaceSurfaces();
+
+  useEffect(() => {
+    const toggleTerminal = (event: KeyboardEvent) => {
+      if (!isTerminalToggleShortcut(event)) return;
+      event.preventDefault();
+      if (isMobile) setMobileSurface(state.mobileSurface === "terminal" ? "conversation" : "terminal");
+      else setBottomVisible(!state.bottomVisible);
+    };
+    window.addEventListener("keydown", toggleTerminal);
+    return () => window.removeEventListener("keydown", toggleTerminal);
+  }, [isMobile, setBottomVisible, setMobileSurface, state.bottomVisible, state.mobileSurface]);
+
+  return null;
 }
 
 function ProjectWorkspace({
@@ -180,6 +201,7 @@ function AppShellContent() {
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
+  const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
   const [indicators, setIndicators] = useState<LiveIndicators>({});
   const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
   const [rebuildState, setRebuildState] = useState<"idle" | "rebuilding">("idle");
@@ -199,6 +221,7 @@ function AppShellContent() {
     ? anvilClient.getSessionCreationError(activeSession.id)
     : undefined;
   const timeline = activeSession ? snapshot.timelines[activeSession.id] ?? [] : [];
+  const subagents = useMemo(() => subagentActivityForSession(timeline), [timeline]);
   const pendingInteractions = activeSession
     ? snapshot.pendingInteractions.filter((request) => request.sessionId === activeSession.id)
     : [];
@@ -230,6 +253,10 @@ function AppShellContent() {
   const requestDeleteSession = useCallback((sessionId: string) => {
     const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
     if (session) setSessionPendingDeletion({ id: session.id, title: session.title });
+  }, [snapshot.sessions]);
+  const requestRenameSession = useCallback((sessionId: string) => {
+    const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (session) setSessionPendingRename({ id: session.id, title: session.title });
   }, [snapshot.sessions]);
   const updateDraft = useCallback((sessionId: string, prompt: string) => {
     setComposerDrafts((drafts) => updateComposerDraft(drafts, sessionId, prompt));
@@ -297,6 +324,13 @@ function AppShellContent() {
       document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Message Pi']")?.focus();
     });
   }, [isMobile, setOpenMobile]);
+  const markGitActionComplete = useCallback(() => {
+    const projectId = activeProject?.id;
+    if (!projectId) return;
+    const git = { additions: 0, deletions: 0 };
+    gitIndicatorsByProject.current.set(projectId, git);
+    setIndicators((current) => ({ ...current, git }));
+  }, [activeProject?.id]);
   const rebuildWebApp = useCallback(async () => {
     setRebuildState("rebuilding");
     setRebuildError(undefined);
@@ -311,6 +345,16 @@ function AppShellContent() {
       setRebuildState("idle");
     }
   }, []);
+  const closeRenameDialog = () => {
+    const sessionId = sessionPendingRename?.id;
+    setSessionPendingRename(null);
+    if (!sessionId) return;
+    requestAnimationFrame(() => {
+      Array.from(document.querySelectorAll<HTMLButtonElement>("[data-session-id]"))
+        .find((element) => element.dataset.sessionId === sessionId)
+        ?.focus();
+    });
+  };
   const closeDeleteDialog = (deleted = false) => {
     const sessionId = sessionPendingDeletion?.id;
     setSessionPendingDeletion(null);
@@ -449,11 +493,11 @@ function AppShellContent() {
         if (projectId) startSession(projectId);
       }
       const threadShortcut = /^Digit([1-9])$/.exec(event.code);
-      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && threadShortcut && activeProject) {
+      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && threadShortcut) {
         event.preventDefault();
         const threadIndex = Number(threadShortcut[1]) - 1;
-        const target = snapshot.sessions.filter(
-          (session) => session.projectId === activeProject.id,
+        const target = sortSessionsByActivity(snapshot.sessions).filter(
+          (session) => !session.settled,
         )[threadIndex];
         if (target) {
           anvilClient.selectSession(target.id);
@@ -483,15 +527,17 @@ function AppShellContent() {
         onAddWorkspace={openAddWorkspace}
         usage={indicators.usage}
         onRequestDeleteSession={requestDeleteSession}
+        onRequestRenameSession={requestRenameSession}
         onSetSessionSettled={anvilClient.setSessionSettled}
       />
 
       <SidebarInset className="workspace">
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
           <LiveProjectResourceAutoOpen />
+          {activeProject && <TerminalShortcut isMobile={isMobile} />}
           <ProjectWorkspace
             isMobile={isMobile}
-            bottom={activeProject ? <ProjectTerminalSurface projectId={activeProject.id} isMobile={isMobile} /> : undefined}
+            bottom={activeProject ? <ProjectTerminalSurface key={activeProject.id} projectId={activeProject.id} isMobile={isMobile} /> : undefined}
             right={activeProject ? <ProjectResourceSurface projectId={activeProject.id} /> : undefined}
             main={<div className="conversation-surface">
         <header className="session-header">
@@ -507,49 +553,30 @@ function AppShellContent() {
           </div>
 
           <div className="header-actions">
-            {activeProject && <TerminalSurfaceToggle isMobile={isMobile} />}
             {indicators.git && (
               <span className="git-diff-stat" aria-label={`${indicators.git.additions} lines added, ${indicators.git.deletions} lines deleted`}>
                 <span className="git-additions">+{indicators.git.additions}</span>
                 <span className="git-deletions">−{indicators.git.deletions}</span>
               </span>
             )}
-            <DropdownMenu onOpenChange={(open) => open && setRebuildError(undefined)}>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="Forge settings">
-                  <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel className="flex items-center justify-between">
-                  <span>Forge runtime</span>
-                  <span className={`font-mono text-[0.625rem] font-normal uppercase tracking-wider ${snapshot.connection === "connected" ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400"}`}>
-                    {snapshot.connection === "connected" ? "Connected" : "Reconnecting"}
-                  </span>
-                </DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    {theme === "dark" ? <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} /> : theme === "light" ? <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} /> : <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />}
-                    Appearance
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    <DropdownMenuRadioGroup value={theme} onValueChange={(value) => setTheme(value as "system" | "light" | "dark")}>
-                      <DropdownMenuRadioItem value="system"><HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />System</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="light"><HugeiconsIcon icon={Sun03Icon} strokeWidth={2} />Light</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="dark"><HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />Dark</DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuItem
-                  disabled={rebuildState === "rebuilding"}
-                  onSelect={() => setRebuildDialogOpen(true)}
-                >
-                  <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-                  Rebuild
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {activeProject && (
+              <ProjectGitAction
+                key={activeProject.id}
+                projectId={activeProject.id}
+                sessionId={activeSession?.id}
+                onComplete={markGitActionComplete}
+              />
+            )}
+            {activeProject && <TerminalSurfaceToggle isMobile={isMobile} />}
+            <Button
+              ref={settingsTrigger}
+              variant="ghost"
+              size="icon-sm"
+              aria-label="Open settings"
+              onClick={openSettings}
+            >
+              <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
+            </Button>
           </div>
         </header>
 
@@ -607,6 +634,8 @@ function AppShellContent() {
               creationError={activeSessionCreationError}
               widgets={widgets}
               contextUsage={indicators.context}
+              workspaceKind={activeProject?.workspaceKind}
+              subagents={subagents}
               attachments={composerAttachments[activeSession.id] ?? []}
               onAttachFiles={attachFiles}
               onRemoveAttachment={removeAttachment}
@@ -614,8 +643,8 @@ function AppShellContent() {
               onCancel={anvilClient.cancelActiveRun}
               onDraftConsumed={anvilClient.clearComposerDraft}
               onPromptChange={updateDraft}
-              onModelChange={anvilClient.setModel}
-              onThinkingLevelChange={anvilClient.setThinkingLevel}
+              onModelChange={(modelId) => anvilClient.setModel(activeSession.id, modelId)}
+              onThinkingLevelChange={(level) => anvilClient.setThinkingLevel(activeSession.id, level)}
               onSend={sendComposerPrompt}
             />
           </>
@@ -645,6 +674,13 @@ function AppShellContent() {
           onCreate={anvilClient.createProject}
         />
       )}
+      {sessionPendingRename && (
+        <RenameThreadDialog
+          title={sessionPendingRename.title}
+          onClose={closeRenameDialog}
+          onRename={(title) => anvilClient.renameSession(sessionPendingRename.id, title)}
+        />
+      )}
       {sessionPendingDeletion && (
         <DeleteThreadDialog
           title={sessionPendingDeletion.title}
@@ -652,24 +688,6 @@ function AppShellContent() {
           onDelete={() => anvilClient.deleteSession(sessionPendingDeletion.id)}
         />
       )}
-      <AlertDialog open={rebuildDialogOpen} onOpenChange={(open) => !open && rebuildState !== "rebuilding" && setRebuildDialogOpen(false)}>
-        <AlertDialogContent onEscapeKeyDown={(event) => rebuildState === "rebuilding" && event.preventDefault()}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Rebuild the web app?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This builds the latest React changes and reloads the updated interface. Running threads will not be interrupted.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          {rebuildError && <p className="text-xs text-destructive" role="alert">{rebuildError}</p>}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={rebuildState === "rebuilding"}>Cancel</AlertDialogCancel>
-            <Button disabled={rebuildState === "rebuilding"} onClick={() => void rebuildWebApp()}>
-              <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-              {rebuildState === "rebuilding" ? "Rebuilding…" : "Rebuild"}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

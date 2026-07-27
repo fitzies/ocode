@@ -11,7 +11,7 @@ describe("EventProjectResolver", () => {
     const events = new ForgeEventService(database, [configured]);
     const resolver = new EventProjectResolver(events);
 
-    expect(resolver.resolveProject(configured.id)).toEqual(configured);
+    expect(resolver.resolveProject(configured.id)).toEqual({ ...configured, workspaceKind: "folder" });
     expect(resolver.resolveProject("missing")).toBeUndefined();
 
     const dynamic = { id: "dynamic", name: "Dynamic", path: "/srv/dynamic" };

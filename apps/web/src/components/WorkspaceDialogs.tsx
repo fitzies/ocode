@@ -1,3 +1,4 @@
+import { normalizeSessionTitle, SESSION_TITLE_MAX_LENGTH } from "@anvil/protocol";
 import { type FormEvent, useRef, useState } from "react";
 
 import {
@@ -104,6 +105,87 @@ export function AddWorkspaceDialog({
             </Button>
             <Button type="submit" disabled={!name.trim() || !path.trim() || pending}>
               {pending ? "Adding…" : "Add workspace"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function RenameThreadDialog({
+  title: initialTitle,
+  onClose,
+  onRename,
+}: {
+  title: string;
+  onClose: () => void;
+  onRename: (title: string) => Promise<void>;
+}) {
+  const [title, setTitle] = useState(initialTitle);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const normalizedTitle = normalizeSessionTitle(title);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!normalizedTitle || pending) return;
+    setPending(true);
+    setError(undefined);
+    try {
+      await onRename(normalizedTitle);
+      onClose();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+      setPending(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+      <DialogContent
+        aria-describedby="rename-thread-description"
+        className="sm:max-w-md"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          inputRef.current?.focus();
+          inputRef.current?.select();
+        }}
+        onEscapeKeyDown={(event) => pending && event.preventDefault()}
+        onPointerDownOutside={(event) => pending && event.preventDefault()}
+      >
+        <DialogHeader>
+          <DialogTitle>Rename thread</DialogTitle>
+          <DialogDescription id="rename-thread-description">
+            Choose a short, descriptive title for this thread.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="grid gap-4" onSubmit={submit}>
+          <Field>
+            <FieldLabel htmlFor="thread-title">Thread title</FieldLabel>
+            <Input
+              ref={inputRef}
+              id="thread-title"
+              value={title}
+              onChange={(event) => {
+                setTitle(event.target.value);
+                setError(undefined);
+              }}
+              maxLength={SESSION_TITLE_MAX_LENGTH}
+              disabled={pending}
+              aria-invalid={Boolean(error) || undefined}
+              aria-describedby={error ? "rename-thread-error" : undefined}
+              required
+            />
+          </Field>
+          {error && <FieldError id="rename-thread-error" role="alert">{error}</FieldError>}
+          <DialogFooter className="border-t border-border/60 pt-3">
+            <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!normalizedTitle || pending}>
+              {pending ? "Renaming…" : "Rename thread"}
             </Button>
           </DialogFooter>
         </form>

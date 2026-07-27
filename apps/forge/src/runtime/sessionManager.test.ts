@@ -55,6 +55,7 @@ beforeEach(() => {
     const sessionDir = process.argv[process.argv.indexOf("--session-dir") + 1];
     let sessionFile = sessionDir + "/session.jsonl";
     let sessionId = "pi-session-1";
+    let sessionName = "Runtime test";
     let pendingDialogPromptId;
     let aborted = false;
     input.on("line", (line) => {
@@ -62,7 +63,7 @@ beforeEach(() => {
       if (request.type === "get_state") {
         setTimeout(() => send({ type: "response", id: request.id, command: request.type, success: true, data: {
           model: { id: "model-1", name: "Model One", provider: "test", reasoning: true, input: ["text"], thinkingLevelMap: { xhigh: null } },
-          thinkingLevel: "medium", isStreaming: false, sessionId, sessionFile, sessionName: "Runtime test"
+          thinkingLevel: "medium", isStreaming: false, sessionId, sessionFile, sessionName
         }}), 30);
       } else if (request.type === "switch_session") {
         if (request.sessionPath.includes("rejected")) {
@@ -73,6 +74,10 @@ beforeEach(() => {
           sessionFile = request.sessionPath;
           send({ type: "response", id: request.id, command: request.type, success: true, data: { cancelled: false } });
         }
+      } else if (request.type === "set_session_name") {
+        sessionName = request.name;
+        send({ type: "session_info_changed", name: sessionName });
+        send({ type: "response", id: request.id, command: request.type, success: true });
       } else if (request.type === "get_messages") {
         send({ type: "response", id: request.id, command: request.type, success: true, data: { messages: [] } });
       } else if (request.type === "get_available_models") {
@@ -207,6 +212,45 @@ describe("SessionManager", () => {
       role: "user",
       status: "complete",
     }));
+    expect(events.currentSnapshot().sessions.find((session) => session.id === sessionId)).toMatchObject({
+      lastUserMessageAt: expect.any(String),
+      lastUserMessageSequence: expect.any(Number),
+    });
+    expect(database.readEventsAfter(0).some((event) => event.type === "session.prompted" && event.sessionId === sessionId)).toBe(true);
+  });
+
+  it("renames a thread through Pi and persists a configured title event", async () => {
+    await manager.handleCommand(command("create-rename", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    await waitUntil(() => events.currentSnapshot().sessions.some(
+      (session) => session.id === requestedSessionId && session.title === "Runtime test",
+    ));
+
+    const response = await manager.handleCommand(command(
+      "rename-1",
+      "session.rename",
+      requestedSessionId,
+      { title: "  Durable renamed thread  " },
+    ));
+
+    expect(response.success).toBe(true);
+    expect(events.currentSnapshot().sessions.find((session) => session.id === requestedSessionId)?.title)
+      .toBe("Durable renamed thread");
+    expect(database.getSession(requestedSessionId)?.session.title).toBe("Durable renamed thread");
+    expect(database.readEventsAfter(0)).toContainEqual(expect.objectContaining({
+      type: "session.configured",
+      payload: { title: "Durable renamed thread" },
+    }));
+
+    const invalid = await manager.handleCommand(command(
+      "rename-invalid",
+      "session.rename",
+      requestedSessionId,
+      { title: "   " },
+    ));
+    expect(invalid).toMatchObject({ success: false, error: expect.stringContaining("non-empty") });
   });
 
   it("stops a settled runtime and lazily restores it when prompting again", async () => {
@@ -345,6 +389,7 @@ describe("SessionManager", () => {
       error: expect.stringContaining("does not match its media type"),
     });
     expect(events.artifact(attachment.artifactId)?.purpose).toBe("upload");
+    expect(database.readEventsAfter(0).some((event) => event.type === "session.prompted" && event.sessionId === sessionId)).toBe(false);
   });
 
   it("adds a validated workspace and restores it from the database", async () => {
@@ -361,6 +406,7 @@ describe("SessionManager", () => {
       id: projectId,
       name: "Second workspace",
       path: workspacePath,
+      workspaceKind: "folder",
     });
 
     await manager.stopAll();

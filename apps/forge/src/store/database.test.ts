@@ -43,6 +43,36 @@ describe("ForgeDatabase event journal", () => {
     }
   });
 
+  it("persists a session rename with its configuration event", () => {
+    const database = new ForgeDatabase(":memory:");
+    database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);
+    const session = {
+      id: "session-renamed",
+      projectId: "project-1",
+      title: "Original title",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle" as const,
+      modelId: "test/model",
+      thinkingLevel: "off" as const,
+    };
+    database.createSession(session);
+    database.renameSessionWithEvent(session.id, "Renamed thread", {
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "session.configured",
+      payload: { title: "Renamed thread" },
+    });
+
+    expect(database.getSession(session.id)?.session).toMatchObject({
+      title: "Renamed thread",
+      updatedAt: "2026-07-23T01:00:01.000Z",
+    });
+    expect(database.readEventsAfter(0)).toMatchObject([
+      { type: "session.configured", payload: { title: "Renamed thread" } },
+    ]);
+    database.close();
+  });
+
   it("persists a session's settled state", () => {
     const database = new ForgeDatabase(":memory:");
     database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);
@@ -51,6 +81,8 @@ describe("ForgeDatabase event journal", () => {
       projectId: "project-1",
       title: "Resolved thread",
       updatedAt: "2026-07-23T01:00:00.000Z",
+      lastUserMessageAt: "2026-07-23T00:59:00.000Z",
+      lastUserMessageSequence: 12,
       status: "idle" as const,
       modelId: "test/model",
       thinkingLevel: "off" as const,
@@ -68,6 +100,8 @@ describe("ForgeDatabase event journal", () => {
     expect(database.getSession(session.id)?.session).toMatchObject({
       settled: true,
       branch: "feature/sidebar",
+      lastUserMessageAt: "2026-07-23T00:59:00.000Z",
+      lastUserMessageSequence: 12,
     });
     expect(database.readEventsAfter(0)).toMatchObject([{ type: "session.settled", payload: { settled: true } }]);
 

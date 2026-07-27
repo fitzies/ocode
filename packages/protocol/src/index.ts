@@ -22,11 +22,47 @@ export type RunOutcome = "completed" | "failed" | "cancelled";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type EntryStatus = "streaming" | "complete" | "failed" | "cancelled";
 export type ToolStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+export type ProjectWorkspaceKind = "main" | "worktree" | "folder";
 
 export interface ProjectSummary {
   id: string;
   name: string;
   path: string;
+  /** Derived by Forge from Git metadata; absent on older recordings. */
+  workspaceKind?: ProjectWorkspaceKind;
+}
+
+export type ProjectGitAction = "commit-and-push" | "push" | "up-to-date" | "unavailable";
+
+export interface ProjectGitStatus {
+  action: ProjectGitAction;
+  branch: string | null;
+  upstream: string | null;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  ahead: number;
+  reason?: string;
+}
+
+export interface ProjectGitGeneratedMessage {
+  branch: string;
+  message: string;
+  changeFingerprint: string;
+}
+
+export interface ProjectGitPushResult {
+  branch: string;
+  commit: string;
+  message?: string;
+  pushed: true;
+}
+
+export interface ProjectGitApiError extends AnvilApiError {
+  /** True when the commit exists locally but a later read or push step failed. */
+  committed?: boolean;
+  commit?: string;
+  commitMessage?: string;
 }
 
 export interface SessionSummary {
@@ -40,7 +76,11 @@ export interface SessionSummary {
   branch?: string;
   /** User-controlled resolution state. Missing on legacy sessions means unsettled. */
   settled?: boolean;
-  /** Global Forge event sequence for the latest meaningful lifecycle activity. */
+  /** Timestamp of the latest user-authored message accepted by Forge. */
+  lastUserMessageAt?: string;
+  /** Global Forge event sequence for the latest user-authored message accepted by Forge. */
+  lastUserMessageSequence?: number;
+  /** Global Forge event sequence for the latest meaningful lifecycle activity (legacy ordering metadata). */
   lastActivitySequence?: number;
   /** Global Forge event sequence for the latest terminal run transition. */
   lastTerminalSequence?: number;
@@ -370,6 +410,7 @@ export type AnvilEvent =
   | AnvilEventBase<"session.upserted", { session: SessionSummary }>
   | AnvilEventBase<"session.deleted", { sessionId: string }>
   | AnvilEventBase<"session.settled", { settled: boolean }>
+  | AnvilEventBase<"session.prompted", Record<string, never>>
   | AnvilEventBase<"session.selected", { sessionId: string }>
   | AnvilEventBase<
       "session.configured",
@@ -441,6 +482,13 @@ export type AnvilEvent =
 
 export type PromptDelivery = "prompt" | "steer" | "followUp";
 
+export const SESSION_TITLE_MAX_LENGTH = 120;
+
+export function normalizeSessionTitle(value: string): string | undefined {
+  const title = value.trim();
+  return title && title.length <= SESSION_TITLE_MAX_LENGTH ? title : undefined;
+}
+
 interface AnvilCommandBase<TType extends string, TPayload> {
   protocolVersion: ProtocolVersion;
   id: string;
@@ -455,6 +503,7 @@ export type AnvilClientCommand =
   | AnvilCommandBase<"session.select", { sessionId: string }>
   | AnvilCommandBase<"session.create", { projectId: string; sessionId: string; parentSessionId?: string }>
   | AnvilCommandBase<"session.delete", { sessionId: string }>
+  | AnvilCommandBase<"session.rename", { title: string }>
   | AnvilCommandBase<"session.settled", { settled: boolean }>
   | AnvilCommandBase<
       "prompt.send",
@@ -488,6 +537,7 @@ const ANVIL_EVENT_TYPES = new Set<AnvilEvent["type"]>([
   "session.upserted",
   "session.deleted",
   "session.settled",
+  "session.prompted",
   "session.selected",
   "session.configured",
   "run.status",
@@ -547,6 +597,8 @@ function isSessionSummary(value: unknown): boolean {
     ["idle", "running", "waiting", "failed"].includes(String(value.status)) &&
     ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(String(value.thinkingLevel)) &&
     (value.settled === undefined || typeof value.settled === "boolean") &&
+    (value.lastUserMessageAt === undefined || (typeof value.lastUserMessageAt === "string" && Number.isFinite(Date.parse(value.lastUserMessageAt)))) &&
+    (value.lastUserMessageSequence === undefined || (Number.isSafeInteger(value.lastUserMessageSequence) && Number(value.lastUserMessageSequence) > 0)) &&
     (value.lastActivitySequence === undefined || (Number.isSafeInteger(value.lastActivitySequence) && Number(value.lastActivitySequence) >= 0)) &&
     (value.lastTerminalSequence === undefined || (Number.isSafeInteger(value.lastTerminalSequence) && Number(value.lastTerminalSequence) > 0)) &&
     (value.lastTerminalOutcome === undefined || ["completed", "failed", "cancelled"].includes(String(value.lastTerminalOutcome)));
@@ -614,6 +666,12 @@ function isSessionQueue(value: unknown): boolean {
   return isRecord(value) && isStringArray(value.steering) && isStringArray(value.followUp);
 }
 
+function isProjectSummary(value: unknown): value is ProjectSummary {
+  return isRecord(value) &&
+    hasStrings(value, "id", "name", "path") &&
+    (value.workspaceKind === undefined || ["main", "worktree", "folder"].includes(String(value.workspaceKind)));
+}
+
 function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
   if (!isRecord(value)) return false;
   switch (type) {
@@ -622,13 +680,15 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
     case "catalog.updated":
       return isCapabilityCatalog(value.catalog);
     case "project.upserted":
-      return isRecord(value.project) && hasStrings(value.project, "id", "name", "path");
+      return isProjectSummary(value.project);
     case "session.upserted":
       return isSessionSummary(value.session);
     case "session.deleted":
       return hasStrings(value, "sessionId");
     case "session.settled":
       return typeof value.settled === "boolean";
+    case "session.prompted":
+      return Object.keys(value).length === 0;
     case "session.selected":
       return hasStrings(value, "sessionId");
     case "session.configured":
@@ -753,6 +813,10 @@ export function isAnvilClientCommand(value: unknown): value is AnvilClientComman
         (payload.parentSessionId === undefined || typeof payload.parentSessionId === "string");
     case "session.delete":
       return value.sessionId === null && hasStrings(payload, "sessionId");
+    case "session.rename":
+      return typeof value.sessionId === "string" &&
+        typeof payload.title === "string" &&
+        normalizeSessionTitle(payload.title) !== undefined;
     case "session.settled":
       return typeof value.sessionId === "string" && typeof payload.settled === "boolean";
     case "prompt.send":
@@ -789,7 +853,7 @@ export function isAnvilSnapshot(value: unknown): value is AnvilSnapshot {
     typeof value.capturedAt === "string" &&
     ["connected", "reconnecting", "offline"].includes(String(value.connection)) &&
     Array.isArray(value.projects) &&
-    value.projects.every((project) => isRecord(project) && hasStrings(project, "id", "name", "path")) &&
+    value.projects.every(isProjectSummary) &&
     Array.isArray(value.sessions) && value.sessions.every(isSessionSummary) &&
     (value.activeSessionId === null || typeof value.activeSessionId === "string") &&
     isRecord(value.timelines) && Object.values(value.timelines).every(
@@ -839,7 +903,7 @@ export function isAnvilSummaryBootstrap(value: unknown): value is AnvilSummaryBo
     typeof value.capturedAt === "string" &&
     ["connected", "reconnecting", "offline"].includes(String(value.connection)) &&
     Array.isArray(value.projects) &&
-    value.projects.every((project) => isRecord(project) && hasStrings(project, "id", "name", "path")) &&
+    value.projects.every(isProjectSummary) &&
     Array.isArray(value.sessions) && value.sessions.every(isSessionSummary) &&
     Number.isSafeInteger(value.cursor) && Number(value.cursor) >= 0;
 }

@@ -17,10 +17,12 @@ import {
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { ProjectFileService } from "../projects/projectFileService.ts";
+import { ProjectGitService } from "../projects/projectGitService.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
 import { ProjectFileRoutes } from "./projectFileRoutes.ts";
+import { ProjectGitRoutes } from "./projectGitRoutes.ts";
 import { authorizedOwner, sameOrigin } from "./security.ts";
 import { TerminalWebSocketChannel } from "./terminalWebSocket.ts";
 
@@ -35,6 +37,7 @@ export interface ForgeHttpServerOptions {
   handleCommand?: (command: AnvilClientCommand) => Promise<AnvilCommandResponse>;
   indicators?: LiveIndicatorsService;
   projectFiles?: ProjectFileService;
+  projectGit?: ProjectGitService;
   searchFiles?: (sessionId: string, query: string, limit: number) => Promise<string[] | undefined>;
   requestRebuild?: () => Promise<void>;
   terminals?: TerminalManager;
@@ -91,6 +94,7 @@ export class ForgeHttpServer {
   private readonly streams = new Set<ServerResponse>();
   private readonly instanceId: string;
   private readonly projectFileRoutes?: ProjectFileRoutes;
+  private readonly projectGitRoutes?: ProjectGitRoutes;
   private readonly terminalChannel?: TerminalWebSocketChannel;
 
   constructor(private readonly options: ForgeHttpServerOptions) {
@@ -105,6 +109,12 @@ export class ForgeHttpServer {
       });
     });
     if (options.projectFiles) this.projectFileRoutes = new ProjectFileRoutes(options.projectFiles);
+    if (options.projectGit) {
+      this.projectGitRoutes = new ProjectGitRoutes(options.projectGit, (projectId, sessionId) => {
+        const session = options.events.sessionSummary(sessionId);
+        return session?.projectId === projectId ? session.modelId : undefined;
+      });
+    }
     if (options.terminals) {
       this.terminalChannel = new TerminalWebSocketChannel(this.server, options.terminals, options.ownerLogin);
     }
@@ -159,6 +169,7 @@ export class ForgeHttpServer {
       return;
     }
     if (this.projectFileRoutes && await this.projectFileRoutes.handle(request, response, url)) return;
+    if (this.projectGitRoutes && await this.projectGitRoutes.handle(request, response, url)) return;
     if (request.method === "POST" && url.pathname === "/api/v1/admin/rebuild") {
       await this.rebuild(request, response);
       return;

@@ -29,9 +29,8 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import Markdown, { type Components } from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
+import { MarkdownText } from "./MarkdownText";
 import { Button } from "./ui/button";
 import { presentTool, type ToolCategory } from "./toolPresentation";
 
@@ -124,29 +123,6 @@ function JsonDetails({ label, value }: { label: string; value?: JsonValue }) {
     </details>
   );
 }
-
-const MARKDOWN_COMPONENTS: Components = {
-  a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
-  table: ({ node: _node, ...props }) => (
-    <div className="markdown-table-scroll" role="region" aria-label="Scrollable table" tabIndex={0}>
-      <table {...props} />
-    </div>
-  ),
-};
-
-const MarkdownText = memo(function MarkdownText({
-  children,
-  className = "text-block markdown-body",
-}: {
-  children: string;
-  className?: string;
-}) {
-  return (
-    <div className={className}>
-      <Markdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{children}</Markdown>
-    </div>
-  );
-});
 
 function ContentBlocks({ blocks, compact = false, onOpenProjectResource }: {
   blocks: ContentBlock[];
@@ -245,7 +221,9 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
       <article className={`${messageClass} message-status--${entry.status}${entranceClass}`}>
         <ContentBlocks blocks={visibleContent} onOpenProjectResource={onOpenProjectResource} />
         {entry.status === "streaming" && entry.role === "user" && entry.id.startsWith("optimistic-")
-          ? <span className="message-pending" role="status">Sending…</span>
+          ? <span className="message-pending" role="status">
+              {entry.raw && typeof entry.raw === "object" && !Array.isArray(entry.raw) && entry.raw.delivery === "steer" ? "Queueing…" : "Sending…"}
+            </span>
           : entry.status === "streaming" && hasVisibleContent(visibleContent) && <span className="stream-caret" aria-label="Streaming" />}
         {entry.error && <div className="message-error">{entry.error}</div>}
         {(entry.role === "extension" || entry.status === "failed") && <JsonDetails label="Raw message" value={entry.raw} />}
@@ -272,8 +250,9 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
   }
 
   if (entry.kind === "tool") {
+    const presentation = presentTool(entry);
     const inlineHtml = entry.output.find((block) => block.type === "inlineHtml");
-    if (inlineHtml?.type === "inlineHtml" && entry.status === "completed") {
+    if (presentation.category !== "agent" && inlineHtml?.type === "inlineHtml" && entry.status === "completed") {
       return (
         <div className={`inline-html-artifact-event${entranceClass}`}>
           <InlineHtmlArtifact block={inlineHtml} />
@@ -295,12 +274,24 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
         </div>
       );
     }
-    const presentation = presentTool(entry);
     const fileToolResource = trustedFileToolResource(entry);
     const failureText = entry.status === "failed" ? firstTextOutput(entry) : undefined;
     const summaryDetail = failureText && presentation.category === "generic"
       ? `${entry.name} · ${failureText}`
       : failureText ?? presentation.detail;
+    const argumentsRecord = entry.arguments && typeof entry.arguments === "object" && !Array.isArray(entry.arguments)
+      ? entry.arguments as Record<string, JsonValue>
+      : undefined;
+    const subagentTask = presentation.category === "agent" && typeof argumentsRecord?.task === "string"
+      ? argumentsRecord.task
+      : undefined;
+    const subagentResponse = presentation.category === "agent"
+      ? entry.output
+          .filter((block): block is Extract<ContentBlock, { type: "text" }> => block.type === "text")
+          .map((block) => block.text)
+          .filter((text) => text.trim())
+          .join("\n\n")
+      : "";
     return (
       <details className={`tool-event tool-event--${entry.status} tool-event--${presentation.category}${entranceClass}`}>
         <summary>
@@ -315,13 +306,30 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
           <span className="tool-status"><ToolStatus entry={entry} /></span>
           <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
         </summary>
-        <div className="tool-detail">
-          {fileToolResource && <section className="tool-output"><span className="detail-label">File</span><ContentBlocks blocks={[fileToolResource]} compact onOpenProjectResource={onOpenProjectResource} /></section>}
-          {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact onOpenProjectResource={onOpenProjectResource} /></section>}
-          <JsonDetails label="Arguments" value={entry.arguments} />
-          <JsonDetails label="Details" value={entry.details} />
-          <JsonDetails label="Raw RPC event" value={entry.raw} />
-        </div>
+        {presentation.category === "agent" ? (
+          <div className="tool-detail agent-detail">
+            <section className="agent-detail-section">
+              <h4 className="detail-label">Message</h4>
+              {subagentTask
+                ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentTask}</MarkdownText>
+                : <span className="agent-detail-placeholder">No message available.</span>}
+            </section>
+            <section className="agent-detail-section">
+              <h4 className="detail-label">Response</h4>
+              {subagentResponse
+                ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentResponse}</MarkdownText>
+                : <span className="agent-detail-placeholder">{entry.status === "running" || entry.status === "queued" ? "Waiting for response…" : "No response returned."}</span>}
+            </section>
+          </div>
+        ) : (
+          <div className="tool-detail">
+            {fileToolResource && <section className="tool-output"><span className="detail-label">File</span><ContentBlocks blocks={[fileToolResource]} compact onOpenProjectResource={onOpenProjectResource} /></section>}
+            {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact onOpenProjectResource={onOpenProjectResource} /></section>}
+            <JsonDetails label="Arguments" value={entry.arguments} />
+            <JsonDetails label="Details" value={entry.details} />
+            <JsonDetails label="Raw RPC event" value={entry.raw} />
+          </div>
+        )}
       </details>
     );
   }

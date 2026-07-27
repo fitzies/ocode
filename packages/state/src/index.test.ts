@@ -1,7 +1,7 @@
 import { ANVIL_PROTOCOL_VERSION, isAnvilSnapshot, type AnvilEvent, type SessionSummary } from "@anvil/protocol";
 import { describe, expect, it } from "vitest";
 
-import { applyAnvilEvent, createEmptySnapshot, reconcileSnapshotAndTail } from "./index";
+import { applyAnvilEvent, createEmptySnapshot, reconcileSnapshotAndTail, restoreLegacyUserActivity } from "./index";
 
 const session: SessionSummary = {
   id: "session-1",
@@ -30,6 +30,16 @@ function event<T extends AnvilEvent["type"]>(
 }
 
 describe("Anvil event reducer", () => {
+  it("updates a renamed thread from session configuration", () => {
+    let snapshot = createEmptySnapshot({ sessions: [session] });
+    snapshot = applyAnvilEvent(snapshot, event(1, "session.configured", { title: "Renamed thread" }));
+
+    expect(snapshot.sessions[0]).toMatchObject({
+      title: "Renamed thread",
+      updatedAt: "2026-07-21T09:00:01.000Z",
+    });
+  });
+
   it("updates branch metadata without changing thread activity", () => {
     let snapshot = createEmptySnapshot({ sessions: [session] });
     snapshot = applyAnvilEvent(snapshot, event(1, "session.configured", { branch: "feature/sidebar" }));
@@ -121,41 +131,96 @@ describe("Anvil event reducer", () => {
     expect(snapshot.catalogs[otherSession.id].commands.map((command) => command.name)).toEqual(["project-two"]);
   });
 
-  it("promotes a session when its user sends a message", () => {
+  it("promotes a session when Forge accepts its user's prompt", () => {
     const otherSession = { ...session, id: "session-2", title: "Older session" };
     let snapshot = createEmptySnapshot({ sessions: [otherSession, session] });
 
-    snapshot = applyAnvilEvent(snapshot, event(1, "message.started", {
-      message: {
-        id: "user-1",
-        kind: "message",
-        role: "user",
-        content: [],
-        status: "complete",
-        createdAt: "2026-07-21T09:00:01.000Z",
-      },
-    }));
+    snapshot = applyAnvilEvent(snapshot, event(1, "session.prompted", {}));
 
     expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([session.id, otherSession.id]);
-    expect(snapshot.sessions[0]?.updatedAt).toBe("2026-07-21T09:00:01.000Z");
+    expect(snapshot.sessions[0]).toMatchObject({
+      updatedAt: "2026-07-21T09:00:01.000Z",
+      lastUserMessageAt: "2026-07-21T09:00:01.000Z",
+      lastUserMessageSequence: 1,
+    });
   });
 
-  it("promotes meaningful run transitions but not a passive idle sync", () => {
-    const background = { ...session, lastActivitySequence: 1 };
-    const otherSession = { ...session, id: "session-2", title: "Recent session", lastActivitySequence: 2 };
+  it("does not treat thread creation as user activity", () => {
+    const prompted = {
+      ...session,
+      lastUserMessageAt: "2026-07-21T08:30:00.000Z",
+      lastUserMessageSequence: 2,
+    };
+    let snapshot = createEmptySnapshot({ sessions: [prompted] });
+    const created = { ...session, id: "session-new", title: "New session" };
+
+    snapshot = applyAnvilEvent(snapshot, {
+      ...event(1, "session.upserted", { session: created }),
+      sessionId: created.id,
+    });
+
+    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([session.id, created.id]);
+    expect(snapshot.sessions[1]?.lastUserMessageSequence).toBeUndefined();
+  });
+
+  it("restores legacy user activity from user messages without using lifecycle timestamps", () => {
+    const legacy = createEmptySnapshot({ sessions: [{ ...session, updatedAt: "2026-07-21T09:30:00.000Z" }] });
+    legacy.timelines[session.id] = [{
+      id: "user-legacy",
+      kind: "message",
+      role: "user",
+      content: [],
+      status: "complete",
+      createdAt: "2026-07-21T09:00:00.000Z",
+    }];
+
+    expect(restoreLegacyUserActivity(legacy).sessions[0]?.lastUserMessageAt)
+      .toBe("2026-07-21T09:00:00.000Z");
+  });
+
+  it("does not reorder or reset user activity for background run progress", () => {
+    const background = {
+      ...session,
+      lastUserMessageAt: "2026-07-21T08:30:00.000Z",
+      lastUserMessageSequence: 1,
+    };
+    const otherSession = {
+      ...session,
+      id: "session-2",
+      title: "Recent session",
+      lastUserMessageAt: "2026-07-21T08:45:00.000Z",
+      lastUserMessageSequence: 2,
+    };
     let snapshot = createEmptySnapshot({ sessions: [otherSession, background] });
 
     snapshot = applyAnvilEvent(snapshot, event(1, "run.status", { status: "idle" }));
-    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([otherSession.id, session.id]);
-
     snapshot = applyAnvilEvent(snapshot, event(2, "run.status", { status: "running" }));
-    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([session.id, otherSession.id]);
+    snapshot = applyAnvilEvent(snapshot, event(3, "message.started", {
+      message: {
+        id: "assistant-1",
+        kind: "message",
+        role: "assistant",
+        content: [],
+        status: "streaming",
+        createdAt: "2026-07-21T09:00:03.000Z",
+      },
+    }));
+    snapshot = applyAnvilEvent(snapshot, event(4, "interaction.requested", {
+      request: {
+        id: "request-1",
+        sessionId: session.id,
+        method: "confirm",
+        title: "Continue?",
+        requestedAt: "2026-07-21T09:00:04.000Z",
+      },
+    }));
+    snapshot = applyAnvilEvent(snapshot, event(5, "run.status", { status: "idle", outcome: "completed" }));
 
-    snapshot = applyAnvilEvent(snapshot, event(3, "run.status", { status: "idle", outcome: "completed" }));
-    expect(snapshot.sessions[0]).toMatchObject({
-      id: session.id,
-      lastActivitySequence: 3,
-      lastTerminalSequence: 3,
+    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([otherSession.id, session.id]);
+    expect(snapshot.sessions[1]).toMatchObject({
+      lastUserMessageAt: "2026-07-21T08:30:00.000Z",
+      lastUserMessageSequence: 1,
+      lastTerminalSequence: 5,
       lastTerminalOutcome: "completed",
     });
   });

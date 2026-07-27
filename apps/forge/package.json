@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "tsx watch src/main.ts",
-    "build": "tsup src/main.ts --format esm --platform node --target node22 --external node-pty --out-dir dist --sourcemap --clean && tsup src/pi/anvilInlineArtifact.ts --format esm --platform node --target node22 --out-dir dist/pi --sourcemap",
+    "build": "tsup --config tsup.main.config.ts && tsup src/pi/anvilInlineArtifact.ts --format esm --platform node --target node22 --out-dir dist/pi --sourcemap",
     "start": "node dist/main.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"

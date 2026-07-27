@@ -14,6 +14,7 @@ function renderSnapshot(snapshot: AnvilClientSnapshot): string {
         onCreateSession={() => undefined}
         onAddWorkspace={() => undefined}
         onRequestDeleteSession={() => undefined}
+        onRequestRenameSession={() => undefined}
         onSetSessionSettled={async () => undefined}
       />
     </SidebarProvider>,
@@ -55,6 +56,30 @@ describe("Sidebar thread ordering", () => {
     expect(markup).toContain(">Threads</span>");
   });
 
+  it("shows running time from the latest user message rather than later session updates", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-21T09:02:05.000Z"));
+    const client = new FixtureAnvilClient();
+    const base = client.getSnapshot();
+    const target = base.sessions[0]!;
+    const markup = renderSnapshot({
+      ...base,
+      sessions: base.sessions.map((session) => session.id === target.id
+        ? {
+            ...session,
+            status: "running" as const,
+            lastUserMessageAt: "2026-07-21T09:00:00.000Z",
+            updatedAt: "2026-07-21T09:02:00.000Z",
+          }
+        : session),
+    });
+    const start = markup.indexOf(`data-session-id="${target.id}"`);
+    const next = markup.indexOf("data-session-id=", start + 1);
+    const card = markup.slice(start, next === -1 ? undefined : next);
+
+    expect(card).toContain("2m 5s");
+  });
+
   it("hides the settle action while a thread is running", () => {
     const client = new FixtureAnvilClient();
     const base = client.getSnapshot();
@@ -70,6 +95,8 @@ describe("Sidebar thread ordering", () => {
     const card = markup.slice(start, next === -1 ? undefined : next);
 
     expect(card).not.toContain('aria-label="Settle Active task"');
+    expect(card).toContain("Running");
+    expect(card).not.toMatch(/NaN|\d+m \d+s/);
   });
 
   it("moves user-settled threads into the compact settled section", () => {

@@ -28,6 +28,8 @@ describe("WorkspaceLayout", () => {
     expect(markup).toContain("Terminal placeholder");
     expect(markup).toContain("Resource placeholder");
     expect(markup).toContain("workspace-layout-terminal-handle");
+    expect(markup).toContain('aria-orientation="horizontal"');
+    expect(markup).toContain("aria-[orientation=horizontal]:w-full");
     expect(markup.match(/data-slot="resizable-panel-group"/g)).toHaveLength(2);
     expect(markup.match(/data-slot="resizable-handle"/g)).toHaveLength(2);
   });

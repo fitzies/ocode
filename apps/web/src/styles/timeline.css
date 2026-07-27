@@ -564,7 +564,12 @@ details[open] > summary .disclosure-icon { transform: rotate(90deg); }
 .tool-event--cancelled .tool-status { color: var(--red); }
 .tool-detail { padding: 9px 12px; color: var(--legacy-text-low); font-size: 10px; line-height: 1.55; background: rgba(0, 0, 0, 0.13); border-top: 1px solid var(--border); }
 .tool-output { display: grid; gap: 6px; margin-bottom: 9px; }
-.detail-label { color: var(--legacy-text-low); font-size: 8.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.detail-label { margin: 0; color: var(--legacy-text-low); font-size: 8.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.agent-detail { display: grid; gap: 11px; }
+.agent-detail-section { display: grid; min-width: 0; gap: 5px; }
+.agent-detail-section + .agent-detail-section { padding-top: 10px; border-top: 1px solid color-mix(in oklab, var(--foreground) 5.5%, transparent); }
+.agent-detail-markdown { color: var(--legacy-text); font-size: 10.5px; line-height: 1.6; }
+.agent-detail-placeholder { color: var(--legacy-text-low); font-size: 10px; }
 .content-blocks--compact .text-block { color: var(--legacy-text); font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 9.5px; line-height: 1.55; white-space: pre-wrap; }
 .technical-detail { width: 100%; margin-top: 4px; border-top: 1px solid color-mix(in oklab, var(--foreground) 5.5%, transparent); }
 .technical-detail > summary { justify-content: space-between; min-height: 29px; color: var(--legacy-text-low); font-size: 9px; }

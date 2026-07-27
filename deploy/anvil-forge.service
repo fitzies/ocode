@@ -2,6 +2,8 @@
 Description=Anvil Forge runtime
 After=network-online.target tailscaled.service
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -11,6 +13,7 @@ WorkingDirectory=/opt/anvil
 EnvironmentFile=-/etc/anvil/forge.env
 ExecStart=/usr/bin/node /opt/anvil/apps/forge/dist/main.js
 Restart=on-failure
+RestartPreventExitStatus=75
 RestartSec=3
 TimeoutStopSec=30
 KillSignal=SIGTERM

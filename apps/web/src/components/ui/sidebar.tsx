@@ -337,6 +337,7 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="sidebar-header"
       data-sidebar="header"
+      data-tauri-drag-region="deep"
       className={cn("flex flex-col gap-2 p-2", className)}
       {...props}
     />

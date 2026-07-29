@@ -1,4 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="14" fill="#f4f3ee"/>
-  <circle cx="32" cy="32" r="15" fill="#0a0a0a"/>
+  <style>
+    .surface { fill: #f4f3ee; }
+    .mark { fill: #0a0a0a; }
+    @media (prefers-color-scheme: dark) {
+      .surface { fill: #11110f; }
+      .mark { fill: #f4f3ee; }
+    }
+  </style>
+  <rect class="surface" width="64" height="64" rx="14"/>
+  <circle class="mark" cx="32" cy="32" r="15"/>
 </svg>

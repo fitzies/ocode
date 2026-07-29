@@ -1,0 +1,18 @@
+html[data-ocode-desktop="macos"] [data-sidebar="header"] > :first-child {
+  padding-left: 3.875rem;
+}
+
+html[data-ocode-desktop="macos"] [data-sidebar="header"] > :first-child .sidebar-close {
+  order: 2;
+  margin-left: auto;
+}
+
+html[data-ocode-desktop="macos"] [data-slot="sidebar"][data-state="collapsed"] ~ [data-slot="sidebar-inset"] .session-header {
+  padding-left: 5rem;
+}
+
+@media (max-width: 767px) {
+  html[data-ocode-desktop="macos"] .session-header {
+    padding-left: 5rem;
+  }
+}

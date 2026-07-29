@@ -49,7 +49,13 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { anvilClient, type DeliveryMode } from "../lib/anvilClient";
-import { isTerminalInputTarget, isTerminalToggleShortcut } from "../lib/keyboardScope";
+import {
+  isTerminalInputTarget,
+  isTerminalToggleShortcut,
+  threadCycleShortcut,
+  threadNumberShortcutIndex,
+} from "../lib/keyboardScope";
+import { cycledThreadTarget, numberedThreadTarget } from "../lib/threadNavigation";
 import { shouldAutoOpenProjectResource } from "../lib/workspace";
 import { equalAppShellSnapshots, selectAppShellSnapshot } from "../lib/appShellSnapshot";
 import { subagentActivityForSession } from "../lib/subagentActivity";
@@ -530,14 +536,27 @@ function AppShellContent() {
           (snapshot.projects.length === 1 ? snapshot.projects[0]?.id : undefined);
         if (projectId) startSession(projectId);
       }
-      const threadShortcut = /^Digit([1-9])$/.exec(event.code);
-      if (event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && threadShortcut) {
-        event.preventDefault();
-        const threadIndex = Number(threadShortcut[1]) - 1;
-        const target = sortSessionsByActivity(snapshot.sessions).filter(
-          (session) => !session.settled,
-        )[threadIndex];
+      const threadIndex = threadNumberShortcutIndex(event);
+      if (threadIndex !== undefined) {
+        const target = numberedThreadTarget(sortSessionsByActivity(snapshot.sessions), threadIndex);
         if (target) {
+          event.preventDefault();
+          anvilClient.selectSession(target.id);
+          if (isMobile) setOpenMobile(false);
+        }
+        return;
+      }
+
+      const cycleDirection = threadCycleShortcut(event);
+      if (cycleDirection) {
+        const target = cycledThreadTarget(
+          sortSessionsByActivity(snapshot.sessions),
+          activeProject?.id,
+          snapshot.activeSessionId,
+          cycleDirection,
+        );
+        if (target) {
+          event.preventDefault();
           anvilClient.selectSession(target.id);
           if (isMobile) setOpenMobile(false);
         }
@@ -545,7 +564,7 @@ function AppShellContent() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProject, isMobile, setOpenMobile, snapshot.projects, snapshot.sessions, startSession]);
+  }, [activeProject, isMobile, setOpenMobile, snapshot.activeSessionId, snapshot.projects, snapshot.sessions, startSession]);
 
   if (!snapshot.workspaceLocation && snapshot.connection !== "connected") {
     return (
@@ -584,7 +603,7 @@ function AppShellContent() {
               data-message-font-size={displayPreferences.fontSize}
               data-message-width={displayPreferences.width}
             >
-        <header className="session-header">
+        <header className="session-header" data-tauri-drag-region="deep">
           <div className="header-title-group">
             <SidebarTrigger className="menu-trigger" aria-label="Toggle sidebar" />
             <div className="session-heading">

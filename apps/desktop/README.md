@@ -1,6 +1,6 @@
 # ocode desktop
 
-A minimal Tauri v2 shell for the Forge-served web app. It loads Forge directly as a remote HTTPS origin so the existing relative HTTP, SSE, and WebSocket connections keep the same origin. The remote page is not granted any Tauri capabilities or IPC permissions.
+A minimal Tauri v2 shell for the Forge-served web app. It loads Forge directly as a remote HTTPS origin so the existing relative HTTP, SSE, and WebSocket connections keep the same origin. The remote page receives only narrowly scoped native window-dragging permissions for the integrated macOS title bar.
 
 ## Prerequisites
 
@@ -46,7 +46,7 @@ OCODE_FORGE_URL=https://your-forge-host.example.ts.net corepack pnpm build:deskt
 
 A missing or invalid value opens a local setup page instead. The hostname embedded in a build is visible to anyone with that build, although it does not contain Tailscale credentials.
 
-The Forge page remains same-origin with its HTTP, SSE, and WebSocket endpoints. Tailscale Serve—not the desktop app—adds the identity headers that Forge verifies. The desktop shell defines no plugins or capability files, and `capabilities: []` leaves the remote page without Tauri IPC permissions. Do not add a capability with `remote.urls` without a separate security review.
+The Forge page remains same-origin with its HTTP, SSE, and WebSocket endpoints. Tailscale Serve—not the desktop app—adds the identity headers that Forge verifies. The desktop shell defines no plugins. Its only remote capability is restricted to the main macOS window on `https://*.ts.net/*` and permits native window dragging/maximizing for the integrated title bar; it does not expose filesystem, shell, network, or general window commands. Do not broaden this capability without a separate security review.
 
 ## Commands
 

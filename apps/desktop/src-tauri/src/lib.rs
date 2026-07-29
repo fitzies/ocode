@@ -46,10 +46,29 @@ pub fn run() {
             let window = window
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true)
-                .traffic_light_position(tauri::LogicalPosition::new(14.0, 37.0))
+                .traffic_light_position(tauri::LogicalPosition::new(16.0, 18.0))
                 .initialization_script("document.documentElement.dataset.ocodeDesktop = 'macos';");
 
-            window.build()?;
+            let window = window.build()?;
+
+            #[cfg(target_os = "macos")]
+            {
+                let event_window = window.clone();
+                window.on_window_event(move |event| {
+                    if !matches!(event, tauri::WindowEvent::Resized(_)) {
+                        return;
+                    }
+                    let Ok(fullscreen) = event_window.is_fullscreen() else {
+                        return;
+                    };
+                    let script = if fullscreen {
+                        "document.documentElement.dataset.ocodeFullscreen = 'true';"
+                    } else {
+                        "delete document.documentElement.dataset.ocodeFullscreen;"
+                    };
+                    let _ = event_window.eval(script);
+                });
+            }
 
             Ok(())
         })

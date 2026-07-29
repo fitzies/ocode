@@ -16,6 +16,8 @@ function renderSnapshot(snapshot: AnvilClientSnapshot): string {
         onRequestDeleteSession={() => undefined}
         onRequestRenameSession={() => undefined}
         onSetSessionSettled={async () => undefined}
+        onMarkSessionRead={() => undefined}
+        onMarkSessionUnread={() => undefined}
       />
     </SidebarProvider>,
   );
@@ -46,14 +48,15 @@ describe("Sidebar thread ordering", () => {
     expect(markup).not.toContain(">Unsettled<");
   });
 
-  it("uses project chips only to filter threads without a separate workspace selector", () => {
+  it("uses a project select instead of project filter chips", () => {
     const client = new FixtureAnvilClient();
     const markup = renderSidebar(client);
 
-    expect(markup).toContain('aria-label="Filter threads by project"');
-    expect(markup).not.toContain('aria-label="Navigate to workspace"');
-    expect(markup).not.toContain("workspace-navigation-label\">Workspace");
-    expect(markup).toContain(">Threads</span>");
+    expect(markup).toContain('aria-label="Select project"');
+    expect(markup).toContain("All projects");
+    expect(markup).not.toContain('aria-label="Filter threads by project"');
+    expect(markup).not.toContain(">Threads</span>");
+    expect(markup.indexOf('aria-label="Add project"')).toBeGreaterThan(markup.indexOf('aria-label="Create thread"'));
   });
 
   it("shows running time from the latest user message rather than later session updates", () => {
@@ -131,26 +134,32 @@ describe("Sidebar thread ordering", () => {
     expect(after.indexOf(targetTitle)).toBeLessThan(after.indexOf(previousFirstTitle));
   });
 
-  it("shows successful background completion as unviewed until its sequence is read", () => {
-    const client = new FixtureAnvilClient();
-    const base = client.getSnapshot();
-    const sessionId = base.sessions[0]!.id;
-    const completed = {
-      ...base,
-      sessions: base.sessions.map((session) => session.id === sessionId
-        ? { ...session, lastTerminalSequence: 500, lastTerminalOutcome: "completed" as const }
-        : session),
-      readThroughSequences: { ...base.readThroughSequences, [sessionId]: 499 },
-    };
-    const targetSession = (markup: string) => {
-      const start = markup.indexOf(`data-session-id="${sessionId}"`);
-      const next = markup.indexOf("data-session-id=", start + 1);
-      return markup.slice(start, next === -1 ? undefined : next);
-    };
-    expect(targetSession(renderSnapshot(completed))).toContain("session-recency--completed");
-    expect(targetSession(renderSnapshot({
-      ...completed,
-      readThroughSequences: { ...completed.readThroughSequences, [sessionId]: 500 },
-    }))).not.toContain("session-recency--completed");
-  });
+  it.each(["completed", "failed", "cancelled"] as const)(
+    "uses only a brighter title for an unread %s terminal outcome",
+    (outcome) => {
+      const client = new FixtureAnvilClient();
+      const base = client.getSnapshot();
+      const sessionId = base.sessions[0]!.id;
+      const withReadThrough = (readThroughSequence: number) => ({
+        ...base,
+        sessions: base.sessions.map((session) => session.id === sessionId
+          ? { ...session, lastTerminalSequence: 500, lastTerminalOutcome: outcome, readThroughSequence }
+          : session),
+      });
+      const targetSession = (markup: string) => {
+        const start = markup.indexOf(`data-session-id="${sessionId}"`);
+        const next = markup.indexOf("data-session-id=", start + 1);
+        return markup.slice(start, next === -1 ? undefined : next);
+      };
+
+      const unread = targetSession(renderSnapshot(withReadThrough(499)));
+      expect(unread).toContain("session-title--unread");
+      expect(unread).not.toContain("session-dot");
+      expect(unread.includes("session-recency--completed")).toBe(outcome === "completed");
+
+      const read = targetSession(renderSnapshot(withReadThrough(500)));
+      expect(read).not.toContain("session-title--unread");
+      expect(read).not.toContain("session-recency--completed");
+    },
+  );
 });

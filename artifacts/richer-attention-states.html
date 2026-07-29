@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Anvil richer attention states</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page: transparent;
+    --shell: #151716;
+    --sidebar: #1d201e;
+    --surface: #242724;
+    --surface-soft: #222522;
+    --border: rgba(246, 248, 246, .09);
+    --text: #f2f4f1;
+    --text-2: #b6bbb5;
+    --text-3: #7f867f;
+    --text-4: #60665f;
+    --green: #70d894;
+    --amber: #efbf61;
+    --indigo: #9ca9ff;
+    --red: #f0827d;
+    --sky: #72c7eb;
+    --radius: 14px;
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--page); }
+  body { padding: clamp(12px, 3vw, 32px); color: var(--text); }
+  button { font: inherit; }
+  .artifact {
+    width: min(980px, 100%);
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(280px, 334px) minmax(310px, 1fr);
+    overflow: hidden;
+    background: var(--shell);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    box-shadow: 0 28px 80px rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.02);
+    animation: reveal 420ms cubic-bezier(.2,.8,.2,1) both;
+  }
+  @keyframes reveal { from { opacity: 0; transform: translateY(6px); } }
+  .sidebar {
+    min-width: 0;
+    padding: 14px 10px 17px;
+    background: var(--sidebar);
+    border-right: 1px solid var(--border);
+  }
+  .brand {
+    height: 30px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 7px;
+    color: var(--text-2);
+    font-size: 12px;
+    font-weight: 620;
+    letter-spacing: -.01em;
+  }
+  .brand-mark {
+    width: 16px; height: 16px; display: grid; place-items: center;
+    color: #d9ddd8; border: 1px solid rgba(255,255,255,.14); border-radius: 5px;
+    font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .toolbar { display: flex; gap: 6px; margin: 10px 0 12px; }
+  .search {
+    height: 33px; min-width: 0; flex: 1; display: flex; align-items: center; gap: 7px;
+    padding: 0 9px; color: var(--text-3); background: #202320;
+    border: 1px solid var(--border); border-radius: 8px; font-size: 10.5px;
+  }
+  .search svg { width: 13px; opacity: .75; }
+  .search kbd { margin-left: auto; color: var(--text-4); font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .new {
+    width: 33px; height: 33px; display: grid; place-items: center; color: var(--text-2);
+    background: #202320; border: 1px solid var(--border); border-radius: 8px;
+  }
+  .new svg { width: 14px; }
+  .filters { display: flex; align-items: center; gap: 5px; padding: 0 3px 10px; overflow: hidden; }
+  .filters-label { margin-right: 2px; color: var(--text-4); font: 600 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .09em; text-transform: uppercase; }
+  .chip { padding: 4px 7px; color: var(--text-3); border: 1px solid var(--border); border-radius: 6px; font-size: 8.5px; white-space: nowrap; }
+  .chip.active { color: var(--sidebar); background: #d8dcd7; border-color: #d8dcd7; }
+  .section-label {
+    display: flex; align-items: center; justify-content: space-between;
+    height: 25px; padding: 0 8px; color: var(--text-4);
+    font: 600 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .09em; text-transform: uppercase;
+  }
+  .rows { display: grid; gap: 3px; }
+  .row {
+    position: relative; min-height: 66px; display: grid; grid-template-columns: 8px minmax(0,1fr);
+    gap: 6px; padding: 8px 9px 8px 5px; border: 1px solid transparent;
+    border-radius: 8px; background: transparent;
+  }
+  .row:hover { background: rgba(255,255,255,.035); }
+  .row.attention { background: rgba(255,255,255,.025); border-color: rgba(255,255,255,.035); }
+  .unread-dot {
+    width: 5px; height: 5px; margin-top: 5px; border-radius: 50%; background: var(--dot, #dce2db);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--dot, #dce2db) 10%, transparent);
+  }
+  .read .unread-dot { visibility: hidden; }
+  .row-copy { min-width: 0; display: grid; grid-template-rows: 15px 20px 15px; align-items: center; }
+  .top, .meta { min-width: 0; display: flex; align-items: center; gap: 7px; }
+  .project { min-width: 0; overflow: hidden; color: var(--text-3); font-size: 9px; font-weight: 570; text-overflow: ellipsis; white-space: nowrap; }
+  .state { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 9px; font-weight: 650; white-space: nowrap; }
+  .state svg { width: 11px; height: 11px; }
+  .approval { --dot: var(--amber); } .approval .state { color: var(--amber); }
+  .input { --dot: var(--indigo); } .input .state { color: var(--indigo); }
+  .done { --dot: var(--green); } .done .state { color: var(--green); }
+  .failed { --dot: var(--red); } .failed .state { color: var(--red); }
+  .working { --dot: var(--sky); } .working .state { color: var(--sky); }
+  .title { overflow: hidden; color: #d8dcd7; font-size: 11.5px; font-weight: 470; letter-spacing: -.01em; text-overflow: ellipsis; white-space: nowrap; }
+  .attention .title { color: var(--text); font-weight: 610; }
+  .meta { color: var(--text-4); font: 8.5px/1 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .branch { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .when { margin-left: auto; white-space: nowrap; }
+  .working .state svg { animation: spin 1.1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .settled {
+    margin-top: 12px; padding-top: 9px; border-top: 1px solid rgba(255,255,255,.055);
+    color: var(--text-4); font: 600 8px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .08em; text-transform: uppercase;
+  }
+  .settled-head { display: flex; justify-content: space-between; padding: 6px 8px; }
+  .notes { min-width: 0; padding: clamp(24px, 5vw, 48px); background: #161817; }
+  .eyebrow { color: var(--green); font: 650 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+  h1 { max-width: 500px; margin: 13px 0 11px; font-size: clamp(24px, 4vw, 37px); line-height: 1.05; letter-spacing: -.045em; }
+  .lede { max-width: 530px; margin: 0; color: var(--text-2); font-size: 13px; line-height: 1.55; }
+  .principle {
+    margin: 25px 0 21px; padding: 16px 17px; border-left: 2px solid var(--green);
+    background: rgba(112,216,148,.055); border-radius: 0 9px 9px 0;
+  }
+  .principle strong { display: block; margin-bottom: 5px; font-size: 12px; }
+  .principle span { color: var(--text-2); font-size: 11px; line-height: 1.5; }
+  .signal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .signal { min-width: 0; padding: 13px; border: 1px solid var(--border); border-radius: 10px; }
+  .signal-label { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; color: var(--text); font-size: 11px; font-weight: 650; }
+  .signal-swatch { width: 6px; height: 6px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(112,216,148,.1); }
+  .signal:nth-child(2) .signal-swatch { width: 15px; height: 6px; border-radius: 3px; background: linear-gradient(90deg,var(--amber),var(--indigo),var(--red)); box-shadow: none; }
+  .signal p { margin: 0; color: var(--text-3); font-size: 10.5px; line-height: 1.45; }
+  .rules { margin-top: 22px; }
+  .rules h2 { margin: 0 0 10px; color: var(--text-3); font: 650 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; text-transform: uppercase; }
+  .rule { display: grid; grid-template-columns: 18px 1fr; gap: 8px; padding: 7px 0; color: var(--text-2); font-size: 11px; line-height: 1.4; border-bottom: 1px solid rgba(255,255,255,.045); }
+  .rule:last-child { border-bottom: 0; }
+  .rule-num { color: var(--text-4); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .caption { margin-top: 20px; color: var(--text-4); font-size: 9.5px; line-height: 1.45; }
+  @media (max-width: 720px) {
+    body { padding: 8px; }
+    .artifact { grid-template-columns: 1fr; }
+    .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
+    .notes { padding: 28px 22px 32px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .artifact { animation: none; }
+    .working .state svg { animation: none; }
+  }
+</style>
+</head>
+<body>
+<main class="artifact" aria-label="Proposal for richer attention states in Anvil's thread sidebar">
+  <aside class="sidebar" aria-label="Thread sidebar concept">
+    <div class="brand"><span class="brand-mark">A</span><span>Anvil</span></div>
+    <div class="toolbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>
+        <span>Search threads</span><kbd>⌘K</kbd>
+      </div>
+      <button class="new" aria-label="New thread">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <div class="filters"><span class="filters-label">Threads</span><span class="chip active">All</span><span class="chip">anvil</span><span class="chip">forge</span></div>
+    <div class="section-label"><span>Active</span><span>6</span></div>
+    <div class="rows">
+      <div class="row attention approval" aria-label="Unread: approval required">
+        <span class="unread-dot" aria-hidden="true"></span>
+        <div class="row-copy">
+          <div class="top"><span class="project">forge</span><span class="state">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M10 2.7 17 16H3L10 2.7Z"/><path d="M10 7v4.5M10 14h.01"/></svg>Approval</span></div>
+          <div class="title">Allow access to deployment secrets</div>
+          <div class="meta"><span class="branch">forge/main</span><span class="when">now</span></div>
+        </div>
+      </div>
+      <div class="row read input" aria-label="Read: user input still required">
+        <span class="unread-dot" aria-hidden="true"></span>
+        <div class="row-copy">
+          <div class="top"><span class="project">anvil</span><span class="state">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 4h12v9H9l-4 3v-3H4V4Z"/></svg>Input</span></div>
+          <div class="title">Choose the reconnect strategy</div>
+          <div class="meta"><span class="branch">anvil/feature-events</span><span class="when">4m</span></div>
+        </div>
+      </div>
+      <div class="row attention done" aria-label="Unread: run completed">
+        <span class="unread-dot" aria-hidden="true"></span>
+        <div class="row-copy">
+          <div class="top"><span class="project">anvil</span><span class="state">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m6.7 10 2.1 2.1 4.6-4.6"/></svg>Done</span></div>
+          <div class="title">Persist read state on Forge</div>
+          <div class="meta"><span class="branch">anvil/read-cursors</span><span class="when">7m</span></div>
+        </div>
+      </div>
+      <div class="row attention failed" aria-label="Unread: run failed">
+        <span class="unread-dot" aria-hidden="true"></span>
+        <div class="row-copy">
+          <div class="top"><span class="project">web</span><span class="state">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10" cy="10" r="7"/><path d="m7.5 7.5 5 5m0-5-5 5"/></svg>Failed</span></div>
+          <div class="title">Restore session after sequence gap</div>
+          <div class="meta"><span class="branch">web/reconnect</span><span class="when">11m</span></div>
+        </div>
+      </div>
+      <div class="row read working" aria-label="Working">
+        <span class="unread-dot" aria-hidden="true"></span>
+        <div class="row-copy">
+          <div class="top"><span class="project">forge</span><span class="state">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M16.2 10a6.2 6.2 0 1 1-1.8-4.4"/></svg>Working · 1m 42s</span></div>
+          <div class="title">Verify terminal focus handling</div>
+          <div class="meta"><span class="branch">forge/terminal</span><span class="when">live</span></div>
+        </div>
+      </div>
+      <div class="row read" aria-label="Read and idle">
+        <span class="unread-dot" aria-hidden="true"></span>
+        <div class="row-copy">
+          <div class="top"><span class="project">anvil</span></div>
+          <div class="title">Polish settings copy</div>
+          <div class="meta"><span class="branch">anvil/main</span><span class="when">28m</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="settled"><div class="settled-head"><span>⌄ Settled</span><span>4</span></div></div>
+  </aside>
+
+  <section class="notes">
+    <div class="eyebrow">Recommended model</div>
+    <h1>Two signals,<br>not one noisy badge.</h1>
+    <p class="lede">A thread’s <strong>current state</strong> and whether it has been <strong>seen</strong> are different facts. Showing both makes the sidebar useful without turning it into a dashboard.</p>
+
+    <div class="principle">
+      <strong>The dot means “new since you looked.”</strong>
+      <span>The colored word says what is true right now: Approval, Input, Done, Failed, or Working.</span>
+    </div>
+
+    <div class="signal-grid">
+      <div class="signal">
+        <div class="signal-label"><span class="signal-swatch"></span>Unread signal</div>
+        <p>Dot + stronger title. Clears when the visible thread is read; can be restored with Mark unread.</p>
+      </div>
+      <div class="signal">
+        <div class="signal-label"><span class="signal-swatch"></span>Attention state</div>
+        <p>Persistent semantic color and label. Approval/Input remain until resolved—even after viewing.</p>
+      </div>
+    </div>
+
+    <div class="rules">
+      <h2>Visual priority</h2>
+      <div class="rule"><span class="rule-num">01</span><span><strong>Approval / Input</strong> — actionable now; always legible.</span></div>
+      <div class="rule"><span class="rule-num">02</span><span><strong>Done / Failed + unread</strong> — new outcome waiting to be reviewed.</span></div>
+      <div class="rule"><span class="rule-num">03</span><span><strong>Working</strong> — informative, but visually quieter.</span></div>
+      <div class="rule"><span class="rule-num">04</span><span><strong>Read and idle</strong> — recedes naturally without disappearing.</span></div>
+    </div>
+    <p class="caption">Concept only. It keeps Anvil’s existing row structure, project filters, settled section, and restrained visual language.</p>
+  </section>
+</main>
+</body>
+</html>

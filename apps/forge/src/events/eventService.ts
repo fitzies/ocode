@@ -44,6 +44,15 @@ export class ForgeEventService extends EventEmitter {
       if (tail.length < 10_000) break;
     }
     restored = restoreLegacyUserActivity(restored);
+    restored = {
+      ...restored,
+      sessions: restored.sessions.map((session) => ({
+        ...session,
+        readThroughSequence: database.getSession(session.id)?.session.readThroughSequence ??
+          session.readThroughSequence ??
+          0,
+      })),
+    };
     this.snapshot = {
       ...restored,
       connection: "connected",
@@ -209,6 +218,22 @@ export class ForgeEventService extends EventEmitter {
   setSessionSettled(sessionId: string, settled: boolean, event: UnsequencedAnvilEvent): AnvilEvent {
     const committed = this.database.setSessionSettledWithEvent(sessionId, settled, event);
     this.acceptCommitted([committed]);
+    return committed;
+  }
+
+  markSessionRead(sessionId: string, throughSequence: number): AnvilEvent | undefined {
+    const committed = this.database.markSessionReadWithEvent(
+      sessionId,
+      throughSequence,
+      new Date().toISOString(),
+    );
+    if (committed) this.acceptCommitted([committed]);
+    return committed;
+  }
+
+  markSessionUnread(sessionId: string): AnvilEvent | undefined {
+    const committed = this.database.markSessionUnreadWithEvent(sessionId, new Date().toISOString());
+    if (committed) this.acceptCommitted([committed]);
     return committed;
   }
 

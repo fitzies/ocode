@@ -50,12 +50,11 @@ beforeEach(() => vi.stubGlobal("indexedDB", new IDBFactory()));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ThreadCache", () => {
-  it("persists shell, detail, and local read state across cache instances", async () => {
+  it("persists shell and detail across cache instances", async () => {
     const writer = new ThreadCache();
     const workspaceLocation = { projectId: "anvil", sessionId: detail.sessionId };
     await writer.writeShell(summary, detail.sessionId, workspaceLocation);
     await writer.writeDetail(detail);
-    await writer.writeReadThrough(detail.sessionId, 41);
 
     const reader = new ThreadCache();
     expect(await reader.readShell()).toEqual({
@@ -64,7 +63,6 @@ describe("ThreadCache", () => {
       workspaceLocation,
     });
     expect(await reader.readDetail(detail.sessionId)).toEqual(detail);
-    expect(await reader.readThrough(detail.sessionId)).toBe(41);
   });
 
   it("persists a project-only workspace location", async () => {
@@ -86,7 +84,7 @@ describe("ThreadCache", () => {
     expect(await new ThreadCache().readDetail(detail.sessionId)).toEqual(detail);
   });
 
-  it("persists unresolved prompt IDs and purges all session-local state", async () => {
+  it("persists unresolved prompt IDs and purges session detail", async () => {
     const command = {
       protocolVersion: ANVIL_PROTOCOL_VERSION,
       id: "command-1",
@@ -97,12 +95,10 @@ describe("ThreadCache", () => {
     };
     const cache = new ThreadCache();
     await cache.writeDetail(detail);
-    await cache.writeReadThrough(detail.sessionId, 0);
     await cache.writePromptOutbox([{ command, content: "Continue" }]);
 
     expect(await new ThreadCache().readPromptOutbox()).toEqual([{ command, content: "Continue" }]);
     await cache.deleteSession(detail.sessionId);
     expect(await new ThreadCache().readDetail(detail.sessionId)).toBeUndefined();
-    expect(await new ThreadCache().readThrough(detail.sessionId)).toBeUndefined();
   });
 });

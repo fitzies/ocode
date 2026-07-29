@@ -299,14 +299,48 @@
 }
 
 .composer-context {
-  color: var(--legacy-text-faint);
-  font-family: "Geist Mono Variable", "Geist Mono", monospace;
-  font-size: 8.5px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: var(--legacy-text-low);
+  border-radius: 50%;
+  place-items: center;
+  cursor: help;
+  transition: color 120ms ease, background-color 120ms ease;
 }
 
-.composer-context--high { color: var(--amber); }
+.composer-context:hover,
+.composer-context:focus-visible {
+  background: color-mix(in oklab, currentColor 9%, transparent);
+  outline: none;
+}
+
+.composer-context:focus-visible {
+  box-shadow: 0 0 0 1px color-mix(in oklab, currentColor 45%, transparent);
+}
+
+.composer-context svg {
+  width: 18px;
+  height: 18px;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.composer-context circle {
+  fill: none;
+  stroke-width: 2.25;
+}
+
+.composer-context-track { stroke: color-mix(in oklab, var(--legacy-text-faint) 32%, transparent); }
+.composer-context-progress {
+  stroke: currentColor;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 180ms ease;
+}
+
+.composer-context--warning { color: var(--amber); }
+.composer-context--danger { color: var(--red); }
 
 .send-hint {
   color: var(--legacy-text-low);

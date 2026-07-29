@@ -33,7 +33,6 @@ function snapshot(): AnvilClientSnapshot {
     ...createEmptySnapshot({ sessions, activeSessionId: "session-active" }),
     workspaceLocation: { projectId: "project-1", sessionId: "session-active" },
     replay: { fixtureId: "test", playing: false, cursor: 0, total: 0, speed: 1 },
-    readThroughSequences: {},
     hydratingSessionIds: [],
   };
 }
@@ -66,7 +65,6 @@ describe("app shell snapshot selection", () => {
         delta: "background output",
       })),
       replay: initial.replay,
-      readThroughSequences: initial.readThroughSequences,
       hydratingSessionIds: initial.hydratingSessionIds,
     } as AnvilClientSnapshot;
     const backgroundSelection = selectAppShellSnapshot(backgroundUpdated);
@@ -82,7 +80,6 @@ describe("app shell snapshot selection", () => {
         delta: "visible output",
       })),
       replay: initial.replay,
-      readThroughSequences: initial.readThroughSequences,
       hydratingSessionIds: initial.hydratingSessionIds,
     } as AnvilClientSnapshot;
 
@@ -94,7 +91,6 @@ describe("app shell snapshot selection", () => {
     const updated = {
       ...applyAnvilEvent(initial, event(1, "session-background", "run.status", { status: "running" })),
       replay: initial.replay,
-      readThroughSequences: initial.readThroughSequences,
       hydratingSessionIds: initial.hydratingSessionIds,
     } as AnvilClientSnapshot;
 

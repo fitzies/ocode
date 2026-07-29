@@ -33,6 +33,44 @@ describe("ForgeEventService", () => {
     database.close();
   });
 
+  it("restores durable session read state across Forge restarts", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-read-state-"));
+    const path = join(directory, "forge.sqlite");
+    const project = { id: "project-1", name: "Project", path: "/repo" };
+    try {
+      const database = new ForgeDatabase(path);
+      const service = new ForgeEventService(database, [project]);
+      const session = {
+        id: "session-read-state",
+        projectId: project.id,
+        title: "Durable read state",
+        updatedAt: "2026-07-23T01:00:00.000Z",
+        status: "idle" as const,
+        modelId: "test/model",
+        thinkingLevel: "off" as const,
+        lastTerminalSequence: 8,
+        lastTerminalOutcome: "completed" as const,
+        readThroughSequence: 0,
+      };
+      service.createSession(session, {
+        sessionId: session.id,
+        timestamp: session.updatedAt,
+        type: "session.upserted",
+        payload: { session },
+      });
+      service.markSessionRead(session.id, 8);
+      expect(service.summaryBootstrap().sessions[0]?.readThroughSequence).toBe(8);
+      database.close();
+
+      const reopened = new ForgeDatabase(path);
+      const restored = new ForgeEventService(reopened, [project]);
+      expect(restored.summaryBootstrap().sessions[0]?.readThroughSequence).toBe(8);
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("recovers a deletion from a retained snapshot after older events were compacted", () => {
     const directory = mkdtempSync(join(tmpdir(), "anvil-compacted-delete-"));
     const path = join(directory, "forge.sqlite");

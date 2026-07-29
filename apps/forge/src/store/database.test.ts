@@ -31,12 +31,17 @@ describe("ForgeDatabase event journal", () => {
         CREATE TABLE commands (id TEXT PRIMARY KEY, session_id TEXT, type TEXT NOT NULL, status TEXT NOT NULL, requested_at TEXT NOT NULL, completed_at TEXT, response_json TEXT);
         PRAGMA user_version = 4;
         INSERT INTO projects VALUES ('project-1', 'Project', '/repo', '2026-07-23T01:00:00.000Z', '2026-07-23T01:00:00.000Z');
-        INSERT INTO sessions (id, project_id, title, model_id, thinking_level, status, created_at, updated_at) VALUES ('session-1', 'project-1', 'Legacy', 'test/model', 'off', 'idle', '2026-07-23T01:00:00.000Z', '2026-07-23T01:00:00.000Z');
+        INSERT INTO sessions (id, project_id, title, model_id, thinking_level, status, last_terminal_sequence, last_terminal_outcome, created_at, updated_at) VALUES ('session-1', 'project-1', 'Legacy', 'test/model', 'off', 'idle', 44, 'completed', '2026-07-23T01:00:00.000Z', '2026-07-23T01:00:00.000Z');
       `);
       legacy.close();
 
       const migrated = new ForgeDatabase(path);
-      expect(migrated.getSession("session-1")?.session).toMatchObject({ title: "Legacy", settled: false });
+      expect(migrated.getSession("session-1")?.session).toMatchObject({
+        title: "Legacy",
+        settled: false,
+        lastTerminalSequence: 44,
+        readThroughSequence: 44,
+      });
       migrated.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -115,6 +120,49 @@ describe("ForgeDatabase event journal", () => {
     database.close();
   });
 
+  it("transactionally clamps and persists idempotent session read state", () => {
+    const database = new ForgeDatabase(":memory:");
+    database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);
+    database.createSession({
+      id: "session-read-state",
+      projectId: "project-1",
+      title: "Read state",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle",
+      modelId: "test/model",
+      thinkingLevel: "off",
+      lastTerminalSequence: 50,
+      lastTerminalOutcome: "failed",
+      readThroughSequence: 0,
+    });
+
+    expect(database.markSessionReadWithEvent("session-read-state", 100, "2026-07-23T01:00:01.000Z"))
+      .toMatchObject({ type: "session.readState", payload: { readThroughSequence: 50 } });
+    expect(database.markSessionReadWithEvent("session-read-state", 40, "2026-07-23T01:00:02.000Z"))
+      .toBeUndefined();
+    expect(database.getSession("session-read-state")?.session.readThroughSequence).toBe(50);
+
+    expect(database.markSessionUnreadWithEvent("session-read-state", "2026-07-23T01:00:03.000Z"))
+      .toMatchObject({ type: "session.readState", payload: { readThroughSequence: 49 } });
+    expect(database.markSessionUnreadWithEvent("session-read-state", "2026-07-23T01:00:04.000Z"))
+      .toBeUndefined();
+    expect(database.readEventsAfter(0)).toHaveLength(2);
+
+    database.createSession({
+      id: "session-without-terminal",
+      projectId: "project-1",
+      title: "No terminal event",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle",
+      modelId: "test/model",
+      thinkingLevel: "off",
+      readThroughSequence: 0,
+    });
+    expect(database.markSessionUnreadWithEvent("session-without-terminal", "2026-07-23T01:00:05.000Z"))
+      .toBeUndefined();
+    database.close();
+  });
+
   it("assigns one durable global sequence across sessions", () => {
     const directory = mkdtempSync(join(tmpdir(), "anvil-store-"));
     const path = join(directory, "forge.sqlite");
@@ -157,7 +205,7 @@ describe("ForgeDatabase event journal", () => {
     database.close();
   });
 
-  it.each([5, 6])("upgrades structurally compatible protocol %i snapshots", (legacyVersion) => {
+  it.each([5, 6, 7])("upgrades structurally compatible protocol %i snapshots", (legacyVersion) => {
     const directory = mkdtempSync(join(tmpdir(), `anvil-store-v${legacyVersion}-snapshot-`));
     const path = join(directory, "forge.sqlite");
     try {
@@ -201,6 +249,7 @@ describe("ForgeDatabase event journal", () => {
         protocolVersion: ANVIL_PROTOCOL_VERSION,
         connection: "offline",
         lastSequence: 0,
+        sessions: [{ readThroughSequence: 0 }],
         timelines: { "session-1": [{ output: [{ type: "projectResource", path: "README.md" }] }] },
       });
       const entry = restored?.timelines["session-1"]?.[0];

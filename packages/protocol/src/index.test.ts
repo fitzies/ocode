@@ -129,6 +129,38 @@ describe("protocol runtime guards", () => {
       sessionId: "session-1",
       payload: { settled: "yes" },
     })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.markRead",
+      sessionId: "session-1",
+      payload: { throughSequence: 42 },
+    })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.markRead",
+      sessionId: "session-1",
+      payload: { throughSequence: -1 },
+    })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "session.markUnread",
+      sessionId: "session-1",
+      payload: {},
+    })).toBe(true);
+  });
+
+  it("validates Forge-owned session read-state events", () => {
+    const event = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-read-state",
+      sequence: 1,
+      sessionId: "session-1",
+      timestamp: "2026-07-21T08:00:00.000Z",
+      type: "session.readState",
+      payload: { readThroughSequence: 42 },
+    };
+    expect(isAnvilEvent(event)).toBe(true);
+    expect(isAnvilEvent({ ...event, payload: { readThroughSequence: -1 } })).toBe(false);
   });
 
   it("validates externalized artifact content blocks", () => {

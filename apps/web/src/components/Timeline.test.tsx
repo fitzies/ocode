@@ -11,6 +11,7 @@ const session: SessionSummary = {
   status: "idle",
   modelId: "test-model",
   thinkingLevel: "medium",
+  readThroughSequence: 0,
 };
 
 const message: MessageEntry = {
@@ -48,6 +49,102 @@ describe("Timeline markdown", () => {
     expect(html).toContain('href="https://example.com"');
     expect(html).toContain('target="_blank"');
     expect(html).not.toContain("**Phase 3 goal:**");
+  });
+
+  it("hides synthetic image attachment markers from user messages", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          role: "user",
+          content: [{
+            id: "image-prompt",
+            type: "text",
+            text: "Review this image\n\nLiteral example: <file name=\"example.png\"></file>\n\n<file name=\"attached.png\"></file>",
+          }, {
+            id: "image-content",
+            type: "image",
+            mimeType: "image/png",
+            data: "cG5n",
+            alt: "Attached screenshot",
+          }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Review this image");
+    expect(html).toContain("Attached screenshot");
+    expect(html).toContain('class="image-block"');
+    expect(html).toContain("example.png");
+    expect(html).not.toContain("attached.png");
+  });
+
+  it("leaves manually entered empty file markup visible without an attached image", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          role: "user",
+          content: [{
+            id: "literal-file-markup",
+            type: "text",
+            text: "Example: <file name=\"image.png\"></file>",
+          }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("image.png");
+  });
+
+  it("preserves non-empty file attachment context in user messages", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          role: "user",
+          content: [{
+            id: "text-prompt",
+            type: "text",
+            text: "<file name=\"notes.txt\">\nimportant attachment text\n</file>\n<file name=\"image.png\"></file>",
+          }, {
+            id: "mixed-image-content",
+            type: "image",
+            mimeType: "image/png",
+            data: "cG5n",
+          }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("notes.txt");
+    expect(html).toContain("important attachment text");
+    expect(html).not.toContain("image.png");
+  });
+
+  it("leaves attachment-like markup in assistant messages untouched", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          content: [{
+            id: "assistant-example",
+            type: "text",
+            text: "Example: <file name=\"image.png\"></file>",
+          }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("image.png");
   });
 
   it("wraps GFM tables in a bounded horizontal scroller", () => {

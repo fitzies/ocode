@@ -22,7 +22,7 @@ import {
 const sqliteModuleName = "node:sqlite";
 const { DatabaseSync } = await import(sqliteModuleName) as typeof import("node:sqlite");
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 const RETAINED_EVENT_COUNT = 100_000;
 const MAX_COMPACTION_ROWS_PER_CHECKPOINT = 1_000;
 
@@ -35,21 +35,33 @@ function upgradeStoredResourceBlocks(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(upgradeStoredResourceBlocks);
   if (!value || typeof value !== "object") return value;
   const record = value as Record<string, unknown>;
-  return Object.fromEntries(Object.entries(record)
+  const upgraded = Object.fromEntries(Object.entries(record)
     .filter(([key]) => !(record.type === "projectResource" && key === "projectId"))
     .map(([key, child]) => [key, upgradeStoredResourceBlocks(child)]));
+  const isSessionSummary = typeof record.id === "string" &&
+    typeof record.projectId === "string" &&
+    typeof record.title === "string" &&
+    typeof record.modelId === "string" &&
+    typeof record.thinkingLevel === "string";
+  if (isSessionSummary && record.readThroughSequence === undefined) {
+    const terminalSequence = Number(record.lastTerminalSequence ?? 0);
+    upgraded.readThroughSequence = Number.isSafeInteger(terminalSequence) && terminalSequence >= 0
+      ? terminalSequence
+      : 0;
+  }
+  return upgraded;
 }
 
 function upgradeStoredSnapshotProtocol(value: unknown): unknown {
   if (
-    Number(ANVIL_PROTOCOL_VERSION) === 7 &&
+    Number(ANVIL_PROTOCOL_VERSION) === 8 &&
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    [5, 6].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
+    [5, 6, 7].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
   ) {
-    // Protocol 7 adds strict session-relative project resource blocks. Older
-    // snapshots remain compatible after redundant persisted project IDs are removed.
+    // Protocols 7 and 8 add strict session-relative project resources and
+    // Forge-owned read cursors. Older snapshots can be upgraded structurally.
     return upgradeStoredResourceBlocks({
       ...(value as Record<string, unknown>),
       protocolVersion: ANVIL_PROTOCOL_VERSION,
@@ -223,6 +235,21 @@ export class ForgeDatabase {
     }
   }
 
+  markSessionReadWithEvent(
+    sessionId: string,
+    throughSequence: number,
+    timestamp: string,
+  ): AnvilEvent | undefined {
+    if (!Number.isSafeInteger(throughSequence) || throughSequence < 0) {
+      throw new Error("Invalid read-through sequence");
+    }
+    return this.setSessionReadStateWithEvent(sessionId, "read", throughSequence, timestamp);
+  }
+
+  markSessionUnreadWithEvent(sessionId: string, timestamp: string): AnvilEvent | undefined {
+    return this.setSessionReadStateWithEvent(sessionId, "unread", 0, timestamp);
+  }
+
   updateSession(session: SessionSummary, piState?: { sessionId?: string; sessionFile?: string }): void {
     this.database.prepare(`
       UPDATE sessions SET
@@ -276,7 +303,7 @@ export class ForgeDatabase {
     const row = this.database.prepare(`
       SELECT id, project_id, title, model_id, thinking_level, status, settled, branch, updated_at,
              last_user_message_at, last_user_message_sequence, last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
-             pi_session_id, pi_session_file
+             read_through_sequence, pi_session_id, pi_session_file
       FROM sessions WHERE id = ?
     `).get(id) as Record<string, unknown> | undefined;
     if (!row) return undefined;
@@ -296,6 +323,7 @@ export class ForgeDatabase {
         lastActivitySequence: Number(row.last_activity_sequence ?? 0),
         ...(row.last_terminal_sequence === null ? {} : { lastTerminalSequence: Number(row.last_terminal_sequence) }),
         ...(row.last_terminal_outcome === null ? {} : { lastTerminalOutcome: String(row.last_terminal_outcome) as NonNullable<SessionSummary["lastTerminalOutcome"]> }),
+        readThroughSequence: Number(row.read_through_sequence ?? 0),
       },
       piSessionId: typeof row.pi_session_id === "string" ? row.pi_session_id : undefined,
       piSessionFile: typeof row.pi_session_file === "string" ? row.pi_session_file : undefined,
@@ -654,13 +682,57 @@ export class ForgeDatabase {
     return candidate;
   }
 
+  private setSessionReadStateWithEvent(
+    sessionId: string,
+    mode: "read" | "unread",
+    throughSequence: number,
+    timestamp: string,
+  ): AnvilEvent | undefined {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.database.prepare(`
+        SELECT last_terminal_sequence, read_through_sequence
+        FROM sessions WHERE id = ?
+      `).get(sessionId) as Record<string, unknown> | undefined;
+      if (!row) throw new Error("Session not found");
+
+      const current = Number(row.read_through_sequence ?? 0);
+      const terminal = row.last_terminal_sequence === null
+        ? undefined
+        : Number(row.last_terminal_sequence);
+      const next = mode === "read"
+        ? Math.max(current, Math.min(throughSequence, terminal ?? 0))
+        : terminal === undefined ? current : Math.max(0, terminal - 1);
+      if (next === current) {
+        this.database.exec("COMMIT");
+        return undefined;
+      }
+
+      this.database.prepare(`
+        UPDATE sessions SET read_through_sequence = ? WHERE id = ?
+      `).run(next, sessionId);
+      const [committed] = this.insertEvents([{
+        sessionId,
+        timestamp,
+        type: "session.readState",
+        payload: { readThroughSequence: next },
+      }]);
+      if (!committed) throw new Error("Session read-state update did not produce an event");
+      this.database.exec("COMMIT");
+      return committed;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   private insertSession(session: SessionSummary): void {
     this.database.prepare(`
       INSERT INTO sessions (
         id, project_id, title, model_id, thinking_level, status, settled, branch,
         last_user_message_at, last_user_message_sequence, last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        read_through_sequence, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.projectId,
@@ -675,6 +747,7 @@ export class ForgeDatabase {
       session.lastActivitySequence ?? 0,
       session.lastTerminalSequence ?? null,
       session.lastTerminalOutcome ?? null,
+      session.readThroughSequence ?? 0,
       session.updatedAt,
       session.updatedAt,
     );
@@ -912,6 +985,17 @@ export class ForgeDatabase {
         ALTER TABLE sessions ADD COLUMN last_user_message_at TEXT;
         ALTER TABLE sessions ADD COLUMN last_user_message_sequence INTEGER;
         PRAGMA user_version = 9;
+        COMMIT;
+      `);
+    }
+
+    if (version < 10) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ALTER TABLE sessions ADD COLUMN read_through_sequence INTEGER NOT NULL DEFAULT 0;
+        UPDATE sessions
+        SET read_through_sequence = COALESCE(last_terminal_sequence, 0);
+        PRAGMA user_version = 10;
         COMMIT;
       `);
     }

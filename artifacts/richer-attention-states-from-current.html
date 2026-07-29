@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Anvil attention states — current sidebar treatment</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg:#151515;
+    --card:#262626;
+    --line:#363636;
+    --line-strong:#414141;
+    --text:#f0f0f0;
+    --muted:#a2a2a2;
+    --faint:#777;
+    --amber:#e4ad55;
+    --indigo:#a7afff;
+    --green:#69ca8b;
+    --red:#ec7f79;
+    --sky:#8bbfd5;
+    font-family: ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:transparent}
+  body{padding:0;color:var(--text)}
+  .frame{
+    width:min(592px,100vw);
+    min-height:760px;
+    margin:0 auto;
+    padding:18px 8px 24px 17px;
+    overflow:hidden;
+    background:var(--bg);
+    animation:enter .35s cubic-bezier(.2,.8,.2,1) both;
+  }
+  @keyframes enter{from{opacity:0;transform:translateY(4px)}}
+  .control-row{display:grid;grid-template-columns:minmax(0,457px) 70px;gap:13px;margin:0 13px 14px 5px}
+  .control{
+    height:70px;display:flex;align-items:center;gap:20px;padding:0 22px;
+    color:#f1f1f1;background:#1b1b1b;border:2px solid var(--line-strong);border-radius:16px;
+    font-size:27px;font-weight:530;letter-spacing:-.025em;
+  }
+  .control.search{color:#a9a9a9}
+  .control .grow{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .control kbd{color:#999;font:18px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .icon-control{justify-content:center;padding:0}
+  svg{display:block;flex:0 0 auto}
+  .search-icon{width:30px;height:30px;color:#aaa}
+  .folder-icon{width:29px;height:29px;color:#aaa}
+  .action-icon{width:37px;height:37px;color:#eee}
+  .chevrons{width:25px;height:25px;color:#aaa}
+  .divider{height:2px;margin:22px 0 25px;background:#303030}
+  .thread{
+    position:relative;min-height:126px;margin:0 8px 6px 0;padding:20px 22px 17px 24px;
+    border:1px solid transparent;border-radius:18px;background:transparent;
+  }
+  .thread.selected{background:var(--card)}
+  .thread.unread::before{
+    position:absolute;top:49px;left:7px;width:7px;height:7px;border-radius:50%;
+    background:var(--state);box-shadow:0 0 0 4px color-mix(in srgb,var(--state) 10%,transparent);content:"";
+  }
+  .project-line,.meta{display:flex;min-width:0;align-items:center;gap:12px}
+  .project{min-width:0;overflow:hidden;color:#9d9d9d;font-size:21px;font-weight:650;text-overflow:ellipsis;white-space:nowrap}
+  .status{
+    margin-left:auto;display:inline-flex;align-items:center;gap:8px;color:var(--state);
+    font-size:18px;font-weight:650;letter-spacing:-.01em;white-space:nowrap;
+  }
+  .status svg{width:19px;height:19px}
+  .title{margin-top:3px;overflow:hidden;color:#dedede;font-size:27px;font-weight:600;letter-spacing:-.025em;text-overflow:ellipsis;white-space:nowrap}
+  .unread .title{color:#f4f4f4;font-weight:700}
+  .meta{margin-top:8px;color:#7f7f7f;font:19px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600}
+  .time{margin-left:auto;color:#858585}
+  .approval{--state:var(--amber)}
+  .input{--state:var(--indigo)}
+  .done{--state:var(--green)}
+  .failed{--state:var(--red)}
+  .working{--state:var(--sky)}
+  .settle{
+    position:absolute;right:16px;bottom:15px;height:56px;padding:0 17px;color:#f2f2f2;
+    background:#292929;border:2px solid #444;border-radius:12px;font-size:20px;font-weight:700;
+  }
+  .thread.has-action .meta{padding-right:100px}
+  .working-icon{animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .note{
+    margin:18px 22px 0 24px;padding-top:15px;border-top:1px solid #292929;
+    color:#777;font-size:14px;line-height:1.45;
+  }
+  .note strong{color:#a5a5a5;font-weight:650}
+  @media(max-width:520px){
+    .frame{min-height:0;padding:12px 6px 18px 11px}
+    .control-row{grid-template-columns:minmax(0,1fr) 58px;gap:8px;margin-right:7px}
+    .control{height:58px;padding:0 16px;gap:13px;border-radius:13px;font-size:21px}
+    .control kbd{font-size:14px}.icon-control{padding:0}
+    .thread{min-height:111px;padding:17px 17px 14px 21px;border-radius:15px}
+    .project{font-size:17px}.title{font-size:22px}.meta{font-size:15px}.status{font-size:15px}
+    .thread.unread::before{top:43px;left:6px;width:6px;height:6px}
+    .settle{height:46px;right:13px;bottom:13px;font-size:16px}
+  }
+  @media(prefers-reduced-motion:reduce){.frame{animation:none}.working-icon{animation:none}}
+</style>
+</head>
+<body>
+<main class="frame" aria-label="Anvil sidebar with richer attention states">
+  <div class="control-row">
+    <div class="control search">
+      <svg class="search-icon" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><circle cx="14" cy="14" r="10.5"/><path d="m22 22 7 7"/></svg>
+      <span class="grow">Search threads</span><kbd>⌘K</kbd>
+    </div>
+    <div class="control icon-control" aria-label="New thread">
+      <svg class="action-icon" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M27 13H13a6 6 0 0 0-6 6v7a6 6 0 0 0 6 6h9l6 4v-5a6 6 0 0 0 5-6v-6"/><path d="M14 19h8M14 25h5M30 5v10M25 10h10"/></svg>
+    </div>
+  </div>
+  <div class="control-row">
+    <div class="control">
+      <svg class="folder-icon" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9h9l3 4h12v13a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V9Z"/><path d="M7 5h7l3 4"/></svg>
+      <span class="grow">All projects</span>
+      <svg class="chevrons" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 10 7-7 7 7M19 14l-7 7-7-7"/></svg>
+    </div>
+    <div class="control icon-control" aria-label="New project">
+      <svg class="action-icon" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h11l4 5h15v15a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3V12Z"/><path d="M29 7v11M23.5 12.5h11"/></svg>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <section aria-label="Threads">
+    <article class="thread unread approval">
+      <div class="project-line">
+        <span class="project">anvil</span>
+        <span class="status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 21 20H3L12 3Z"/><path d="M12 9v5M12 17h.01"/></svg>
+          Approval
+        </span>
+      </div>
+      <div class="title">Allow access to deployment secrets</div>
+      <div class="meta"><span>anvil/main</span><span class="time">now</span></div>
+    </article>
+
+    <article class="thread selected input has-action">
+      <div class="project-line">
+        <span class="project">anvil</span>
+        <span class="status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5h16v12H9l-5 4V5Z"/></svg>
+          Input
+        </span>
+      </div>
+      <div class="title">Choose the reconnect strategy</div>
+      <div class="meta"><span>anvil/main</span></div>
+      <button class="settle">Settle</button>
+    </article>
+
+    <article class="thread unread done">
+      <div class="project-line">
+        <span class="project">forge</span>
+        <span class="status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16.5 9"/></svg>
+          Done
+        </span>
+      </div>
+      <div class="title">Persist read state on Forge</div>
+      <div class="meta"><span>forge/read-state</span><span class="time">7m</span></div>
+    </article>
+
+    <article class="thread unread failed">
+      <div class="project-line">
+        <span class="project">anvil</span>
+        <span class="status">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></svg>
+          Failed
+        </span>
+      </div>
+      <div class="title">Restore after a sequence gap</div>
+      <div class="meta"><span>anvil/reconnect</span><span class="time">11m</span></div>
+    </article>
+
+    <article class="thread working">
+      <div class="project-line">
+        <span class="project">anvil</span>
+        <span class="status">
+          <svg class="working-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.7"/></svg>
+          Working
+        </span>
+      </div>
+      <div class="title">Verify terminal focus handling</div>
+      <div class="meta"><span>anvil/main</span><span class="time">1m 42s</span></div>
+    </article>
+  </section>
+
+  <p class="note"><strong>Dot + heavier title</strong> means unread. The colored state remains until the underlying condition changes, so opening an Input thread removes its unread dot but does not hide that it still needs you.</p>
+</main>
+</body>
+</html>

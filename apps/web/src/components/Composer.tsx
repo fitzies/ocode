@@ -165,6 +165,39 @@ function Widget({ widget }: { widget: ExtensionWidget }) {
   );
 }
 
+function ContextProgress({ percent }: { percent: number | null }) {
+  const progress = Math.min(100, Math.max(0, percent ?? 0));
+  const level = progress >= 90 ? "danger" : progress >= 70 ? "warning" : "default";
+  const percentageLabel = percent === null ? "Unknown" : `${Math.round(percent)}%`;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={`composer-context composer-context--${level}`}
+          role="img"
+          tabIndex={0}
+          aria-label={`${percentageLabel} of context window used`}
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle className="composer-context-track" cx="10" cy="10" r="7.5" />
+            <circle
+              className="composer-context-progress"
+              cx="10"
+              cy="10"
+              r="7.5"
+              pathLength="100"
+              strokeDasharray="100"
+              strokeDashoffset={100 - progress}
+            />
+          </svg>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{percentageLabel} used</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function Composer({
   sessionId,
   modelId,
@@ -576,12 +609,7 @@ export function Composer({
           </div>
           <div className="composer-actions">
             {contextUsage && (
-              <span
-                className={`composer-context ${(contextUsage.percent ?? 0) >= 70 ? "composer-context--high" : ""}`}
-                title={`${contextUsage.tokens?.toLocaleString() ?? "Unknown"} of ${contextUsage.contextWindow.toLocaleString()} context tokens`}
-              >
-                ctx {contextUsage.percent === null ? "?" : Math.round(contextUsage.percent)}%
-              </span>
+              <ContextProgress percent={contextUsage.percent} />
             )}
             {running && !hasPrompt ? (
               <Button type="button" variant="secondary" size="icon-sm" className="stop-button" onClick={onCancel} aria-label="Stop run" title="Stop run">

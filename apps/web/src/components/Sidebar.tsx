@@ -1,18 +1,20 @@
 import { sortSessionsByActivity } from "@anvil/state";
 import {
-  Add01Icon,
   Archive01Icon,
   ArchiveRestoreIcon,
   ArrowDown01Icon,
   Delete02Icon,
   FileEditIcon,
+  FolderAddIcon,
+  FoldersIcon,
+  Mail01Icon,
+  MailOpen01Icon,
   MessageAdd01Icon,
   Search01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { memo, useEffect, useState } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import {
   Command,
   CommandDialog,
@@ -38,6 +40,16 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectSeparator,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { ProjectFavicon } from "@/components/ProjectFavicon";
 import {
   Sidebar as SidebarPrimitive,
@@ -53,7 +65,7 @@ import { isTerminalInputTarget } from "../lib/keyboardScope";
 
 export type SidebarSnapshot = Pick<
   AnvilClientSnapshot,
-  "projects" | "sessions" | "activeSessionId" | "readThroughSequences" | "connection"
+  "projects" | "sessions" | "activeSessionId" | "connection"
 >;
 
 interface SidebarProps {
@@ -64,6 +76,8 @@ interface SidebarProps {
   onRequestDeleteSession: (sessionId: string) => void;
   onRequestRenameSession: (sessionId: string) => void;
   onSetSessionSettled: (sessionId: string, settled: boolean) => Promise<void>;
+  onMarkSessionRead: (sessionId: string) => void;
+  onMarkSessionUnread: (sessionId: string) => void;
   usage?: {
     fiveHour?: { usedPercent: number; resetAt?: number };
     weekly?: { usedPercent: number; resetAt?: number };
@@ -139,6 +153,8 @@ export const Sidebar = memo(function Sidebar({
   onRequestDeleteSession,
   onRequestRenameSession,
   onSetSessionSettled,
+  onMarkSessionRead,
+  onMarkSessionUnread,
   usage,
 }: SidebarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -165,6 +181,7 @@ export const Sidebar = memo(function Sidebar({
   };
 
   const sortedSessions = sortSessionsByActivity(snapshot.sessions);
+  const selectedProject = snapshot.projects.find((project) => project.id === projectFilter);
   const visibleSessions = sortedSessions.filter((session) => !projectFilter || session.projectId === projectFilter);
   const unsettledSessions = visibleSessions.filter((session) => !session.settled);
   const settledSessions = visibleSessions.filter((session) => session.settled);
@@ -186,9 +203,9 @@ export const Sidebar = memo(function Sidebar({
 
   const renderSession = (session: (typeof snapshot.sessions)[number], settled: boolean) => {
     const project = snapshot.projects.find((candidate) => candidate.id === session.projectId);
-    const completedUnviewed = session.lastTerminalOutcome === "completed" &&
-      Boolean(session.lastTerminalSequence) &&
-      (snapshot.readThroughSequences[session.id] ?? 0) < session.lastTerminalSequence!;
+    const unread = Boolean(session.lastTerminalSequence) &&
+      session.lastTerminalSequence! > (session.readThroughSequence ?? 0);
+    const completedUnviewed = session.lastTerminalOutcome === "completed" && unread;
     const active = session.id === snapshot.activeSessionId;
     const settling = settlementPending.has(session.id);
     const displayTitle = capitalizeTitle(session.title);
@@ -213,7 +230,7 @@ export const Sidebar = memo(function Sidebar({
                   {session.status === "waiting" && <span className="session-runtime session-runtime--waiting">Needs you</span>}
                   {session.status === "failed" && <span className="session-runtime session-runtime--failed">Failed</span>}
                 </span>
-                <span className="session-title" title={displayTitle}>{displayTitle}</span>
+                <span className={`session-title ${unread ? "session-title--unread" : ""}`} title={displayTitle}>{displayTitle}</span>
                 <span className="session-meta">
                   <span className="session-context-copy" title={`${project?.name.toLowerCase() ?? "unknown"}/${branch}`}>{project?.name.toLowerCase() ?? "unknown"}/{branch}</span>
                   <span className={`session-recency ${completedUnviewed ? "session-recency--completed" : ""}`}>
@@ -245,6 +262,10 @@ export const Sidebar = memo(function Sidebar({
             <HugeiconsIcon icon={FileEditIcon} strokeWidth={2} />
             Rename thread
           </ContextMenuItem>
+          <ContextMenuItem onSelect={() => unread ? onMarkSessionRead(session.id) : onMarkSessionUnread(session.id)}>
+            <HugeiconsIcon icon={unread ? MailOpen01Icon : Mail01Icon} strokeWidth={2} />
+            {unread ? "Mark read" : "Mark unread"}
+          </ContextMenuItem>
           <ContextMenuItem
             disabled={settling}
             onSelect={() => void toggleSettled(session.id, !settled)}
@@ -268,11 +289,11 @@ export const Sidebar = memo(function Sidebar({
           <SidebarTrigger className="sidebar-close" aria-label="Close sidebar" />
           <span className="px-1 text-xs font-medium tracking-tight text-sidebar-foreground">Anvil</span>
         </div>
-        <div className="flex gap-1.5">
-          <div className="relative min-w-0 flex-1">
+        <div className="grid grid-cols-[minmax(0,1fr)_1.75rem] grid-rows-2 gap-1.5">
+          <div className="relative min-w-0">
             <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <SidebarInput
-              className="cursor-pointer pr-9 pl-8 text-[0.65625rem] font-normal"
+              className="h-7 cursor-pointer border-input bg-muted/20 pr-9 pl-8 text-[0.65625rem] font-normal shadow-none dark:bg-muted/30"
               readOnly
               value=""
               placeholder="Search threads"
@@ -285,21 +306,22 @@ export const Sidebar = memo(function Sidebar({
           </div>
           {projectFilter ? (
             <Button
-              variant="secondary"
-              size="icon-lg"
-              aria-label={`Create thread in ${snapshot.projects.find((project) => project.id === projectFilter)?.name ?? "filtered project"}`}
+              variant="outline"
+              size="icon"
+              className="border-input bg-muted/20 dark:bg-muted/30"
+              aria-label={`Create thread in ${snapshot.projects.find((project) => project.id === projectFilter)?.name ?? "selected project"}`}
               onClick={() => {
                 onCreateSession(projectFilter);
                 closeMobile();
               }}
             >
-              <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-4" />
+              <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-3.5" />
             </Button>
           ) : (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="secondary" size="icon-lg" aria-label="Create thread">
-                  <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-4" />
+                <Button variant="outline" size="icon" className="border-input bg-muted/20 dark:bg-muted/30" aria-label="Create thread">
+                  <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-3.5" />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-48">
@@ -319,30 +341,54 @@ export const Sidebar = memo(function Sidebar({
               </DropdownMenuContent>
             </DropdownMenu>
           )}
-        </div>
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="shrink-0 text-[0.5625rem] font-medium uppercase tracking-wider text-muted-foreground">Threads</span>
-          <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto [scrollbar-width:none]" role="group" aria-label="Filter threads by project">
-            <Badge asChild variant={projectFilter === null ? "secondary" : "outline"} className="h-5 rounded-md px-2 text-[0.625rem] font-normal aria-pressed:border-foreground/15 aria-pressed:bg-foreground aria-pressed:text-background">
-              <button type="button" aria-pressed={projectFilter === null} onClick={() => setProjectFilter(null)}>All</button>
-            </Badge>
-            {snapshot.projects.map((project) => (
-              <Badge asChild variant={projectFilter === project.id ? "secondary" : "outline"} className="h-5 rounded-md px-2 text-[0.625rem] font-normal aria-pressed:border-foreground/15 aria-pressed:bg-foreground aria-pressed:text-background" key={project.id}>
-                <button
-                  type="button"
-                  className="flex max-w-24 items-center gap-1 truncate"
-                  aria-pressed={projectFilter === project.id}
-                  onClick={() => setProjectFilter((current) => current === project.id ? null : project.id)}
-                  title={project.path}
-                >
-                  <ProjectFavicon projectId={project.id} />
-                  <span className="truncate">{project.name.toLowerCase()}</span>
-                </button>
-              </Badge>
-            ))}
-          </div>
-          <Button variant="ghost" size="icon-sm" className="shrink-0" onClick={() => { onAddWorkspace(); closeMobile(); }} aria-label="Add workspace" title="Add workspace">
-            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} className="size-3.5" />
+          <Select
+            value={projectFilter ?? "__all_projects__"}
+            onValueChange={(value) => setProjectFilter(value === "__all_projects__" ? null : value)}
+          >
+            <SelectTrigger className="w-full min-w-0 border-input bg-muted/20 px-2.5 text-[0.6875rem] shadow-none data-[size=default]:h-7 dark:bg-muted/30" aria-label="Select project">
+              <SelectValue>
+                {selectedProject ? (
+                  <>
+                    <ProjectFavicon projectId={selectedProject.id} />
+                    <span className="truncate">{selectedProject.name.toLowerCase()}</span>
+                  </>
+                ) : (
+                  <>
+                    <HugeiconsIcon icon={FoldersIcon} strokeWidth={2} className="size-3.5 text-muted-foreground" />
+                    <span>All projects</span>
+                  </>
+                )}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent position="popper" align="start">
+              <SelectGroup>
+                <SelectLabel>Projects</SelectLabel>
+                <SelectItem value="__all_projects__">
+                  <HugeiconsIcon icon={FoldersIcon} strokeWidth={2} className="size-3.5 text-muted-foreground" />
+                  All projects
+                </SelectItem>
+                {snapshot.projects.length > 0 && <SelectSeparator />}
+                {snapshot.projects.map((project) => (
+                  <SelectItem value={project.id} key={project.id} title={project.path}>
+                    <ProjectFavicon projectId={project.id} />
+                    <span className="truncate">{project.name.toLowerCase()}</span>
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <Button
+            variant="outline"
+            size="icon"
+            className="border-input bg-muted/20 dark:bg-muted/30"
+            onClick={() => {
+              onAddWorkspace();
+              closeMobile();
+            }}
+            aria-label="Add project"
+            title="Add project"
+          >
+            <HugeiconsIcon icon={FolderAddIcon} strokeWidth={2} className="size-3.5" />
           </Button>
         </div>
       </SidebarHeader>

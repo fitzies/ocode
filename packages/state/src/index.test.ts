@@ -11,6 +11,7 @@ const session: SessionSummary = {
   status: "idle",
   modelId: "openai/test",
   thinkingLevel: "medium",
+  readThroughSequence: 0,
 };
 
 function event<T extends AnvilEvent["type"]>(
@@ -55,6 +56,24 @@ describe("Anvil event reducer", () => {
 
     expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([session.id, otherSession.id]);
     expect(snapshot.sessions[0]).toMatchObject({ settled: true, updatedAt: session.updatedAt });
+  });
+
+  it("preserves a durable read cursor when a legacy session upsert omits it", () => {
+    const readSession = { ...session, lastTerminalSequence: 12, readThroughSequence: 12 };
+    let snapshot = createEmptySnapshot({ sessions: [readSession] });
+
+    snapshot = applyAnvilEvent(snapshot, event(1, "session.upserted", {
+      session: {
+        ...readSession,
+        title: "Updated title",
+        readThroughSequence: undefined,
+      },
+    }));
+
+    expect(snapshot.sessions[0]).toMatchObject({
+      title: "Updated title",
+      readThroughSequence: 12,
+    });
   });
 
   it("reconciles streaming deltas and ignores replayed sequences", () => {
@@ -215,6 +234,7 @@ describe("Anvil event reducer", () => {
       },
     }));
     snapshot = applyAnvilEvent(snapshot, event(5, "run.status", { status: "idle", outcome: "completed" }));
+    snapshot = applyAnvilEvent(snapshot, event(6, "session.readState", { readThroughSequence: 5 }));
 
     expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([otherSession.id, session.id]);
     expect(snapshot.sessions[1]).toMatchObject({
@@ -222,6 +242,7 @@ describe("Anvil event reducer", () => {
       lastUserMessageSequence: 1,
       lastTerminalSequence: 5,
       lastTerminalOutcome: "completed",
+      readThroughSequence: 5,
     });
   });
 

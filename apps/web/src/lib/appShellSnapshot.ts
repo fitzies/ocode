@@ -16,7 +16,6 @@ export type AppShellSnapshot = Pick<
   | "connection"
   | "sequenceGap"
   | "clientError"
-  | "readThroughSequences"
   | "hydratingSessionIds"
 >;
 
@@ -54,7 +53,6 @@ export function selectAppShellSnapshot(snapshot: AnvilClientSnapshot): AppShellS
     connection: snapshot.connection,
     sequenceGap: snapshot.sequenceGap,
     clientError: snapshot.clientError,
-    readThroughSequences: snapshot.readThroughSequences,
     hydratingSessionIds: sessionId && snapshot.hydratingSessionIds.includes(sessionId) ? [sessionId] : [],
   };
 }
@@ -71,8 +69,7 @@ export function equalAppShellSnapshots(left: AppShellSnapshot, right: AppShellSn
     left.workspaceLocation !== right.workspaceLocation ||
     left.connection !== right.connection ||
     left.sequenceGap !== right.sequenceGap ||
-    left.clientError !== right.clientError ||
-    left.readThroughSequences !== right.readThroughSequences
+    left.clientError !== right.clientError
   ) {
     return false;
   }

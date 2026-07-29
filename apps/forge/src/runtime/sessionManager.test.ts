@@ -219,6 +219,49 @@ describe("SessionManager", () => {
     expect(database.readEventsAfter(0).some((event) => event.type === "session.prompted" && event.sessionId === sessionId)).toBe(true);
   });
 
+  it("routes durable read-state commands without starting Pi", async () => {
+    const session = {
+      id: requestedSessionId,
+      projectId: "anvil",
+      title: "Finished thread",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle" as const,
+      modelId: "test/model-1",
+      thinkingLevel: "medium" as const,
+      lastTerminalSequence: 10,
+      lastTerminalOutcome: "cancelled" as const,
+      readThroughSequence: 0,
+    };
+    events.createSession(session, {
+      sessionId: session.id,
+      timestamp: session.updatedAt,
+      type: "session.upserted",
+      payload: { session },
+    });
+    const runtimes = () => (manager as unknown as { runtimes: Map<string, unknown> }).runtimes;
+
+    const read = await manager.handleCommand(command(
+      "mark-read-1",
+      "session.markRead",
+      session.id,
+      { throughSequence: 999 },
+    ));
+    expect(read.success).toBe(true);
+    expect(runtimes().has(session.id)).toBe(false);
+    expect(events.sessionSummary(session.id)?.readThroughSequence).toBe(10);
+    expect(database.getSession(session.id)?.session.readThroughSequence).toBe(10);
+
+    const unread = await manager.handleCommand(command(
+      "mark-unread-1",
+      "session.markUnread",
+      session.id,
+      {},
+    ));
+    expect(unread.success).toBe(true);
+    expect(runtimes().has(session.id)).toBe(false);
+    expect(events.sessionSummary(session.id)?.readThroughSequence).toBe(9);
+  });
+
   it("renames a thread through Pi and persists a configured title event", async () => {
     await manager.handleCommand(command("create-rename", "session.create", null, {
       projectId: "anvil",

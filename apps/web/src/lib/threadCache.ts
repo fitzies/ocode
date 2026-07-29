@@ -35,11 +35,6 @@ interface ShellRecord {
   persistedAt: number;
 }
 
-interface ReadRecord {
-  key: string;
-  sequence: number;
-}
-
 export interface PersistedQueuedPrompt {
   command: Extract<AnvilClientCommand, { type: "prompt.send" }>;
   content: string;
@@ -187,9 +182,8 @@ export class ThreadCache {
     const database = await this.database();
     if (!database) return;
     try {
-      const transaction = database.transaction([DETAIL_STORE, META_STORE], "readwrite");
+      const transaction = database.transaction(DETAIL_STORE, "readwrite");
       transaction.objectStore(DETAIL_STORE).delete(sessionId);
-      transaction.objectStore(META_STORE).delete(`read:${sessionId}`);
       await transactionDone(transaction);
     } catch {
       // Best-effort invalidation.
@@ -219,31 +213,6 @@ export class ThreadCache {
       await transactionDone(transaction);
     } catch {
       // The in-memory outbox remains available for this tab.
-    }
-  }
-
-  async readThrough(sessionId: string): Promise<number | undefined> {
-    const database = await this.database();
-    if (!database) return undefined;
-    try {
-      const transaction = database.transaction(META_STORE, "readonly");
-      const record = await requestValue(transaction.objectStore(META_STORE).get(`read:${sessionId}`)) as ReadRecord | undefined;
-      return Number.isSafeInteger(record?.sequence) ? record!.sequence : undefined;
-    } catch {
-      return undefined;
-    }
-  }
-
-  async writeReadThrough(sessionId: string, sequence: number): Promise<void> {
-    if (!Number.isSafeInteger(sequence) || sequence < 0) return;
-    const database = await this.database();
-    if (!database) return;
-    try {
-      const transaction = database.transaction(META_STORE, "readwrite");
-      transaction.objectStore(META_STORE).put({ key: `read:${sessionId}`, sequence } satisfies ReadRecord);
-      await transactionDone(transaction);
-    } catch {
-      // Read state gracefully becomes tab-local when IndexedDB is unavailable.
     }
   }
 

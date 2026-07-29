@@ -716,6 +716,61 @@ describe("ForgeAnvilClient", () => {
     ]));
   });
 
+  it("sends read commands using the terminal sequence visible to the client", async () => {
+    const stream = new FakeEventSource();
+    const terminalSession = {
+      ...session,
+      lastTerminalSequence: 42,
+      lastTerminalOutcome: "failed" as const,
+      readThroughSequence: 0,
+    };
+    const snapshot = createEmptySnapshot({
+      projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+      sessions: [terminalSession],
+    });
+    const bodies: Array<{ id: string; type: string; payload: unknown }> = [];
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [], cursor: 0 }));
+      }
+      const sent = JSON.parse(String(init?.body)) as (typeof bodies)[number];
+      bodies.push(sent);
+      return new Response(JSON.stringify({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: `response-${bodies.length}`,
+        commandId: sent.id,
+        timestamp: "2026-07-23T01:00:01.000Z",
+        success: true,
+        outcome: "completed",
+      }));
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().sessions.length === 1);
+
+    client.markSessionRead(session.id);
+    await waitUntil(() => bodies.length === 1);
+    expect(bodies[0]).toMatchObject({
+      type: "session.markRead",
+      payload: { throughSequence: 42 },
+    });
+
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-read-state",
+      sequence: 1,
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:02.000Z",
+      type: "session.readState",
+      payload: { readThroughSequence: 42 },
+    }));
+    client.markSessionUnread(session.id);
+    await waitUntil(() => bodies.length === 2);
+    expect(bodies[1]).toMatchObject({ type: "session.markUnread", payload: {} });
+  });
+
   it("returns Forge action failures to confirmation dialogs", async () => {
     const stream = new FakeEventSource();
     const snapshot = createEmptySnapshot({ projects: [], sessions: [] });

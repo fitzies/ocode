@@ -195,7 +195,15 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
     case "project.upserted":
       return { ...next, projects: replaceProject(snapshot, event.payload.project) };
     case "session.upserted": {
-      const session = event.payload.session;
+      const incoming = event.payload.session;
+      const existing = snapshot.sessions.find((session) => session.id === incoming.id);
+      const session = {
+        ...incoming,
+        readThroughSequence: incoming.readThroughSequence ??
+          existing?.readThroughSequence ??
+          incoming.lastTerminalSequence ??
+          0,
+      };
       const runState =
         snapshot.runStates[session.id] ??
         (session.status === "running" ? "running" : session.status === "failed" ? "failed" : "idle");
@@ -245,6 +253,15 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
       return {
         ...next,
         sessions: updateSession(snapshot, event.sessionId, { settled: event.payload.settled }),
+      };
+    }
+    case "session.readState": {
+      if (!event.sessionId) return next;
+      return {
+        ...next,
+        sessions: updateSession(snapshot, event.sessionId, {
+          readThroughSequence: event.payload.readThroughSequence,
+        }),
       };
     }
     case "session.prompted": {

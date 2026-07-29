@@ -69,7 +69,6 @@ export interface AnvilClientSnapshot extends AnvilSnapshot {
   workspaceLocation: WorkspaceLocation | null;
   replay: ReplayStatus;
   clientError?: string;
-  readThroughSequences: Record<string, number>;
   hydratingSessionIds: string[];
 }
 
@@ -110,6 +109,7 @@ export interface AnvilClient {
   isSessionPending(sessionId: string): boolean;
   getSessionCreationError(sessionId: string): string | undefined;
   markSessionRead(sessionId: string): void;
+  markSessionUnread(sessionId: string): void;
   cycleConnectionState(): void;
   selectReplayFixture(fixtureId: string): void;
   toggleReplay(): void;
@@ -405,12 +405,11 @@ export class FixtureAnvilClient implements AnvilClient {
     const initialFixture = fixtures[0]!;
     this.snapshot = {
       ...base,
+      sessions: base.sessions.map((session) => ({
+        ...session,
+        readThroughSequence: session.readThroughSequence ?? session.lastTerminalSequence ?? 0,
+      })),
       workspaceLocation: initialFixture.session ? locationForSession(initialFixture.session) : null,
-      readThroughSequences: Object.fromEntries(
-        base.sessions.flatMap((session) => session.lastTerminalSequence
-          ? [[session.id, session.lastTerminalSequence] as const]
-          : []),
-      ),
       hydratingSessionIds: [],
       replay: {
         fixtureId: initialFixture.id,
@@ -450,6 +449,12 @@ export class FixtureAnvilClient implements AnvilClient {
         break;
       case "session.settled":
         if (command.sessionId) this.setSessionSettled(command.sessionId, command.payload.settled);
+        break;
+      case "session.markRead":
+        if (command.sessionId) this.markSessionRead(command.sessionId);
+        break;
+      case "session.markUnread":
+        if (command.sessionId) this.markSessionUnread(command.sessionId);
         break;
       case "prompt.send":
         this.sendPrompt(command.payload.content, command.payload.delivery, command.payload.attachments);
@@ -527,6 +532,7 @@ export class FixtureAnvilClient implements AnvilClient {
       modelId: model?.id ?? "unknown",
       thinkingLevel: model?.supportedThinkingLevels.includes("high") ? "high" : "off",
       branch: "main",
+      readThroughSequence: 0,
     };
     this.snapshot = {
       ...this.snapshot,
@@ -860,13 +866,17 @@ export class FixtureAnvilClient implements AnvilClient {
   };
 
   markSessionRead = (sessionId: string) => {
-    const sequence = this.snapshot.sessions.find((session) => session.id === sessionId)?.lastTerminalSequence;
-    if (!sequence || (this.snapshot.readThroughSequences[sessionId] ?? 0) >= sequence) return;
-    this.snapshot = {
-      ...this.snapshot,
-      readThroughSequences: { ...this.snapshot.readThroughSequences, [sessionId]: sequence },
-    };
-    this.emit();
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session?.lastTerminalSequence || (session.readThroughSequence ?? 0) >= session.lastTerminalSequence) return;
+    this.applyLocal("session.readState", { readThroughSequence: session.lastTerminalSequence }, sessionId);
+  };
+
+  markSessionUnread = (sessionId: string) => {
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session?.lastTerminalSequence) return;
+    const readThroughSequence = Math.max(0, session.lastTerminalSequence - 1);
+    if ((session.readThroughSequence ?? 0) === readThroughSequence) return;
+    this.applyLocal("session.readState", { readThroughSequence }, sessionId);
   };
 
   clearComposerDraft = (sessionId: string) => {
@@ -919,7 +929,6 @@ export class FixtureAnvilClient implements AnvilClient {
       ...resetSessionState(this.snapshot, fixture.session.id),
       workspaceLocation: locationForSession(fixture.session),
       activeSessionId: fixture.session.id,
-      readThroughSequences: this.snapshot.readThroughSequences,
       hydratingSessionIds: [],
       replay: {
         ...this.snapshot.replay,
@@ -960,7 +969,6 @@ export class FixtureAnvilClient implements AnvilClient {
       ...rebuilt,
       workspaceLocation: locationForSession(fixture.session),
       activeSessionId: fixture.session.id,
-      readThroughSequences: this.snapshot.readThroughSequences,
       hydratingSessionIds: [],
       replay: {
         ...this.snapshot.replay,
@@ -1048,7 +1056,6 @@ export class FixtureAnvilClient implements AnvilClient {
       this.snapshot = {
         ...base,
         workspaceLocation: this.snapshot.workspaceLocation,
-        readThroughSequences: this.snapshot.readThroughSequences,
         hydratingSessionIds: this.snapshot.hydratingSessionIds,
         replay: {
           ...this.snapshot.replay,
@@ -1103,7 +1110,6 @@ export class FixtureAnvilClient implements AnvilClient {
       ...applyAnvilEvent(this.snapshot, event),
       workspaceLocation: this.snapshot.workspaceLocation,
       replay,
-      readThroughSequences: this.snapshot.readThroughSequences,
       hydratingSessionIds: this.snapshot.hydratingSessionIds,
     };
     if (emit) this.emit();
@@ -1126,7 +1132,6 @@ export class ForgeAnvilClient implements AnvilClient {
     ...createEmptySnapshot(),
     workspaceLocation: null,
     connection: "reconnecting",
-    readThroughSequences: {},
     hydratingSessionIds: [],
     replay: { fixtureId: "live", playing: false, cursor: 0, total: 0, speed: 1 },
   };
@@ -1258,6 +1263,7 @@ export class ForgeAnvilClient implements AnvilClient {
         status: "idle" as const,
         modelId: "unknown",
         thinkingLevel: "off" as const,
+        readThroughSequence: 0,
       },
       command,
       previousActiveSessionId: this.snapshot.activeSessionId,
@@ -1501,14 +1507,17 @@ export class ForgeAnvilClient implements AnvilClient {
   };
 
   markSessionRead = (sessionId: string) => {
-    const sequence = this.snapshot.sessions.find((session) => session.id === sessionId)?.lastTerminalSequence;
-    if (!sequence || (this.snapshot.readThroughSequences[sessionId] ?? 0) >= sequence) return;
-    this.snapshot = {
-      ...this.snapshot,
-      readThroughSequences: { ...this.snapshot.readThroughSequences, [sessionId]: sequence },
-    };
-    this.emit();
-    void this.cache.writeReadThrough(sessionId, sequence);
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session?.lastTerminalSequence || (session.readThroughSequence ?? 0) >= session.lastTerminalSequence) return;
+    void this.sendCommand(this.command("session.markRead", sessionId, {
+      throughSequence: session.lastTerminalSequence,
+    }));
+  };
+
+  markSessionUnread = (sessionId: string) => {
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session?.lastTerminalSequence || (session.readThroughSequence ?? 0) < session.lastTerminalSequence) return;
+    void this.sendCommand(this.command("session.markUnread", sessionId, {}));
   };
 
   cycleConnectionState = () => undefined;
@@ -1563,7 +1572,6 @@ export class ForgeAnvilClient implements AnvilClient {
         this.snapshot = {
           ...restored,
           workspaceLocation: previousWorkspaceLocation,
-          readThroughSequences: this.snapshot.readThroughSequences,
           hydratingSessionIds: [],
           replay: this.snapshot.replay,
         };
@@ -1640,10 +1648,6 @@ export class ForgeAnvilClient implements AnvilClient {
       this.retryDelay = 1_000;
       this.emit();
       this.startStream(cursor);
-      void this.loadReadState(this.snapshot.sessions.map((session) => ({
-        sessionId: session.id,
-        terminalSequenceAtBootstrap: session.lastTerminalSequence ?? 0,
-      })));
       void this.persistShell();
       if (this.detailApiEnabled && workspaceLocation?.sessionId) void this.hydrateSession(workspaceLocation.sessionId);
       for (const session of this.snapshot.sessions) {
@@ -1813,23 +1817,6 @@ export class ForgeAnvilClient implements AnvilClient {
     }
   }
 
-  private async loadReadState(
-    sessions: Array<{ sessionId: string; terminalSequenceAtBootstrap: number }>,
-  ): Promise<void> {
-    const entries = await Promise.all(sessions.map(async (session) => ({
-      ...session,
-      persistedSequence: await this.cache.readThrough(session.sessionId),
-    })));
-    const readThroughSequences = { ...this.snapshot.readThroughSequences };
-    for (const { sessionId, terminalSequenceAtBootstrap, persistedSequence } of entries) {
-      const sequence = persistedSequence ?? terminalSequenceAtBootstrap;
-      if (sequence > (readThroughSequences[sessionId] ?? 0)) readThroughSequences[sessionId] = sequence;
-      if (persistedSequence === undefined) void this.cache.writeReadThrough(sessionId, sequence);
-    }
-    this.snapshot = { ...this.snapshot, readThroughSequences };
-    this.emit();
-  }
-
   private async persistShell(): Promise<void> {
     await this.cache.writeShell(summaryBootstrapFromSnapshot(
       this.snapshot.capturedAt,
@@ -1903,7 +1890,6 @@ export class ForgeAnvilClient implements AnvilClient {
           workspaceLocation: this.snapshot.workspaceLocation,
           connection: "connected",
           replay,
-          readThroughSequences: this.snapshot.readThroughSequences,
           hydratingSessionIds: this.snapshot.hydratingSessionIds,
         };
         if (

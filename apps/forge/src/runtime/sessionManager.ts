@@ -279,6 +279,10 @@ export class SessionManager {
       if (!command.sessionId) return commandResponse(command, false, { error: "Session not found" });
       return this.withSessionLifecycle(command.sessionId, () => this.setSessionSettled(command));
     }
+    if (command.type === "session.markRead" || command.type === "session.markUnread") {
+      if (!command.sessionId) return commandResponse(command, false, { error: "Session not found" });
+      return this.afterSessionLifecycle(command.sessionId, async () => this.setSessionReadState(command));
+    }
     if (!command.sessionId) return commandResponse(command, false, { error: "A session is required" });
     return this.afterSessionLifecycle(command.sessionId, () => this.dispatchTrackedRuntimeCommand(command));
   }
@@ -605,6 +609,7 @@ export class SessionManager {
       thinkingLevel: "off",
       settled: false,
       branch: gitBranch(project.path),
+      readThroughSequence: 0,
     };
     this.events.createSession(
       session,
@@ -625,6 +630,21 @@ export class SessionManager {
     });
 
     return commandResponse(command, true, { data: { sessionId: session.id } });
+  }
+
+  private setSessionReadState(
+    command: Extract<AnvilClientCommand, { type: "session.markRead" | "session.markUnread" }>,
+  ): AnvilCommandResponse {
+    const sessionId = command.sessionId;
+    if (!sessionId || !this.database.getSession(sessionId)) {
+      return commandResponse(command, false, { error: "Session not found" });
+    }
+    if (command.type === "session.markRead") {
+      this.events.markSessionRead(sessionId, command.payload.throughSequence);
+    } else {
+      this.events.markSessionUnread(sessionId);
+    }
+    return commandResponse(command, true);
   }
 
   private async setSessionSettled(

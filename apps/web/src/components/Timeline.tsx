@@ -73,6 +73,20 @@ function hasVisibleContent(blocks: ContentBlock[]): boolean {
   ));
 }
 
+const EMPTY_FILE_ATTACHMENT_MARKER = /^<file name="[^"\r\n]*"><\/file>\r?$/gm;
+
+function userVisibleContent(blocks: ContentBlock[]): ContentBlock[] {
+  const hasImage = blocks.some((block) => block.type === "image");
+  if (!hasImage) return blocks.filter((block) => block.type !== "toolCall");
+  return blocks.flatMap<ContentBlock>((block) => {
+    if (block.type === "toolCall") return [];
+    if (block.type !== "text") return [block];
+    const text = block.text.replace(EMPTY_FILE_ATTACHMENT_MARKER, "");
+    if (text === block.text) return [block];
+    return text.trim() ? [{ ...block, text }] : [];
+  });
+}
+
 function artifactReference(value: JsonValue | undefined): ArtifactReference | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const record = value as Record<string, JsonValue>;
@@ -214,7 +228,9 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
   const entranceClass = entering ? " timeline-entry--entering" : "";
   const reasoningStartedEmpty = useRef(entry.kind === "reasoning" && !entry.content).current;
   if (entry.kind === "message") {
-    const visibleContent = entry.content.filter((block) => block.type !== "toolCall");
+    const visibleContent = entry.role === "user"
+      ? userVisibleContent(entry.content)
+      : entry.content.filter((block) => block.type !== "toolCall");
     if (!visibleContent.length && !entry.error && entry.status !== "streaming") return null;
     const messageClass = entry.role === "user" ? "user-message" : entry.role === "assistant" ? "assistant-message" : "system-message";
     return (

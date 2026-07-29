@@ -13,7 +13,7 @@ export * from "@anvil/protocol/content";
 export * from "@anvil/protocol/resources";
 export * from "@anvil/protocol/terminal";
 
-export const ANVIL_PROTOCOL_VERSION = 7 as const;
+export const ANVIL_PROTOCOL_VERSION = 8 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
 
 export type ConnectionState = "connected" | "reconnecting" | "offline";
@@ -85,6 +85,8 @@ export interface SessionSummary {
   /** Global Forge event sequence for the latest terminal run transition. */
   lastTerminalSequence?: number;
   lastTerminalOutcome?: RunOutcome;
+  /** Latest terminal event sequence the user has read. Forge owns this durable cursor; missing only on legacy recordings. */
+  readThroughSequence?: number;
 }
 
 export interface ModelDescriptor {
@@ -410,6 +412,7 @@ export type AnvilEvent =
   | AnvilEventBase<"session.upserted", { session: SessionSummary }>
   | AnvilEventBase<"session.deleted", { sessionId: string }>
   | AnvilEventBase<"session.settled", { settled: boolean }>
+  | AnvilEventBase<"session.readState", { readThroughSequence: number }>
   | AnvilEventBase<"session.prompted", Record<string, never>>
   | AnvilEventBase<"session.selected", { sessionId: string }>
   | AnvilEventBase<
@@ -505,6 +508,8 @@ export type AnvilClientCommand =
   | AnvilCommandBase<"session.delete", { sessionId: string }>
   | AnvilCommandBase<"session.rename", { title: string }>
   | AnvilCommandBase<"session.settled", { settled: boolean }>
+  | AnvilCommandBase<"session.markRead", { throughSequence: number }>
+  | AnvilCommandBase<"session.markUnread", Record<string, never>>
   | AnvilCommandBase<
       "prompt.send",
       {
@@ -537,6 +542,7 @@ const ANVIL_EVENT_TYPES = new Set<AnvilEvent["type"]>([
   "session.upserted",
   "session.deleted",
   "session.settled",
+  "session.readState",
   "session.prompted",
   "session.selected",
   "session.configured",
@@ -601,7 +607,9 @@ function isSessionSummary(value: unknown): boolean {
     (value.lastUserMessageSequence === undefined || (Number.isSafeInteger(value.lastUserMessageSequence) && Number(value.lastUserMessageSequence) > 0)) &&
     (value.lastActivitySequence === undefined || (Number.isSafeInteger(value.lastActivitySequence) && Number(value.lastActivitySequence) >= 0)) &&
     (value.lastTerminalSequence === undefined || (Number.isSafeInteger(value.lastTerminalSequence) && Number(value.lastTerminalSequence) > 0)) &&
-    (value.lastTerminalOutcome === undefined || ["completed", "failed", "cancelled"].includes(String(value.lastTerminalOutcome)));
+    (value.lastTerminalOutcome === undefined || ["completed", "failed", "cancelled"].includes(String(value.lastTerminalOutcome))) &&
+    (value.readThroughSequence === undefined ||
+      (Number.isSafeInteger(value.readThroughSequence) && Number(value.readThroughSequence) >= 0));
 }
 
 function isInteractionOption(value: unknown): boolean {
@@ -687,6 +695,8 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
       return hasStrings(value, "sessionId");
     case "session.settled":
       return typeof value.settled === "boolean";
+    case "session.readState":
+      return Number.isSafeInteger(value.readThroughSequence) && Number(value.readThroughSequence) >= 0;
     case "session.prompted":
       return Object.keys(value).length === 0;
     case "session.selected":
@@ -819,6 +829,11 @@ export function isAnvilClientCommand(value: unknown): value is AnvilClientComman
         normalizeSessionTitle(payload.title) !== undefined;
     case "session.settled":
       return typeof value.sessionId === "string" && typeof payload.settled === "boolean";
+    case "session.markRead":
+      return typeof value.sessionId === "string" &&
+        Number.isSafeInteger(payload.throughSequence) && Number(payload.throughSequence) >= 0;
+    case "session.markUnread":
+      return typeof value.sessionId === "string" && Object.keys(payload).length === 0;
     case "prompt.send":
       return typeof value.sessionId === "string" &&
         hasStrings(payload, "content", "delivery") &&

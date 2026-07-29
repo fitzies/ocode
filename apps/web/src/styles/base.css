@@ -626,6 +626,10 @@ button:disabled {
   color: var(--legacy-text-high);
 }
 
+.session-title.session-title--unread {
+  font-weight: 750;
+}
+
 .session-meta {
   justify-content: space-between;
   margin: 0;
@@ -755,6 +759,10 @@ button:disabled {
 
 .session-item--settled .session-row--active .session-title {
   color: var(--legacy-text);
+}
+
+.session-item--settled .session-title--unread {
+  font-weight: 750;
 }
 
 .session-item--settled .session-meta {

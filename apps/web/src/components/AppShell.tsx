@@ -56,7 +56,6 @@ import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
 import { InteractionPanel } from "./InteractionDialog";
 import { ProjectGitAction } from "./ProjectGitAction";
-import { SettingsPage } from "./SettingsPage";
 import { Sidebar } from "./Sidebar";
 import { Timeline } from "./Timeline";
 import { ProjectResourceSurface } from "./resource/ProjectResourceSurface";
@@ -124,7 +123,7 @@ function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
   return (
     <Button
       type="button"
-      variant="outline"
+      variant={active ? "secondary" : "ghost"}
       size="icon-sm"
       aria-label={active ? "Hide project terminals" : "Show project terminals"}
       aria-pressed={active}
@@ -201,8 +200,6 @@ function AppShellContent() {
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const settingsTrigger = useRef<HTMLButtonElement>(null);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
   const [indicators, setIndicators] = useState<LiveIndicators>({});
@@ -242,22 +239,15 @@ function AppShellContent() {
     projects: snapshot.projects,
     sessions: snapshot.sessions,
     activeSessionId: snapshot.activeSessionId,
-    readThroughSequences: snapshot.readThroughSequences,
     connection: snapshot.connection,
   }), [
     snapshot.projects,
     snapshot.sessions,
     snapshot.activeSessionId,
-    snapshot.readThroughSequences,
     snapshot.connection,
   ]);
   const sendSuggestion = useCallback((prompt: string) => anvilClient.sendPrompt(prompt), []);
   const openAddWorkspace = useCallback(() => setAddWorkspaceOpen(true), []);
-  const openSettings = useCallback(() => setSettingsOpen(true), []);
-  const closeSettings = useCallback(() => {
-    setSettingsOpen(false);
-    requestAnimationFrame(() => settingsTrigger.current?.focus());
-  }, []);
   const requestDeleteSession = useCallback((sessionId: string) => {
     const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
     if (session) setSessionPendingDeletion({ id: session.id, title: session.title });
@@ -537,17 +527,11 @@ function AppShellContent() {
         onRequestDeleteSession={requestDeleteSession}
         onRequestRenameSession={requestRenameSession}
         onSetSessionSettled={anvilClient.setSessionSettled}
+        onMarkSessionRead={anvilClient.markSessionRead}
+        onMarkSessionUnread={anvilClient.markSessionUnread}
       />
 
       <SidebarInset className="workspace">
-        {settingsOpen ? (
-          <SettingsPage
-            connection={snapshot.connection}
-            projects={snapshot.projects}
-            theme={theme}
-            onClose={closeSettings}
-          />
-        ) : (
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
           <LiveProjectResourceAutoOpen />
           {activeProject && <TerminalShortcut isMobile={isMobile} />}
@@ -584,15 +568,37 @@ function AppShellContent() {
               />
             )}
             {activeProject && <TerminalSurfaceToggle isMobile={isMobile} />}
-            <Button
-              ref={settingsTrigger}
-              variant="outline"
-              size="icon-sm"
-              aria-label="Open settings"
-              onClick={openSettings}
-            >
-              <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
-            </Button>
+            <DropdownMenu onOpenChange={(open) => open && setRebuildError(undefined)}>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon-sm" aria-label="Forge settings">
+                  <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>Forge runtime</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    {theme === "dark" ? <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} /> : theme === "light" ? <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} /> : <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />}
+                    Appearance
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup value={theme} onValueChange={(value) => setTheme(value as "system" | "light" | "dark")}>
+                      <DropdownMenuRadioItem value="system"><HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />System</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="light"><HugeiconsIcon icon={Sun03Icon} strokeWidth={2} />Light</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="dark"><HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />Dark</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuItem
+                  disabled={rebuildState === "rebuilding"}
+                  onSelect={() => setRebuildDialogOpen(true)}
+                >
+                  <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+                  Rebuild
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </header>
 
@@ -682,7 +688,6 @@ function AppShellContent() {
             </div>}
           />
         </WorkspaceSurfaceProvider>
-        )}
       </SidebarInset>
 
       {addWorkspaceOpen && (
@@ -705,6 +710,24 @@ function AppShellContent() {
           onDelete={() => anvilClient.deleteSession(sessionPendingDeletion.id)}
         />
       )}
+      <AlertDialog open={rebuildDialogOpen} onOpenChange={(open) => !open && rebuildState !== "rebuilding" && setRebuildDialogOpen(false)}>
+        <AlertDialogContent onEscapeKeyDown={(event) => rebuildState === "rebuilding" && event.preventDefault()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Rebuild the web app?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This builds the latest React changes and reloads the updated interface. Running threads will not be interrupted.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          {rebuildError && <p className="text-xs text-destructive" role="alert">{rebuildError}</p>}
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={rebuildState === "rebuilding"}>Cancel</AlertDialogCancel>
+            <Button disabled={rebuildState === "rebuilding"} onClick={() => void rebuildWebApp()}>
+              <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+              {rebuildState === "rebuilding" ? "Rebuilding…" : "Rebuild"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

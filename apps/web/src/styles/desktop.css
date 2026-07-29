@@ -2,8 +2,7 @@ html[data-ocode-desktop="macos"] {
   --ocode-desktop-topbar-height: 52px;
   --ocode-desktop-traffic-lights-end: 68px;
   --ocode-desktop-titlebar-gap: 12px;
-  --ocode-desktop-sidebar-frame-left: 8px;
-  --ocode-desktop-sidebar-header-left: 10px;
+  --ocode-desktop-traffic-lights-row-height: 42px;
 }
 
 html[data-ocode-desktop="macos"] [data-slot="sidebar-container"] {
@@ -18,16 +17,13 @@ html[data-ocode-desktop="macos"] [data-sidebar="header"] {
   padding-top: 0;
 }
 
-html[data-ocode-desktop="macos"] [data-sidebar="header"] > :first-child {
-  min-height: var(--ocode-desktop-topbar-height);
-  height: var(--ocode-desktop-topbar-height);
+html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) [data-sidebar="header"] {
+  padding-top: var(--ocode-desktop-traffic-lights-row-height);
 }
 
-html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) [data-sidebar="header"] > :first-child {
-  padding-left: calc(
-    var(--ocode-desktop-traffic-lights-end) + var(--ocode-desktop-titlebar-gap) -
-      var(--ocode-desktop-sidebar-frame-left) - var(--ocode-desktop-sidebar-header-left)
-  );
+html[data-ocode-desktop="macos"] [data-sidebar="header"] > :first-child {
+  min-height: 32px;
+  height: 32px;
 }
 
 html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) [data-sidebar="header"] > :first-child .sidebar-close {
@@ -47,13 +43,6 @@ html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) [data-slot=
 }
 
 @media (max-width: 900px) {
-  html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) [data-mobile="true"] [data-sidebar="header"] > :first-child {
-    padding-left: calc(
-      var(--ocode-desktop-traffic-lights-end) + var(--ocode-desktop-titlebar-gap) -
-        var(--ocode-desktop-sidebar-header-left)
-    );
-  }
-
   html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) .session-header {
     padding-left: calc(
       var(--ocode-desktop-traffic-lights-end) + var(--ocode-desktop-titlebar-gap)

@@ -22,12 +22,19 @@
 }
 
 .conversation-surface {
+  --message-column-width: 790px;
+  --message-font-size: 13px;
   display: flex;
   width: 100%;
   height: 100%;
   flex-direction: column;
   overflow: hidden;
 }
+
+.conversation-surface[data-message-font-size="small"] { --message-font-size: 12px; }
+.conversation-surface[data-message-font-size="large"] { --message-font-size: 15px; }
+.conversation-surface[data-message-font-size="extra-large"] { --message-font-size: 17px; }
+.conversation-surface[data-message-width="full"] { --message-column-width: 100%; }
 
 .workspace-layout-desktop,
 .workspace-layout-mobile {

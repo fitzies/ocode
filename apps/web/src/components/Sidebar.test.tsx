@@ -12,7 +12,7 @@ function renderSnapshot(snapshot: AnvilClientSnapshot): string {
         snapshot={snapshot}
         onSelectSession={() => undefined}
         onCreateSession={() => undefined}
-        onAddWorkspace={() => undefined}
+        onNewProject={() => undefined}
         onRequestDeleteSession={() => undefined}
         onRequestRenameSession={() => undefined}
         onSetSessionSettled={async () => undefined}
@@ -56,7 +56,7 @@ describe("Sidebar thread ordering", () => {
     expect(markup).toContain("All projects");
     expect(markup).not.toContain('aria-label="Filter threads by project"');
     expect(markup).not.toContain(">Threads</span>");
-    expect(markup.indexOf('aria-label="Add project"')).toBeGreaterThan(markup.indexOf('aria-label="Create thread"'));
+    expect(markup.indexOf('aria-label="New project"')).toBeGreaterThan(markup.indexOf('aria-label="Create thread"'));
   });
 
   it("shows running time from the latest user message rather than later session updates", () => {

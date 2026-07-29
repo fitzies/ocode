@@ -1,9 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ANVIL_PROTOCOL_VERSION, type AnvilClientCommand } from "@anvil/protocol";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import type { ForgeConfig } from "../config.ts";
@@ -153,6 +153,7 @@ beforeEach(() => {
     artifactDir: join(directory, "artifacts"),
     piExecutable: executable,
     webRoot: join(directory, "web"),
+    projectsRoot: directory,
     projects: [project],
   };
   database = new ForgeDatabase(":memory:");
@@ -435,22 +436,60 @@ describe("SessionManager", () => {
     expect(database.readEventsAfter(0).some((event) => event.type === "session.prompted" && event.sessionId === sessionId)).toBe(false);
   });
 
-  it("adds a validated workspace and restores it from the database", async () => {
-    const workspacePath = join(directory, "second-workspace");
-    mkdirSync(workspacePath);
+  it("creates a slug directory under the projects root and restores the project", async () => {
     const created = await manager.handleCommand(command("project-create", "project.create", null, {
-      name: "Second workspace",
-      path: workspacePath,
+      name: "Second Project!",
     }));
 
     expect(created.success).toBe(true);
     const projectId = (created.data as { projectId: string }).projectId;
+    const projectPath = join(directory, "second-project");
+    expect(existsSync(projectPath)).toBe(true);
     expect(events.currentSnapshot().projects).toContainEqual({
       id: projectId,
-      name: "Second workspace",
-      path: workspacePath,
+      name: "Second Project!",
+      path: projectPath,
       workspaceKind: "folder",
     });
+
+    const duplicate = await manager.handleCommand(command("project-duplicate", "project.create", null, {
+      name: "Second Project!",
+    }));
+    expect(duplicate).toMatchObject({ success: false, error: expect.stringContaining("already exists") });
+    const unusable = await manager.handleCommand(command("project-unusable", "project.create", null, {
+      name: "***",
+    }));
+    expect(unusable).toMatchObject({ success: false, error: expect.stringContaining("letters or numbers") });
+    const existingDirectory = join(directory, "existing-project");
+    mkdirSync(existingDirectory);
+    const marker = join(existingDirectory, "README.md");
+    writeFileSync(marker, "existing contents");
+    const detected = await manager.handleCommand(command("project-existing-detected", "project.create", null, {
+      name: "Existing Project",
+    }));
+    expect(detected).toMatchObject({
+      success: true,
+      data: { status: "existing", path: existingDirectory },
+    });
+    expect(events.currentSnapshot().projects.some((project) => project.path === existingDirectory)).toBe(false);
+
+    const added = await manager.handleCommand(command("project-existing-add", "project.addExisting", null, {
+      name: "Existing Project",
+      path: existingDirectory,
+    }));
+    expect(added).toMatchObject({ success: true, data: { status: "added" } });
+    expect(events.currentSnapshot().projects).toContainEqual(expect.objectContaining({
+      name: "Existing Project",
+      path: existingDirectory,
+    }));
+    expect(readFileSync(marker, "utf8")).toBe("existing contents");
+
+    const blockedPath = join(directory, "blocked-project");
+    writeFileSync(blockedPath, "not a directory");
+    const blocked = await manager.handleCommand(command("project-blocked-entry", "project.create", null, {
+      name: "Blocked Project",
+    }));
+    expect(blocked).toMatchObject({ success: false, error: expect.stringContaining("not a safe project directory") });
 
     await manager.stopAll();
     const orphanDirectory = join(config.sessionDir, "deleted-before-cleanup");
@@ -459,6 +498,38 @@ describe("SessionManager", () => {
     manager = new SessionManager(config, database, events);
     expect(events.currentSnapshot().projects.some((project) => project.id === projectId)).toBe(true);
     expect(existsSync(orphanDirectory)).toBe(false);
+  });
+
+  it("removes only its new empty directory when project persistence fails", async () => {
+    vi.spyOn(events, "createProject").mockImplementationOnce(() => {
+      throw new Error("database unavailable");
+    });
+    const failed = await manager.handleCommand(command("project-persistence-failure", "project.create", null, {
+      name: "Temporary Project",
+    }));
+
+    expect(failed).toMatchObject({ success: false, error: "database unavailable" });
+    expect(existsSync(join(directory, "temporary-project"))).toBe(false);
+  });
+
+  it("persists projects root changes and creates future projects there", async () => {
+    const nextRoot = join(directory, "projects-root");
+    mkdirSync(nextRoot);
+    expect(manager.setProjectsRoot(nextRoot)).toBe(nextRoot);
+
+    await manager.stopAll();
+    config.projectsRoot = join(directory, "obsolete-config-root");
+    manager = new SessionManager(config, database, events);
+    expect(manager.getProjectsRoot()).toBe(nextRoot);
+
+    const created = await manager.handleCommand(command("project-in-saved-root", "project.create", null, {
+      name: "Saved Root Project",
+    }));
+    expect(created.success).toBe(true);
+    expect(events.currentSnapshot().projects).toContainEqual(expect.objectContaining({
+      name: "Saved Root Project",
+      path: join(nextRoot, "saved-root-project"),
+    }));
   });
 
   it("permanently deletes a session and its runtime directory", async () => {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
+import { canonicalizeProjectsRoot } from "../projects/projectsRoot.ts";
 import { ForgeDatabase } from "../store/database.ts";
 import { ForgeHttpServer } from "./server.ts";
 
@@ -266,6 +267,55 @@ describe("ForgeHttpServer", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ status: "rebuilt" });
     expect(rebuilt).toBe(true);
+  });
+
+  it("gets and updates the owner-authenticated projects root with origin and path validation", async () => {
+    await server.close();
+    const initialRoot = mkdtempSync(join(tmpdir(), "anvil-projects-root-"));
+    const nextRoot = join(initialRoot, "next");
+    mkdirSync(nextRoot);
+    let projectsRoot = initialRoot;
+    server = new ForgeHttpServer({
+      events,
+      ownerLogin: "owner@example.com",
+      getProjectsRoot: () => projectsRoot,
+      setProjectsRoot: (path) => {
+        projectsRoot = canonicalizeProjectsRoot(path);
+        return projectsRoot;
+      },
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+    const ownerHeaders = { "tailscale-user-login": "owner@example.com" };
+
+    expect((await fetch(`${baseUrl}/api/v1/settings/projects-root`)).status).toBe(403);
+    expect(await (await fetch(`${baseUrl}/api/v1/settings/projects-root`, { headers: ownerHeaders })).json()).toEqual({ path: initialRoot });
+
+    const crossOrigin = await fetch(`${baseUrl}/api/v1/settings/projects-root`, {
+      method: "PUT",
+      headers: { ...ownerHeaders, origin: "https://attacker.example", "content-type": "application/json" },
+      body: JSON.stringify({ path: nextRoot }),
+    });
+    expect(crossOrigin.status).toBe(403);
+
+    const invalid = await fetch(`${baseUrl}/api/v1/settings/projects-root`, {
+      method: "PUT",
+      headers: { ...ownerHeaders, origin: baseUrl, "content-type": "application/json" },
+      body: JSON.stringify({ path: join(initialRoot, "missing") }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ code: "invalid_projects_root", message: expect.stringContaining("does not exist") });
+
+    const updated = await fetch(`${baseUrl}/api/v1/settings/projects-root`, {
+      method: "PUT",
+      headers: { ...ownerHeaders, origin: baseUrl, "content-type": "application/json" },
+      body: JSON.stringify({ path: nextRoot }),
+    });
+    expect(updated.status).toBe(200);
+    expect(await updated.json()).toEqual({ path: nextRoot });
+    rmSync(initialRoot, { recursive: true, force: true });
   });
 
   it("rejects rebuild requests when rebuilding is unavailable", async () => {

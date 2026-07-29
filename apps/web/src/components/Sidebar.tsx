@@ -72,7 +72,7 @@ interface SidebarProps {
   snapshot: SidebarSnapshot;
   onSelectSession: (sessionId: string) => void;
   onCreateSession: (projectId: string) => void;
-  onAddWorkspace: () => void;
+  onNewProject: () => void;
   onRequestDeleteSession: (sessionId: string) => void;
   onRequestRenameSession: (sessionId: string) => void;
   onSetSessionSettled: (sessionId: string, settled: boolean) => Promise<void>;
@@ -149,7 +149,7 @@ export const Sidebar = memo(function Sidebar({
   snapshot,
   onSelectSession,
   onCreateSession,
-  onAddWorkspace,
+  onNewProject,
   onRequestDeleteSession,
   onRequestRenameSession,
   onSetSessionSettled,
@@ -337,7 +337,7 @@ export const Sidebar = memo(function Sidebar({
                     {project.name.toLowerCase()}
                   </DropdownMenuItem>
                 ))}
-                {snapshot.projects.length === 0 && <DropdownMenuItem disabled>Add a workspace first</DropdownMenuItem>}
+                {snapshot.projects.length === 0 && <DropdownMenuItem disabled>Create a project first</DropdownMenuItem>}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -382,11 +382,11 @@ export const Sidebar = memo(function Sidebar({
             size="icon"
             className="border-input bg-muted/20 dark:bg-muted/30"
             onClick={() => {
-              onAddWorkspace();
+              onNewProject();
               closeMobile();
             }}
-            aria-label="Add project"
-            title="Add project"
+            aria-label="New project"
+            title="New project"
           >
             <HugeiconsIcon icon={FolderAddIcon} strokeWidth={2} className="size-3.5" />
           </Button>
@@ -394,7 +394,7 @@ export const Sidebar = memo(function Sidebar({
       </SidebarHeader>
 
       <SidebarContent className="overflow-x-hidden px-2 py-2">
-        {snapshot.projects.length === 0 && <div className="px-2 py-3 text-xs text-muted-foreground">Add a Forge directory to begin.</div>}
+        {snapshot.projects.length === 0 && <div className="px-2 py-3 text-xs text-muted-foreground">Create a Forge project to begin.</div>}
         {projectFilter && visibleSessions.length === 0 && <div className="px-2 py-3 text-xs text-muted-foreground">No matching threads</div>}
 
         <section className="thread-section" aria-label="Unsettled threads">

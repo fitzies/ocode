@@ -67,6 +67,8 @@ async function main(): Promise<void> {
       projectGit,
       terminals,
       searchFiles: sessions.searchFiles,
+      getProjectsRoot: sessions.getProjectsRoot,
+      setProjectsRoot: sessions.setProjectsRoot,
       requestRebuild: async () => {
         await execFileAsync("corepack", ["pnpm", "--filter", "@anvil/web", "build"], {
           cwd: process.cwd(),

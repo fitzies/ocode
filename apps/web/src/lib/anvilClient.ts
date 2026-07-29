@@ -4,6 +4,7 @@ import {
   isAnvilBootstrap,
   isAnvilSessionDetailSync,
   isAnvilSummaryBootstrap,
+  normalizeProjectSlug,
   normalizeSessionTitle,
   SESSION_TITLE_MAX_LENGTH,
   type AnvilClientCommand,
@@ -45,6 +46,9 @@ import {
 import { fixtureById, fixtureCatalog, fixtures, type FixtureDefinition } from "../fixtures";
 
 export type DeliveryMode = "prompt" | "steer" | "followUp";
+export type ProjectCreateResult =
+  | { status: "created" }
+  | { status: "existing"; path: string };
 
 export interface WorkspaceFile {
   path: string;
@@ -90,7 +94,10 @@ export interface AnvilClient {
   dispatch(command: AnvilClientCommand): void;
   selectProject(projectId: string): void;
   selectSession(sessionId: string): void;
-  createProject(name: string, path: string): Promise<void>;
+  createProject(name: string): Promise<ProjectCreateResult>;
+  addExistingProject(name: string, path: string): Promise<void>;
+  getProjectsRoot(): Promise<string>;
+  setProjectsRoot(path: string): Promise<string>;
   createSession(projectId: string): void;
   deleteSession(sessionId: string): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
@@ -373,6 +380,7 @@ export class FixtureAnvilClient implements AnvilClient {
   private replayTimer?: ReturnType<typeof setTimeout>;
   private replayAdapter?: PiRpcAdapterState;
   private readonly simulationTimers = new Map<string, Array<ReturnType<typeof setTimeout>>>();
+  private projectsRoot = "/home/forge/code";
   private localId = 0;
 
   constructor() {
@@ -433,7 +441,10 @@ export class FixtureAnvilClient implements AnvilClient {
   dispatch = (command: AnvilClientCommand) => {
     switch (command.type) {
       case "project.create":
-        this.createProject(command.payload.name, command.payload.path);
+        this.createProject(command.payload.name);
+        break;
+      case "project.addExisting":
+        this.addExistingProject(command.payload.name, command.payload.path);
         break;
       case "session.select":
         this.selectSession(command.payload.sessionId);
@@ -506,16 +517,30 @@ export class FixtureAnvilClient implements AnvilClient {
     this.emit();
   };
 
-  createProject = async (name: string, path: string) => {
+  createProject = async (name: string): Promise<ProjectCreateResult> => {
     const cleanName = name.trim();
-    const cleanPath = path.trim();
-    if (!cleanName || !cleanPath) return;
+    const slug = normalizeProjectSlug(cleanName);
+    if (!cleanName || !slug) throw new Error("Enter a project name that can form a directory name");
     const project = {
-      id: `workspace-${Date.now()}`,
+      id: `project-${Date.now()}`,
       name: cleanName,
-      path: cleanPath,
+      path: `${this.projectsRoot.replace(/\/$/, "")}/${slug}`,
     };
     this.applyLocal("project.upserted", { project }, null);
+    return { status: "created" };
+  };
+
+  addExistingProject = async (name: string, _path: string): Promise<void> => {
+    await this.createProject(name);
+  };
+
+  getProjectsRoot = async (): Promise<string> => this.projectsRoot;
+
+  setProjectsRoot = async (path: string): Promise<string> => {
+    const cleanPath = path.trim().replace(/\/$/, "") || "/";
+    if (!cleanPath.startsWith("/")) throw new Error("Projects root must be an absolute path");
+    this.projectsRoot = cleanPath;
+    return cleanPath;
   };
 
   createSession = (projectId: string) => {
@@ -1233,14 +1258,55 @@ export class ForgeAnvilClient implements AnvilClient {
     void this.persistShell();
   };
 
-  createProject = async (name: string, path: string) => {
+  createProject = async (name: string): Promise<ProjectCreateResult> => {
     const cleanName = name.trim();
-    const cleanPath = path.trim();
-    if (!cleanName || !cleanPath) return;
-    await this.sendCommand(
-      this.command("project.create", null, { name: cleanName, path: cleanPath }),
+    if (!cleanName) throw new Error("Project name is required");
+    const response = await this.sendCommand(
+      this.command("project.create", null, { name: cleanName }),
       true,
     );
+    const status = response?.data && typeof response.data === "object" && !Array.isArray(response.data)
+      ? (response.data as Record<string, JsonValue>).status
+      : undefined;
+    const path = response?.data && typeof response.data === "object" && !Array.isArray(response.data)
+      ? (response.data as Record<string, JsonValue>).path
+      : undefined;
+    return status === "existing" && typeof path === "string"
+      ? { status: "existing", path }
+      : { status: "created" };
+  };
+
+  addExistingProject = async (name: string, path: string): Promise<void> => {
+    const cleanName = name.trim();
+    if (!cleanName) throw new Error("Project name is required");
+    await this.sendCommand(
+      this.command("project.addExisting", null, { name: cleanName, path }),
+      true,
+    );
+  };
+
+  getProjectsRoot = async (): Promise<string> => {
+    const response = await this.fetcher("/api/v1/settings/projects-root", {
+      headers: { accept: "application/json" },
+    });
+    const result = await response.json().catch(() => undefined) as { path?: unknown; message?: unknown } | undefined;
+    if (!response.ok || typeof result?.path !== "string") {
+      throw new Error(typeof result?.message === "string" ? result.message : `Projects root request failed with HTTP ${response.status}`);
+    }
+    return result.path;
+  };
+
+  setProjectsRoot = async (path: string): Promise<string> => {
+    const response = await this.fetcher("/api/v1/settings/projects-root", {
+      method: "PUT",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ path: path.trim() }),
+    });
+    const result = await response.json().catch(() => undefined) as { path?: unknown; message?: unknown } | undefined;
+    if (!response.ok || typeof result?.path !== "string") {
+      throw new Error(typeof result?.message === "string" ? result.message : `Projects root update failed with HTTP ${response.status}`);
+    }
+    return result.path;
   };
 
   createSession = (projectId: string) => {

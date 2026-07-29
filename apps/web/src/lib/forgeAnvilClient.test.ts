@@ -672,7 +672,7 @@ describe("ForgeAnvilClient", () => {
     expect(client.getSnapshot().activeSessionId).toBe(session.id);
   });
 
-  it("sends workspace creation, rename, settlement, and session deletion commands", async () => {
+  it("detects and adds an existing project, then sends other project actions", async () => {
     const stream = new FakeEventSource();
     const snapshot = createEmptySnapshot({
       projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
@@ -684,7 +684,7 @@ describe("ForgeAnvilClient", () => {
         return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [], cursor: 0 }));
       }
       bodies.push(JSON.parse(String(init?.body)));
-      const sent = bodies.at(-1) as { id: string };
+      const sent = bodies.at(-1) as { id: string; type: string };
       return new Response(JSON.stringify({
         protocolVersion: ANVIL_PROTOCOL_VERSION,
         id: `response-${bodies.length}`,
@@ -692,6 +692,7 @@ describe("ForgeAnvilClient", () => {
         timestamp: "2026-07-23T01:00:01.000Z",
         success: true,
         outcome: "completed",
+        ...(sent.type === "project.create" ? { data: { status: "existing", path: "/code/tools" } } : {}),
       }));
     };
     const client = new ForgeAnvilClient({
@@ -702,14 +703,16 @@ describe("ForgeAnvilClient", () => {
 
     await expect(client.renameSession(session.id, "   ")).rejects.toThrow("non-empty");
     await expect(client.renameSession(session.id, "x".repeat(121))).rejects.toThrow("at most 120");
-    client.createProject("Tools", "/home/oli/code/tools");
-    client.renameSession(session.id, "  Renamed thread  ");
-    client.setSessionSettled(session.id, true);
-    client.deleteSession(session.id);
-    await waitUntil(() => bodies.length === 4);
+    await expect(client.createProject("Tools")).resolves.toEqual({ status: "existing", path: "/code/tools" });
+    await client.addExistingProject("Tools", "/code/tools");
+    void client.renameSession(session.id, "  Renamed thread  ");
+    void client.setSessionSettled(session.id, true);
+    void client.deleteSession(session.id);
+    await waitUntil(() => bodies.length === 5);
 
     expect(bodies).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: "project.create", sessionId: null, payload: { name: "Tools", path: "/home/oli/code/tools" } }),
+      expect.objectContaining({ type: "project.create", sessionId: null, payload: { name: "Tools" } }),
+      expect.objectContaining({ type: "project.addExisting", sessionId: null, payload: { name: "Tools", path: "/code/tools" } }),
       expect.objectContaining({ type: "session.rename", sessionId: session.id, payload: { title: "Renamed thread" } }),
       expect.objectContaining({ type: "session.settled", sessionId: session.id, payload: { settled: true } }),
       expect.objectContaining({ type: "session.delete", sessionId: null, payload: { sessionId: session.id } }),
@@ -795,8 +798,44 @@ describe("ForgeAnvilClient", () => {
     });
     await waitUntil(() => client.getSnapshot().connection === "connected");
 
-    await expect(client.createProject("Missing", "/missing")).rejects.toThrow("Workspace path does not exist");
+    await expect(client.createProject("Missing")).rejects.toThrow("Workspace path does not exist");
     expect(client.getSnapshot().clientError).toBe("Workspace path does not exist");
+  });
+
+  it("fetches and updates the Forge projects root setting", async () => {
+    const requests: Array<{ url: string; init?: RequestInit }> = [];
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({ url, init });
+      if (url.endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({
+          protocolVersion: ANVIL_PROTOCOL_VERSION,
+          snapshot: createEmptySnapshot(),
+          events: [],
+          cursor: 0,
+        }));
+      }
+      if (init?.method === "PUT") {
+        return new Response(JSON.stringify({ path: "/srv/projects" }));
+      }
+      return new Response(JSON.stringify({ path: "/code" }));
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => new FakeEventSource() as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().connection === "connected");
+
+    await expect(client.getProjectsRoot()).resolves.toBe("/code");
+    await expect(client.setProjectsRoot("  /srv/projects  ")).resolves.toBe("/srv/projects");
+    expect(requests.at(-1)).toMatchObject({
+      url: "/api/v1/settings/projects-root",
+      init: {
+        method: "PUT",
+        headers: { accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ path: "/srv/projects" }),
+      },
+    });
   });
 
   it("updates thinking immediately and restores the confirmed level when Forge rejects it", async () => {

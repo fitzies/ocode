@@ -13,7 +13,7 @@ export * from "@anvil/protocol/content";
 export * from "@anvil/protocol/resources";
 export * from "@anvil/protocol/terminal";
 
-export const ANVIL_PROTOCOL_VERSION = 8 as const;
+export const ANVIL_PROTOCOL_VERSION = 9 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
 
 export type ConnectionState = "connected" | "reconnecting" | "offline";
@@ -492,6 +492,16 @@ export function normalizeSessionTitle(value: string): string | undefined {
   return title && title.length <= SESSION_TITLE_MAX_LENGTH ? title : undefined;
 }
 
+export function normalizeProjectSlug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 interface AnvilCommandBase<TType extends string, TPayload> {
   protocolVersion: ProtocolVersion;
   id: string;
@@ -502,7 +512,8 @@ interface AnvilCommandBase<TType extends string, TPayload> {
 }
 
 export type AnvilClientCommand =
-  | AnvilCommandBase<"project.create", { name: string; path: string }>
+  | AnvilCommandBase<"project.create", { name: string }>
+  | AnvilCommandBase<"project.addExisting", { name: string; path: string }>
   | AnvilCommandBase<"session.select", { sessionId: string }>
   | AnvilCommandBase<"session.create", { projectId: string; sessionId: string; parentSessionId?: string }>
   | AnvilCommandBase<"session.delete", { sessionId: string }>
@@ -814,6 +825,10 @@ export function isAnvilClientCommand(value: unknown): value is AnvilClientComman
   const payload = value.payload;
   switch (value.type) {
     case "project.create":
+      return value.sessionId === null &&
+        typeof payload.name === "string" &&
+        payload.path === undefined;
+    case "project.addExisting":
       return value.sessionId === null && hasStrings(payload, "name", "path");
     case "session.select":
       return hasStrings(payload, "sessionId");

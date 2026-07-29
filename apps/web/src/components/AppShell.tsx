@@ -11,6 +11,7 @@ import {
   Cancel01Icon,
   ComputerIcon,
   ComputerTerminal01Icon,
+  Folder01Icon,
   Moon02Icon,
   RefreshIcon,
   ServerStack01Icon,
@@ -62,9 +63,32 @@ import { ProjectResourceSurface } from "./resource/ProjectResourceSurface";
 import { ProjectTerminalSurface } from "./terminal/ProjectTerminalSurface";
 import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
 import { WorkspaceSurfaceProvider, useWorkspaceSurfaces } from "./workspace/WorkspaceSurfaceState";
-import { AddWorkspaceDialog, DeleteThreadDialog, RenameThreadDialog } from "./WorkspaceDialogs";
+import { DeleteThreadDialog, NewProjectDialog, ProjectsRootDialog, RenameThreadDialog } from "./WorkspaceDialogs";
 
 const EMPTY_CATALOG: CapabilityCatalog = { models: [], commands: [], skills: [] };
+const DISPLAY_PREFERENCES_KEY = "anvil.display-preferences";
+
+type MessageFontSize = "small" | "default" | "large" | "extra-large";
+type MessageWidth = "narrow" | "full";
+
+type DisplayPreferences = {
+  fontSize: MessageFontSize;
+  width: MessageWidth;
+};
+
+const DEFAULT_DISPLAY_PREFERENCES: DisplayPreferences = { fontSize: "default", width: "narrow" };
+
+function loadDisplayPreferences(): DisplayPreferences {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DISPLAY_PREFERENCES_KEY) ?? "null") as Partial<DisplayPreferences> | null;
+    return {
+      fontSize: stored?.fontSize && ["small", "default", "large", "extra-large"].includes(stored.fontSize) ? stored.fontSize : "default",
+      width: stored?.width && ["narrow", "full"].includes(stored.width) ? stored.width : "narrow",
+    };
+  } catch {
+    return DEFAULT_DISPLAY_PREFERENCES;
+  }
+}
 
 type LiveIndicators = {
   context?: { tokens: number | null; contextWindow: number; percent: number | null };
@@ -199,13 +223,15 @@ function AppShellContent() {
   const { theme, setTheme } = useTheme();
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
-  const [addWorkspaceOpen, setAddWorkspaceOpen] = useState(false);
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [projectsRootDialogOpen, setProjectsRootDialogOpen] = useState(false);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
   const [indicators, setIndicators] = useState<LiveIndicators>({});
   const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
   const [rebuildState, setRebuildState] = useState<"idle" | "rebuilding">("idle");
   const [rebuildError, setRebuildError] = useState<string>();
+  const [displayPreferences, setDisplayPreferences] = useState(loadDisplayPreferences);
   const gitIndicatorsByProject = useRef(new Map<string, LiveIndicators["git"]>());
   const terminalSequences = useRef<Map<string, number> | null>(null);
   const activeSession = snapshot.workspaceLocation?.sessionId
@@ -246,8 +272,12 @@ function AppShellContent() {
     snapshot.activeSessionId,
     snapshot.connection,
   ]);
+  useEffect(() => {
+    localStorage.setItem(DISPLAY_PREFERENCES_KEY, JSON.stringify(displayPreferences));
+  }, [displayPreferences]);
+
   const sendSuggestion = useCallback((prompt: string) => anvilClient.sendPrompt(prompt), []);
-  const openAddWorkspace = useCallback(() => setAddWorkspaceOpen(true), []);
+  const openNewProject = useCallback(() => setNewProjectOpen(true), []);
   const requestDeleteSession = useCallback((sessionId: string) => {
     const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
     if (session) setSessionPendingDeletion({ id: session.id, title: session.title });
@@ -362,7 +392,7 @@ function AppShellContent() {
       const target = deleted
         ? triggers.find((element) => element.dataset.sessionId !== sessionId)
         : triggers.find((element) => element.dataset.sessionId === sessionId);
-      (target ?? document.querySelector<HTMLButtonElement>("[aria-label='Add workspace']"))?.focus();
+      (target ?? document.querySelector<HTMLButtonElement>("[aria-label='New project']"))?.focus();
     });
   };
 
@@ -522,7 +552,7 @@ function AppShellContent() {
         snapshot={sidebarSnapshot}
         onSelectSession={anvilClient.selectSession}
         onCreateSession={startSession}
-        onAddWorkspace={openAddWorkspace}
+        onNewProject={openNewProject}
         usage={indicators.usage}
         onRequestDeleteSession={requestDeleteSession}
         onRequestRenameSession={requestRenameSession}
@@ -539,7 +569,11 @@ function AppShellContent() {
             isMobile={isMobile}
             bottom={activeProject ? <ProjectTerminalSurface key={activeProject.id} projectId={activeProject.id} isMobile={isMobile} /> : undefined}
             right={activeProject ? <ProjectResourceSurface projectId={activeProject.id} /> : undefined}
-            main={<div className="conversation-surface">
+            main={<div
+              className="conversation-surface"
+              data-message-font-size={displayPreferences.fontSize}
+              data-message-width={displayPreferences.width}
+            >
         <header className="session-header">
           <div className="header-title-group">
             <SidebarTrigger className="menu-trigger" aria-label="Toggle sidebar" />
@@ -547,7 +581,7 @@ function AppShellContent() {
               <h1>
                 {activeSession ? (
                   <><span className="session-heading-repo">{activeProject?.name.toLowerCase() ?? "unknown"}</span> / {activeSession.title}</>
-                ) : activeProject ? activeProject.name : "No workspace selected"}
+                ) : activeProject ? activeProject.name : "No project selected"}
               </h1>
             </div>
           </div>
@@ -590,6 +624,43 @@ function AppShellContent() {
                     </DropdownMenuRadioGroup>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <span className="font-semibold" aria-hidden="true">Aa</span>
+                    Font size
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup
+                      value={displayPreferences.fontSize}
+                      onValueChange={(fontSize) => setDisplayPreferences((current) => ({ ...current, fontSize: fontSize as MessageFontSize }))}
+                    >
+                      <DropdownMenuRadioItem value="small">Small</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="default">Default</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="large">Large</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="extra-large">Extra large</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <span className="font-mono" aria-hidden="true">↔</span>
+                    Message width
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuRadioGroup
+                      value={displayPreferences.width}
+                      onValueChange={(width) => setDisplayPreferences((current) => ({ ...current, width: width as MessageWidth }))}
+                    >
+                      <DropdownMenuRadioItem value="narrow">Normal</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="full">Full</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setProjectsRootDialogOpen(true)}>
+                  <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
+                  Projects root
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   disabled={rebuildState === "rebuilding"}
                   onSelect={() => setRebuildDialogOpen(true)}
@@ -680,7 +751,7 @@ function AppShellContent() {
                   ? activeProject
                     ? `Choose an existing thread, or use the + beside Threads to start one in ${activeProject.name}.`
                     : "Filter the thread list by project, then use the + beside Threads to start a thread."
-                  : "Add a workspace with the + in the sidebar."}
+                  : "Create a project with the + in the sidebar."}
               </p>
             </div>
           </div>
@@ -690,10 +761,23 @@ function AppShellContent() {
         </WorkspaceSurfaceProvider>
       </SidebarInset>
 
-      {addWorkspaceOpen && (
-        <AddWorkspaceDialog
-          onClose={() => setAddWorkspaceOpen(false)}
+      {newProjectOpen && (
+        <NewProjectDialog
+          onClose={() => setNewProjectOpen(false)}
           onCreate={anvilClient.createProject}
+          onAddExisting={anvilClient.addExistingProject}
+          getProjectsRoot={anvilClient.getProjectsRoot}
+        />
+      )}
+      {projectsRootDialogOpen && (
+        <ProjectsRootDialog
+          onClose={() => setProjectsRootDialogOpen(false)}
+          onGet={anvilClient.getProjectsRoot}
+          onSave={async (path) => {
+            const saved = await anvilClient.setProjectsRoot(path);
+            toast.success("Projects root updated", { description: saved });
+            return saved;
+          }}
         />
       )}
       {sessionPendingRename && (

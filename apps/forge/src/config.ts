@@ -16,12 +16,14 @@ export interface ForgeConfig {
   piExtensionPath?: string;
   ownerLogin?: string;
   webRoot: string;
+  projectsRoot: string;
   projects: ProjectSummary[];
 }
 
 interface ConfigFile {
   ownerLogin?: unknown;
   piExecutable?: unknown;
+  projectsRoot?: unknown;
   projects?: unknown;
 }
 
@@ -76,6 +78,17 @@ export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): F
   if (!file.ownerLogin && !allowUnauthenticated) {
     throw new Error("Forge requires ownerLogin; set ANVIL_ALLOW_UNAUTHENTICATED=true only for loopback development");
   }
+  const projects = configuredProjects(file.projects);
+  if (file.projectsRoot !== undefined && (typeof file.projectsRoot !== "string" || !file.projectsRoot.trim())) {
+    throw new Error("projectsRoot must be a non-empty directory path when configured");
+  }
+  // Runtime validation happens after Forge opens its database so a root saved
+  // from the settings UI can take precedence over this configuration seed.
+  const projectsRoot = resolve(
+    typeof file.projectsRoot === "string"
+      ? file.projectsRoot
+      : projects[0] ? dirname(projects[0].path) : "/code",
+  );
 
   return {
     host,
@@ -92,7 +105,8 @@ export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): F
     webRoot: resolve(
       environment.ANVIL_WEB_ROOT ?? fileURLToPath(new URL("../../web/dist", import.meta.url)),
     ),
-    projects: configuredProjects(file.projects),
+    projectsRoot,
+    projects,
   };
 }
 

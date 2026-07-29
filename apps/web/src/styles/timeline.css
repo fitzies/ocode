@@ -17,7 +17,7 @@
 
 .timeline-inner {
   display: flex;
-  width: min(100%, 790px);
+  width: min(100%, var(--message-column-width, 790px));
   min-height: 100%;
   margin: 0 auto;
   padding: 25px 27px 0;
@@ -307,7 +307,7 @@
 .markdown-body { min-width: 0; }
 .text-block {
   color: var(--legacy-text);
-  font-size: 13px;
+  font-size: var(--message-font-size, 13px);
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
@@ -363,7 +363,7 @@
   padding: 11px 12px;
   overflow: auto;
   color: var(--legacy-text);
-  font-size: 11px;
+  font-size: calc(var(--message-font-size, 13px) * 0.85);
   line-height: 1.6;
   background: var(--background);
   border: 1px solid var(--border);

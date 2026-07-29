@@ -54,14 +54,14 @@ function upgradeStoredResourceBlocks(value: unknown): unknown {
 
 function upgradeStoredSnapshotProtocol(value: unknown): unknown {
   if (
-    Number(ANVIL_PROTOCOL_VERSION) === 8 &&
+    Number(ANVIL_PROTOCOL_VERSION) === 9 &&
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    [5, 6, 7].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
+    [5, 6, 7, 8].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
   ) {
-    // Protocols 7 and 8 add strict session-relative project resources and
-    // Forge-owned read cursors. Older snapshots can be upgraded structurally.
+    // Protocols 7–9 add strict session-relative project resources, Forge-owned
+    // read cursors, and root-owned project creation. Snapshots upgrade structurally.
     return upgradeStoredResourceBlocks({
       ...(value as Record<string, unknown>),
       protocolVersion: ANVIL_PROTOCOL_VERSION,
@@ -639,11 +639,23 @@ export class ForgeDatabase {
     }
   }
 
-  compactedThrough(): number {
+  runtimeMetadata(key: string): string | undefined {
     const row = this.database.prepare(`
-      SELECT value FROM runtime_metadata WHERE key = 'compacted_through_sequence'
-    `).get() as { value?: unknown } | undefined;
-    const value = Number(row?.value ?? 0);
+      SELECT value FROM runtime_metadata WHERE key = ?
+    `).get(key) as { value?: unknown } | undefined;
+    return typeof row?.value === "string" ? row.value : undefined;
+  }
+
+  setRuntimeMetadata(key: string, value: string): void {
+    this.database.prepare(`
+      INSERT INTO runtime_metadata (key, value)
+      VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(key, value);
+  }
+
+  compactedThrough(): number {
+    const value = Number(this.runtimeMetadata("compacted_through_sequence") ?? 0);
     return Number.isSafeInteger(value) && value >= 0 ? value : 0;
   }
 

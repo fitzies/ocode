@@ -18,6 +18,7 @@ import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { ProjectFileService } from "../projects/projectFileService.ts";
 import { ProjectGitService } from "../projects/projectGitService.ts";
+import { ProjectsRootValidationError } from "../projects/projectsRoot.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
@@ -39,6 +40,8 @@ export interface ForgeHttpServerOptions {
   projectFiles?: ProjectFileService;
   projectGit?: ProjectGitService;
   searchFiles?: (sessionId: string, query: string, limit: number) => Promise<string[] | undefined>;
+  getProjectsRoot?: () => string;
+  setProjectsRoot?: (path: string) => string;
   requestRebuild?: () => Promise<void>;
   terminals?: TerminalManager;
   instanceId?: string;
@@ -168,6 +171,14 @@ export class ForgeHttpServer {
       sendJson(response, 403, apiError("owner_rejected", "Tailscale identity is not authorized"));
       return;
     }
+    if (request.method === "GET" && url.pathname === "/api/v1/settings/projects-root") {
+      this.projectsRoot(response);
+      return;
+    }
+    if (request.method === "PUT" && url.pathname === "/api/v1/settings/projects-root") {
+      await this.updateProjectsRoot(request, response);
+      return;
+    }
     if (this.projectFileRoutes && await this.projectFileRoutes.handle(request, response, url)) return;
     if (this.projectGitRoutes && await this.projectGitRoutes.handle(request, response, url)) return;
     if (request.method === "POST" && url.pathname === "/api/v1/admin/rebuild") {
@@ -279,6 +290,48 @@ export class ForgeHttpServer {
       if (await this.staticFile(request, response, url.pathname)) return;
     }
     sendJson(response, 404, apiError("not_found", "Route not found"));
+  }
+
+  private projectsRoot(response: ServerResponse): void {
+    if (!this.options.getProjectsRoot) {
+      sendJson(response, 503, apiError("projects_root_unavailable", "Projects root settings are unavailable"));
+      return;
+    }
+    sendJson(response, 200, { path: this.options.getProjectsRoot() });
+  }
+
+  private async updateProjectsRoot(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!sameOrigin(request)) {
+      sendJson(response, 403, apiError("origin_rejected", "Request origin is not allowed"));
+      return;
+    }
+    if (!this.options.setProjectsRoot) {
+      sendJson(response, 503, apiError("projects_root_unavailable", "Projects root settings are unavailable"));
+      return;
+    }
+
+    let body: unknown;
+    try {
+      body = await readJson(request);
+    } catch {
+      sendJson(response, 400, apiError("invalid_projects_root", "Request body must be valid JSON with a path"));
+      return;
+    }
+    if (!body || typeof body !== "object" || Array.isArray(body) || typeof (body as { path?: unknown }).path !== "string") {
+      sendJson(response, 400, apiError("invalid_projects_root", "Projects root path must be a string"));
+      return;
+    }
+
+    try {
+      const path = this.options.setProjectsRoot((body as { path: string }).path);
+      sendJson(response, 200, { path });
+    } catch (error) {
+      if (error instanceof ProjectsRootValidationError) {
+        sendJson(response, 400, apiError("invalid_projects_root", error.message));
+        return;
+      }
+      sendJson(response, 500, apiError("projects_root_failed", "Forge could not save the projects root", true));
+    }
   }
 
   private async rebuild(request: IncomingMessage, response: ServerResponse): Promise<void> {

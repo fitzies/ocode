@@ -1,5 +1,5 @@
-import { normalizeSessionTitle, SESSION_TITLE_MAX_LENGTH } from "@anvil/protocol";
-import { type FormEvent, useRef, useState } from "react";
+import { normalizeProjectSlug, normalizeSessionTitle, SESSION_TITLE_MAX_LENGTH } from "@anvil/protocol";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import {
   AlertDialog,
@@ -19,29 +19,63 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
-export function AddWorkspaceDialog({
+function projectPath(root: string, slug: string): string {
+  return `${root.replace(/\/$/, "")}/${slug}`;
+}
+
+export function NewProjectDialog({
   onClose,
   onCreate,
+  onAddExisting,
+  getProjectsRoot,
 }: {
   onClose: () => void;
-  onCreate: (name: string, path: string) => Promise<void>;
+  onCreate: (name: string) => Promise<{ status: "created" } | { status: "existing"; path: string }>;
+  onAddExisting: (name: string, path: string) => Promise<void>;
+  getProjectsRoot: () => Promise<string>;
 }) {
   const [name, setName] = useState("");
-  const [path, setPath] = useState("");
+  const [projectsRoot, setProjectsRoot] = useState<string>();
+  const [rootError, setRootError] = useState<string>();
   const [pending, setPending] = useState(false);
+  const [existingPath, setExistingPath] = useState<string>();
   const [error, setError] = useState<string>();
   const nameRef = useRef<HTMLInputElement>(null);
+  const slug = normalizeProjectSlug(name);
+  const preview = projectsRoot
+    ? projectPath(projectsRoot, slug || "project-name")
+    : "Loading projects root…";
+
+  useEffect(() => {
+    let cancelled = false;
+    void getProjectsRoot().then((path) => {
+      if (!cancelled) setProjectsRoot(path);
+    }).catch((failure) => {
+      if (!cancelled) setRootError(failure instanceof Error ? failure.message : String(failure));
+    });
+    return () => { cancelled = true; };
+  }, [getProjectsRoot]);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    if (!name.trim() || !path.trim() || pending) return;
+    if (!name.trim() || !slug || !projectsRoot || pending) return;
     setPending(true);
     setError(undefined);
     try {
-      await onCreate(name.trim(), path.trim());
+      if (existingPath) {
+        await onAddExisting(name.trim(), existingPath);
+        onClose();
+        return;
+      }
+      const result = await onCreate(name.trim());
+      if (result.status === "existing") {
+        setExistingPath(result.path);
+        setPending(false);
+        return;
+      }
       onClose();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
@@ -52,7 +86,7 @@ export function AddWorkspaceDialog({
   return (
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent
-        aria-describedby="add-workspace-description"
+        aria-describedby="new-project-description"
         className="sm:max-w-md"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
@@ -63,48 +97,162 @@ export function AddWorkspaceDialog({
       >
         <DialogHeader>
           <span className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            Workspace access
+            Forge projects
           </span>
-          <DialogTitle>Add a workspace</DialogTitle>
-          <DialogDescription id="add-workspace-description">
-            Choose a directory on Forge that Pi can work inside.
+          <DialogTitle>New project</DialogTitle>
+          <DialogDescription id="new-project-description">
+            Name your project. Forge will create its directory under the configured projects root.
           </DialogDescription>
         </DialogHeader>
         <form className="grid gap-4" onSubmit={submit}>
           <FieldGroup>
             <Field>
-              <FieldLabel htmlFor="workspace-name">Name</FieldLabel>
+              <FieldLabel htmlFor="project-name">Name</FieldLabel>
               <Input
                 ref={nameRef}
-                id="workspace-name"
+                id="project-name"
                 value={name}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Anvil"
+                onChange={(event) => {
+                  setName(event.target.value);
+                  setExistingPath(undefined);
+                  setError(undefined);
+                }}
+                placeholder="My project"
                 maxLength={80}
                 disabled={pending}
+                aria-invalid={(Boolean(name.trim()) && !slug) || undefined}
                 required
               />
+              {name.trim() && !slug && <FieldDescription>Use a name containing letters or numbers.</FieldDescription>}
             </Field>
             <Field>
-              <FieldLabel htmlFor="workspace-path">Path on Forge</FieldLabel>
+              <FieldLabel htmlFor="project-path-preview">Directory on Forge</FieldLabel>
               <Input
-                id="workspace-path"
-                value={path}
-                onChange={(event) => setPath(event.target.value)}
-                placeholder="/home/oli/code/project"
+                id="project-path-preview"
+                value={preview}
+                readOnly
                 spellCheck={false}
-                disabled={pending}
-                required
+                aria-label="New project path preview"
+                className="font-mono text-xs text-muted-foreground"
               />
             </Field>
           </FieldGroup>
+          {existingPath && (
+            <div className="rounded-md border border-border bg-muted/35 px-3 py-2.5 text-xs" role="status">
+              <strong className="block text-foreground">Project directory found</strong>
+              <span className="text-muted-foreground">Forge will add this existing directory without changing its contents.</span>
+            </div>
+          )}
+          {(rootError || error) && <FieldError role="alert">{rootError ?? error}</FieldError>}
+          <DialogFooter className="border-t border-border/60 pt-3">
+            <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!name.trim() || !slug || !projectsRoot || pending}>
+              {pending
+                ? existingPath ? "Adding…" : "Checking…"
+                : existingPath ? "Add existing project" : "Create project"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function ProjectsRootDialog({
+  onClose,
+  onGet,
+  onSave,
+}: {
+  onClose: () => void;
+  onGet: () => Promise<string>;
+  onSave: (path: string) => Promise<string>;
+}) {
+  const [path, setPath] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void onGet().then((value) => {
+      if (cancelled) return;
+      setPath(value);
+      setLoading(false);
+    }).catch((failure) => {
+      if (cancelled) return;
+      setError(failure instanceof Error ? failure.message : String(failure));
+      setLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, [onGet]);
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!path.trim() || loading || pending) return;
+    setPending(true);
+    setError(undefined);
+    try {
+      await onSave(path.trim());
+      onClose();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+      setPending(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+      <DialogContent
+        aria-describedby="projects-root-description"
+        className="sm:max-w-lg"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          inputRef.current?.focus();
+        }}
+        onEscapeKeyDown={(event) => pending && event.preventDefault()}
+        onPointerDownOutside={(event) => pending && event.preventDefault()}
+      >
+        <DialogHeader>
+          <span className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            Forge settings
+          </span>
+          <DialogTitle>Projects root</DialogTitle>
+          <DialogDescription id="projects-root-description">
+            New projects are created as directories inside this location on Forge.
+          </DialogDescription>
+        </DialogHeader>
+        <form className="grid gap-4" onSubmit={submit}>
+          <Field>
+            <FieldLabel htmlFor="projects-root-path">Absolute path</FieldLabel>
+            <Input
+              ref={inputRef}
+              id="projects-root-path"
+              value={path}
+              onChange={(event) => {
+                setPath(event.target.value);
+                setError(undefined);
+              }}
+              placeholder={loading ? "Loading…" : "/code"}
+              disabled={pending}
+              readOnly={loading}
+              spellCheck={false}
+              autoComplete="off"
+              className="font-mono"
+              aria-invalid={Boolean(error) || undefined}
+              required
+            />
+            <FieldDescription>The directory must already exist and be readable and writable by Forge.</FieldDescription>
+          </Field>
           {error && <FieldError role="alert">{error}</FieldError>}
           <DialogFooter className="border-t border-border/60 pt-3">
             <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!name.trim() || !path.trim() || pending}>
-              {pending ? "Adding…" : "Add workspace"}
+            <Button type="submit" disabled={!path.trim() || loading || pending}>
+              {pending ? "Saving…" : "Save projects root"}
             </Button>
           </DialogFooter>
         </form>

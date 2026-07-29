@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, realpathSync, rmSync, statSync } from "node:fs";
+import { mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
 import {
   createPiRpcAdapterState,
@@ -12,6 +12,7 @@ import {
 } from "@anvil/pi-rpc";
 import {
   ANVIL_PROTOCOL_VERSION,
+  normalizeProjectSlug,
   normalizeSessionTitle,
   SESSION_TITLE_MAX_LENGTH,
   type AnvilClientCommand,
@@ -26,6 +27,7 @@ import {
 import type { ForgeConfig } from "../config.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { EventProjectResolver, type ProjectResolver } from "../projects/projectResolver.ts";
+import { canonicalizeProjectsRoot } from "../projects/projectsRoot.ts";
 import { detectProjectWorkspaceKind } from "../projects/workspaceKind.ts";
 import { ForgeDatabase, type RuntimeSessionRecord } from "../store/database.ts";
 import { createPiRpcProcess, type RpcRecord, type RpcSubprocess } from "../rpc/subprocess.ts";
@@ -158,6 +160,7 @@ export class SessionManager {
   private readonly interactionTimers = new Map<string, NodeJS.Timeout>();
   private readonly deleting = new Set<string>();
   private readonly workspaceFiles = new WorkspaceFileIndex();
+  private projectsRoot: string;
   private shuttingDown = false;
 
   constructor(
@@ -167,6 +170,11 @@ export class SessionManager {
     private readonly options: SessionManagerOptions = {},
   ) {
     this.projectResolver = options.projectResolver ?? new EventProjectResolver(events);
+    const persistedProjectsRoot = database.runtimeMetadata("projects_root");
+    this.projectsRoot = canonicalizeProjectsRoot(persistedProjectsRoot ?? config.projectsRoot);
+    if (persistedProjectsRoot === undefined) {
+      database.setRuntimeMetadata("projects_root", this.projectsRoot);
+    }
     const restored = events.currentSnapshot();
     for (const project of restored.projects) this.refreshProjectBranch(project.id);
     this.cleanupOrphanSessionDirectories(new Set(restored.sessions.map((session) => session.id)));
@@ -237,6 +245,15 @@ export class SessionManager {
     return this.workspaceFiles.search(project.path, query, limit);
   };
 
+  getProjectsRoot = (): string => this.projectsRoot;
+
+  setProjectsRoot = (requestedPath: string): string => {
+    const path = canonicalizeProjectsRoot(requestedPath);
+    this.database.setRuntimeMetadata("projects_root", path);
+    this.projectsRoot = path;
+    return path;
+  };
+
   async stopAll(): Promise<void> {
     this.shuttingDown = true;
     const runtimes = [...this.runtimes.values()];
@@ -270,6 +287,7 @@ export class SessionManager {
 
   private async dispatch(command: AnvilClientCommand): Promise<AnvilCommandResponse> {
     if (command.type === "project.create") return this.createProject(command);
+    if (command.type === "project.addExisting") return this.addExistingProject(command);
     if (command.type === "session.select") return commandResponse(command, true);
     if (command.type === "session.create") return this.createSession(command);
     if (command.type === "session.delete") {
@@ -549,32 +567,172 @@ export class SessionManager {
     command: Extract<AnvilClientCommand, { type: "project.create" }>,
   ): AnvilCommandResponse {
     const name = command.payload.name.trim();
-    const requestedPath = command.payload.path.trim();
     if (!name || name.length > 80) {
-      return commandResponse(command, false, { error: "Workspace name must be between 1 and 80 characters" });
+      return commandResponse(command, false, { error: "Project name must be between 1 and 80 characters" });
     }
-    if (!requestedPath) return commandResponse(command, false, { error: "Workspace path is required" });
+
+    const projects = this.events.projectSummaries();
+    if (projects.some((project) => project.name.trim().toLowerCase() === name.toLowerCase())) {
+      return commandResponse(command, false, { error: "A project with that name already exists" });
+    }
+
+    const slug = normalizeProjectSlug(name);
+    if (!slug) {
+      return commandResponse(command, false, { error: "Project name must contain letters or numbers that can form a directory name" });
+    }
+
+    let currentRoot: string;
+    try {
+      currentRoot = canonicalizeProjectsRoot(this.projectsRoot);
+    } catch (error) {
+      return commandResponse(command, false, {
+        error: error instanceof Error ? error.message : "Projects root is unavailable",
+      });
+    }
+    if (currentRoot !== this.projectsRoot) {
+      return commandResponse(command, false, {
+        error: "Projects root changed on disk; review and save it again in Forge settings",
+      });
+    }
+
+    let path = join(currentRoot, slug);
+    if (projects.some((project) => project.path === path)) {
+      return commandResponse(command, false, { error: "That project path is already configured" });
+    }
+    let createdDirectory = false;
+    try {
+      mkdirSync(path);
+      createdDirectory = true;
+      path = realpathSync(path);
+      if (dirname(path) !== currentRoot) {
+        rmdirSync(path);
+        createdDirectory = false;
+        return commandResponse(command, false, { error: "Project directory escaped the configured projects root" });
+      }
+    } catch (error) {
+      if (createdDirectory) {
+        try {
+          rmdirSync(path);
+        } catch {
+          // Leave anything that is no longer our empty directory untouched.
+        }
+      }
+      const code = error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : undefined;
+      if (code === "EEXIST") {
+        try {
+          const existingPath = realpathSync(path);
+          if (existingPath === path && dirname(existingPath) === currentRoot && statSync(existingPath).isDirectory()) {
+            return commandResponse(command, true, { data: { status: "existing", path: existingPath } });
+          }
+        } catch {
+          // Fall through to the generic collision error for inaccessible entries.
+        }
+      }
+      return commandResponse(command, false, {
+        error: code === "EEXIST"
+          ? `A filesystem entry already exists at ${path}, but it is not a safe project directory`
+          : `Forge could not create the project directory at ${path}`,
+      });
+    }
+
+    try {
+      if (realpathSync(path) !== path || dirname(path) !== currentRoot || !statSync(path).isDirectory()) {
+        throw new Error("Project directory changed before it could be registered");
+      }
+    } catch (error) {
+      if (createdDirectory) {
+        try { rmdirSync(path); } catch { /* Keep a changed or non-empty directory untouched. */ }
+      }
+      return commandResponse(command, false, {
+        error: error instanceof Error ? error.message : "Project directory changed before it could be registered",
+      });
+    }
+
+    const project: ProjectSummary = {
+      id: `${slug.slice(0, 40)}-${randomUUID().slice(0, 8)}`,
+      name,
+      path,
+      workspaceKind: detectProjectWorkspaceKind(path),
+    };
+    try {
+      this.events.createProject(
+        project,
+        domainEvent("project.upserted", { project }, null),
+      );
+    } catch (error) {
+      if (createdDirectory) {
+        try {
+          rmdirSync(path);
+        } catch {
+          // Never remove a directory that is no longer empty or no longer ours.
+        }
+      }
+      throw error;
+    }
+    return commandResponse(command, true, { data: { status: "created", projectId: project.id } });
+  }
+
+  private addExistingProject(
+    command: Extract<AnvilClientCommand, { type: "project.addExisting" }>,
+  ): AnvilCommandResponse {
+    const name = command.payload.name.trim();
+    if (!name || name.length > 80) {
+      return commandResponse(command, false, { error: "Project name must be between 1 and 80 characters" });
+    }
+
+    const projects = this.events.projectSummaries();
+    if (projects.some((project) => project.name.trim().toLowerCase() === name.toLowerCase())) {
+      return commandResponse(command, false, { error: "A project with that name already exists" });
+    }
+    const slug = normalizeProjectSlug(name);
+    if (!slug) {
+      return commandResponse(command, false, { error: "Project name must contain letters or numbers that can form a directory name" });
+    }
+
+    let currentRoot: string;
+    try {
+      currentRoot = canonicalizeProjectsRoot(this.projectsRoot);
+    } catch (error) {
+      return commandResponse(command, false, {
+        error: error instanceof Error ? error.message : "Projects root is unavailable",
+      });
+    }
+    if (currentRoot !== this.projectsRoot) {
+      return commandResponse(command, false, {
+        error: "Projects root changed on disk; review and save it again in Forge settings",
+      });
+    }
+
+    const requestedPath = join(currentRoot, slug);
+    if (command.payload.path.trim() !== requestedPath) {
+      return commandResponse(command, false, { error: "The existing project candidate changed; check it again" });
+    }
+    if (projects.some((project) => project.path === requestedPath)) {
+      return commandResponse(command, false, { error: "That project path is already configured" });
+    }
 
     let path: string;
     try {
-      path = realpathSync(resolve(requestedPath));
-      if (!statSync(path).isDirectory()) {
-        return commandResponse(command, false, { error: "Workspace path is not a directory" });
+      path = realpathSync(requestedPath);
+      if (path !== requestedPath || dirname(path) !== currentRoot || !statSync(path).isDirectory()) {
+        return commandResponse(command, false, { error: "Existing project must be a real directory directly inside the projects root" });
       }
     } catch {
-      return commandResponse(command, false, { error: "Workspace path does not exist or is not accessible" });
-    }
-    const projects = this.events.projectSummaries();
-    if (projects.some((project) => project.path === path)) {
-      return commandResponse(command, false, { error: "That workspace path is already configured" });
-    }
-    if (projects.some((project) => project.name.toLowerCase() === name.toLowerCase())) {
-      return commandResponse(command, false, { error: "A workspace with that name already exists" });
+      return commandResponse(command, false, { error: `No accessible project directory exists at ${requestedPath}` });
     }
 
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "workspace";
+    try {
+      if (realpathSync(requestedPath) !== path || !statSync(requestedPath).isDirectory()) {
+        return commandResponse(command, false, { error: "Existing project directory changed before it could be registered" });
+      }
+    } catch {
+      return commandResponse(command, false, { error: "Existing project directory changed before it could be registered" });
+    }
+
     const project: ProjectSummary = {
-      id: `${slug}-${randomUUID().slice(0, 8)}`,
+      id: `${slug.slice(0, 40)}-${randomUUID().slice(0, 8)}`,
       name,
       path,
       workspaceKind: detectProjectWorkspaceKind(path),
@@ -583,7 +741,7 @@ export class SessionManager {
       project,
       domainEvent("project.upserted", { project }, null),
     );
-    return commandResponse(command, true, { data: { projectId: project.id } });
+    return commandResponse(command, true, { data: { status: "added", projectId: project.id } });
   }
 
   private createSession(

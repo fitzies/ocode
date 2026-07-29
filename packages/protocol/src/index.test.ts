@@ -9,6 +9,7 @@ import {
   isAnvilSessionDetailSync,
   isAnvilSummaryBootstrap,
   isJsonValue,
+  normalizeProjectSlug,
 } from "./index";
 
 describe("protocol runtime guards", () => {
@@ -80,6 +81,18 @@ describe("protocol runtime guards", () => {
       type: "project.create",
       sessionId: null,
       payload: { name: "Anvil", path: "/repo/anvil" },
+    })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "project.create",
+      sessionId: null,
+      payload: { name: "New Project" },
+    })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "project.addExisting",
+      sessionId: null,
+      payload: { name: "Existing Project", path: "/code/existing-project" },
     })).toBe(true);
     expect(isAnvilClientCommand({
       ...command,
@@ -456,5 +469,11 @@ describe("protocol runtime guards", () => {
         payload: { connection: "connected" },
       }),
     ).toBe(false);
+  });
+
+  it("normalizes neat project names into filesystem slugs", () => {
+    expect(normalizeProjectSlug("  My Café / API!!  ")).toBe("my-cafe-api");
+    expect(normalizeProjectSlug("---___***")).toBe("");
+    expect(normalizeProjectSlug("Already--Neat")).toBe("already-neat");
   });
 });

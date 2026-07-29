@@ -41,11 +41,28 @@ describe("loadForgeConfig", () => {
         artifactDir: join(directory, "artifacts"),
       });
       expect(config.projects[0]?.path).toBe(directory);
+      expect(config.projectsRoot).toBe(tmpdir());
       expect(() => loadForgeConfig({
         ANVIL_CONFIG: configPath,
         ANVIL_DATA_DIR: directory,
         ANVIL_HOST: "0.0.0.0",
       })).toThrow("loopback");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("uses an explicitly configured projects root as the runtime seed", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-projects-root-"));
+    const projectsRoot = join(directory, "projects");
+    const configPath = join(directory, "config.json");
+    try {
+      writeFileSync(configPath, JSON.stringify({
+        ownerLogin: "owner@example.com",
+        projectsRoot,
+        projects: [{ id: "project", name: "Project", path: directory }],
+      }));
+      expect(loadForgeConfig({ ANVIL_CONFIG: configPath, ANVIL_DATA_DIR: directory }).projectsRoot).toBe(projectsRoot);
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

@@ -46,7 +46,7 @@ pub fn run() {
             let window = window
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true)
-                .traffic_light_position(tauri::LogicalPosition::new(14.0, 18.0))
+                .traffic_light_position(tauri::LogicalPosition::new(14.0, 37.0))
                 .initialization_script("document.documentElement.dataset.ocodeDesktop = 'macos';");
 
             window.build()?;

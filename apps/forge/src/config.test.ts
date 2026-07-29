@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { loadForgeConfig } from "./config.ts";
+import { loadForgeConfig, migrationDefault, migrationStateDirectory } from "./config.ts";
 
 function fixture(ownerLogin?: string) {
   const directory = mkdtempSync(join(tmpdir(), "anvil-config-"));
@@ -17,6 +17,61 @@ function fixture(ownerLogin?: string) {
 }
 
 describe("loadForgeConfig", () => {
+  it("prefers canonical environment variables and accepts legacy fallbacks", () => {
+    const { directory, configPath } = fixture("owner@example.com");
+    const canonicalData = join(directory, "canonical");
+    const legacyData = join(directory, "legacy");
+    try {
+      const config = loadForgeConfig({
+        OCODE_CONFIG: configPath,
+        ANVIL_CONFIG: "/ignored/config.json",
+        OCODE_DATA_DIR: canonicalData,
+        ANVIL_DATA_DIR: legacyData,
+        OCODE_PORT: "4321",
+        ANVIL_PORT: "1234",
+      });
+      expect(config.port).toBe(4321);
+      expect(config.databasePath).toBe(join(canonicalData, "forge.sqlite"));
+
+      const legacy = loadForgeConfig({ ANVIL_CONFIG: configPath, ANVIL_DATA_DIR: legacyData });
+      expect(legacy.databasePath).toBe(join(legacyData, "forge.sqlite"));
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("selects an existing legacy default only while the canonical path is absent", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ocode-defaults-"));
+    const canonical = join(directory, "ocode");
+    const legacy = join(directory, "anvil");
+    try {
+      expect(migrationDefault(canonical, legacy)).toBe(canonical);
+      writeFileSync(legacy, "legacy");
+      expect(migrationDefault(canonical, legacy)).toBe(legacy);
+      writeFileSync(canonical, "canonical");
+      expect(migrationDefault(canonical, legacy)).toBe(canonical);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("continues using populated legacy state when the canonical directory is merely empty", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ocode-state-defaults-"));
+    const canonical = join(directory, "ocode");
+    const legacy = join(directory, "anvil");
+    try {
+      // Empty directories alone must not strand a populated legacy database.
+      mkdirSync(canonical);
+      mkdirSync(legacy);
+      writeFileSync(join(legacy, "forge.sqlite"), "legacy");
+      expect(migrationStateDirectory(canonical, legacy)).toBe(legacy);
+      writeFileSync(join(canonical, "forge.sqlite"), "canonical");
+      expect(migrationStateDirectory(canonical, legacy)).toBe(canonical);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("requires an owner identity unless development explicitly opts out", () => {
     const { directory, configPath } = fixture();
     try {

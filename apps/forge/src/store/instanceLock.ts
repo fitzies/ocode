@@ -20,7 +20,7 @@ function isBusy(error: unknown): boolean {
 
 export class ForgeInstanceLockedError extends Error {
   constructor(databasePath: string) {
-    super(`Another Anvil Forge process already owns the database: ${databasePath}`);
+    super(`Another ocode Forge process already owns the database: ${databasePath}`);
     this.name = "ForgeInstanceLockedError";
   }
 }

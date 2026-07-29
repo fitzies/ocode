@@ -125,6 +125,12 @@ function resultDetail(entry: ToolEntry): string | undefined {
   return undefined;
 }
 
+export function displayToolName(name: string): string {
+  if (name === "anvil_render_html_file") return "ocode_render_html_file";
+  if (name === "anvil_open_file") return "ocode_open_file";
+  return name;
+}
+
 export function presentTool(entry: ToolEntry): ToolPresentation {
   const category = categoryFor(entry);
   const name = basename(entry.name);
@@ -253,10 +259,11 @@ export function presentTool(entry: ToolEntry): ToolPresentation {
     };
   }
 
+  const displayName = displayToolName(entry.name);
   return {
     category,
-    title: entry.label ?? entry.name,
-    detail: entry.output.length ? `${entry.name} · Output available` : `${entry.name} · Extension tool`,
+    title: entry.label ?? displayName,
+    detail: entry.output.length ? `${displayName} · Output available` : `${displayName} · Extension tool`,
     status: statusText(entry),
   };
 }

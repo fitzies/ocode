@@ -16,6 +16,8 @@ type ThemeProviderContextValue = {
 };
 
 const ThemeProviderContext = createContext<ThemeProviderContextValue | undefined>(undefined);
+const THEME_STORAGE_KEY = "ocode-theme";
+const LEGACY_THEME_STORAGE_KEY = "anvil-theme";
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
@@ -30,7 +32,7 @@ function applyTheme(theme: Theme) {
 export function ThemeProvider({
   children,
   defaultTheme = "system",
-  storageKey = "anvil-theme",
+  storageKey = THEME_STORAGE_KEY,
 }: {
   children: ReactNode;
   defaultTheme?: Theme;
@@ -39,9 +41,19 @@ export function ThemeProvider({
   const [theme, setThemeState] = useState<Theme>(() => {
     try {
       const stored = localStorage.getItem(storageKey);
-      return stored === "dark" || stored === "light" || stored === "system"
-        ? stored
-        : defaultTheme;
+      if (stored === "dark" || stored === "light" || stored === "system") return stored;
+      if (storageKey === THEME_STORAGE_KEY) {
+        const legacy = localStorage.getItem(LEGACY_THEME_STORAGE_KEY);
+        if (legacy === "dark" || legacy === "light" || legacy === "system") {
+          try {
+            localStorage.setItem(THEME_STORAGE_KEY, legacy);
+          } catch {
+            // Continue using the legacy selection when migration storage is unavailable.
+          }
+          return legacy;
+        }
+      }
+      return defaultTheme;
     } catch {
       return defaultTheme;
     }

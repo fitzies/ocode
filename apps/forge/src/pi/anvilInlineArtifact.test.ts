@@ -21,16 +21,16 @@ afterEach(() => {
   directory = undefined;
 });
 
-describe("bundled Anvil Pi extension", () => {
+describe("bundled ocode Pi extension", () => {
   it("registers inline HTML and project-file tools", () => {
-    expect([...tools().keys()]).toEqual(["anvil_render_html_file", "anvil_open_file"]);
+    expect([...tools().keys()]).toEqual(["ocode_render_html_file", "ocode_open_file"]);
   });
 
   it("snapshots a bounded workspace HTML file into structured tool details", async () => {
     directory = mkdtempSync(join(tmpdir(), "anvil-inline-html-"));
     const html = "<!doctype html><p>Usage</p>";
     writeFileSync(join(directory, "usage.html"), html);
-    const tool = tools().get("anvil_render_html_file")!;
+    const tool = tools().get("ocode_render_html_file")!;
 
     const result = await tool.execute(
       "call-1",
@@ -43,7 +43,7 @@ describe("bundled Anvil Pi extension", () => {
     expect(result).toMatchObject({
       content: [{ type: "text", text: "Rendered Usage preview inline." }],
       details: {
-        kind: "anvil.inline-html",
+        kind: "ocode.inline-html",
         schemaVersion: 1,
         title: "Usage preview",
         sourcePath: "usage.html",
@@ -56,7 +56,7 @@ describe("bundled Anvil Pi extension", () => {
     directory = mkdtempSync(join(tmpdir(), "anvil-open-file-"));
     mkdirSync(join(directory, "src"));
     writeFileSync(join(directory, "src", "main.ts"), "export const ready = true;\n");
-    const result = await tools().get("anvil_open_file")!.execute(
+    const result = await tools().get("ocode_open_file")!.execute(
       "call-open",
       { path: "src/main.ts", view: "source", line: 3, column: 2 },
       undefined,
@@ -67,7 +67,7 @@ describe("bundled Anvil Pi extension", () => {
     expect(result).toEqual({
       content: [{ type: "text", text: "Ready to open src/main.ts." }],
       details: {
-        kind: "anvil.open-file",
+        kind: "ocode.open-file",
         schemaVersion: 1,
         path: "src/main.ts",
         view: "source",
@@ -83,7 +83,7 @@ describe("bundled Anvil Pi extension", () => {
     "rejects unsafe open-file path %s",
     async (path) => {
       directory = mkdtempSync(join(tmpdir(), "anvil-open-file-"));
-      await expect(tools().get("anvil_open_file")!.execute(
+      await expect(tools().get("ocode_open_file")!.execute(
         "call-invalid",
         { path },
         undefined,
@@ -98,7 +98,7 @@ describe("bundled Anvil Pi extension", () => {
     const outside = join(tmpdir(), `anvil-open-file-outside-${Date.now()}.txt`);
     writeFileSync(outside, "secret");
     symlinkSync(outside, join(directory, "escape.txt"));
-    const tool = tools().get("anvil_open_file")!;
+    const tool = tools().get("ocode_open_file")!;
 
     await expect(tool.execute("call-untrusted", { path: "escape.txt" }, undefined, undefined, {
       cwd: directory,
@@ -119,7 +119,7 @@ describe("bundled Anvil Pi extension", () => {
     directory = mkdtempSync(join(tmpdir(), "anvil-open-file-"));
     execFileSync("mkfifo", [join(directory, "pipe")]);
     await expect(Promise.race([
-      tools().get("anvil_open_file")!.execute("call-pipe", { path: "pipe" }, undefined, undefined, {
+      tools().get("ocode_open_file")!.execute("call-pipe", { path: "pipe" }, undefined, undefined, {
         cwd: directory,
         isProjectTrusted: () => true,
       }),
@@ -131,7 +131,7 @@ describe("bundled Anvil Pi extension", () => {
     directory = mkdtempSync(join(tmpdir(), "anvil-inline-html-"));
     const outside = join(tmpdir(), `outside-${Date.now()}.html`);
     writeFileSync(outside, "<p>Outside</p>");
-    const tool = tools().get("anvil_render_html_file")!;
+    const tool = tools().get("ocode_render_html_file")!;
 
     await expect(tool.execute(
       "call-2",

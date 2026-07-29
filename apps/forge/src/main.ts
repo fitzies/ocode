@@ -83,7 +83,7 @@ async function main(): Promise<void> {
     process.on("SIGTERM", stop);
 
     await server.listen(config.host, config.port);
-    process.stdout.write(`Anvil Forge listening on http://${config.host}:${config.port}\n`);
+    process.stdout.write(`ocode Forge listening on http://${config.host}:${config.port}\n`);
   } catch (error) {
     instanceLock.release();
     throw error;

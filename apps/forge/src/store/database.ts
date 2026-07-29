@@ -593,7 +593,7 @@ export class ForgeDatabase {
       discardPreviousSnapshots?: boolean;
     } = {},
   ): void {
-    if (!isAnvilSnapshot(snapshot)) throw new Error("Cannot persist an invalid Anvil snapshot");
+    if (!isAnvilSnapshot(snapshot)) throw new Error("Cannot persist an invalid ocode snapshot");
     if (snapshot.lastSequence > this.latestSequence()) {
       throw new Error("Snapshot cursor is ahead of the event journal");
     }

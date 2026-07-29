@@ -9,7 +9,8 @@ import {
 
 import type { WorkspaceLocation } from "./workspace";
 
-const DATABASE_NAME = "anvil-thread-cache";
+const DATABASE_NAME = "ocode-thread-cache";
+const LEGACY_DATABASE_NAME = "anvil-thread-cache";
 const DATABASE_VERSION = 1;
 const DETAIL_STORE = "details";
 const META_STORE = "meta";
@@ -72,6 +73,59 @@ function transactionDone(transaction: IDBTransaction): Promise<void> {
     transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"));
     transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
   });
+}
+
+async function databaseIsEmpty(database: IDBDatabase): Promise<boolean> {
+  const transaction = database.transaction([DETAIL_STORE, META_STORE], "readonly");
+  const [details, metadata] = await Promise.all([
+    requestValue(transaction.objectStore(DETAIL_STORE).count()),
+    requestValue(transaction.objectStore(META_STORE).count()),
+  ]);
+  return details === 0 && metadata === 0;
+}
+
+async function legacyDatabaseExists(): Promise<boolean> {
+  if (typeof indexedDB.databases !== "function") return true;
+  try {
+    return (await indexedDB.databases()).some((database) => database.name === LEGACY_DATABASE_NAME);
+  } catch {
+    return true;
+  }
+}
+
+function openLegacyDatabase(): Promise<IDBDatabase | undefined> {
+  return new Promise((resolve) => {
+    const request = indexedDB.open(LEGACY_DATABASE_NAME);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(undefined);
+    request.onblocked = () => resolve(undefined);
+  });
+}
+
+async function migrateLegacyDatabase(database: IDBDatabase): Promise<void> {
+  if (!await databaseIsEmpty(database) || !await legacyDatabaseExists()) return;
+  const legacy = await openLegacyDatabase();
+  if (!legacy) return;
+  try {
+    if (!legacy.objectStoreNames.contains(DETAIL_STORE) || !legacy.objectStoreNames.contains(META_STORE)) return;
+    const legacyTransaction = legacy.transaction([DETAIL_STORE, META_STORE], "readonly");
+    const [details, metadata] = await Promise.all([
+      requestValue(legacyTransaction.objectStore(DETAIL_STORE).getAll()),
+      requestValue(legacyTransaction.objectStore(META_STORE).getAll()),
+    ]);
+    if (details.length === 0 && metadata.length === 0) return;
+    // A second emptiness check prevents migration from overwriting data written
+    // by another tab while the legacy database was being read.
+    if (!await databaseIsEmpty(database)) return;
+    const copy = database.transaction([DETAIL_STORE, META_STORE], "readwrite");
+    const detailStore = copy.objectStore(DETAIL_STORE);
+    const metaStore = copy.objectStore(META_STORE);
+    for (const record of details) detailStore.put(record);
+    for (const record of metadata) metaStore.put(record);
+    await transactionDone(copy);
+  } finally {
+    legacy.close();
+  }
 }
 
 export class ThreadCache {
@@ -245,7 +299,13 @@ export class ThreadCache {
             database.createObjectStore(META_STORE, { keyPath: "key" });
           }
         };
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => {
+          const database = request.result;
+          void migrateLegacyDatabase(database).then(
+            () => resolve(database),
+            () => resolve(database),
+          );
+        };
         request.onerror = () => resolve(undefined);
         request.onblocked = () => resolve(undefined);
       });

@@ -287,7 +287,7 @@ export const Sidebar = memo(function Sidebar({
       <SidebarHeader className="gap-2 border-b border-sidebar-border p-2.5">
         <div className="flex min-h-8 items-center gap-1">
           <SidebarTrigger className="sidebar-close" aria-label="Close sidebar" />
-          <span className="px-1 text-xs font-medium tracking-tight text-sidebar-foreground">Anvil</span>
+          <span className="px-1 text-xs font-medium tracking-tight text-sidebar-foreground">ocode</span>
         </div>
         <div className="grid grid-cols-[minmax(0,1fr)_1.75rem] grid-rows-2 gap-1.5">
           <div className="relative min-w-0">

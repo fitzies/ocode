@@ -2,7 +2,7 @@
 
 ## Status
 
-Implementation specification for adding project-scoped terminals, project file viewing, an agent-driven `openFile` capability, and a future file tree to Anvil.
+Implementation specification for adding project-scoped terminals, project file viewing, an agent-driven `openFile` capability, and a future file tree to ocode.
 
 This document is intended to be handed to multiple coding agents. Every agent must also read `AGENTS.md` and inspect the current implementation before changing files.
 
@@ -33,12 +33,12 @@ These decisions are fixed for the first implementation unless the user explicitl
 - File viewing is read-only initially. A full editor is out of scope.
 - File APIs are project-scoped, even when the action originated in a Pi thread.
 - Ghostty is not used in the web client. Use xterm.js. Ghostty may be reconsidered for a future native client.
-- Do not put terminal output into the globally sequenced Anvil SSE event journal.
+- Do not put terminal output into the globally sequenced ocode SSE event journal.
 - Do not build a generic plugin/panel framework. Typed `main`, `bottom`, and `right` surfaces are enough.
 
 ## Existing Architecture and Relevant Files
 
-Anvil currently has a session-centric web workspace and a Forge backend using HTTP commands plus globally sequenced SSE events.
+ocode currently has a session-centric web workspace and a Forge backend using HTTP commands plus globally sequenced SSE events.
 
 Key files:
 
@@ -55,7 +55,7 @@ Key files:
 - `packages/protocol/src/index.ts`
   - Defines the shared HTTP/SSE protocol, snapshots, events, commands, and validators.
 - `packages/state/src/index.ts`
-  - Reduces durable Anvil events into snapshots.
+  - Reduces durable ocode events into snapshots.
 - `apps/forge/src/http/server.ts`
   - Custom Node HTTP server, owner authentication, same-origin mutation checks, SSE, and static web serving.
   - It currently has no WebSocket upgrade handling.
@@ -69,7 +69,7 @@ Key files:
   - Canonicalizes and allowlists project paths.
 - `apps/web/vite.config.ts`
   - Proxies `/api` to Forge in development; WebSocket proxying will need explicit verification/configuration.
-- `deploy/anvil-forge.service`
+- `deploy/ocode-forge.service`
   - Uses `KillMode=control-group`; terminal children are intentionally killed when Forge stops.
 - `apps/forge/src/pi/anvilInlineArtifact.ts`
 - `apps/web/src/components/InlineHtmlArtifact.tsx`
@@ -206,7 +206,7 @@ T3 Code provides a useful conceptual reference:
 - Metadata subscription separate from attached terminal output.
 - Attach logic that subscribes before obtaining the initial snapshot, buffers live events, sends the snapshot, removes duplicates by sequence, and then flushes buffered events.
 
-Do not copy T3 Code's thread scoping. Anvil terminal keys are always project-scoped.
+Do not copy T3 Code's thread scoping. ocode terminal keys are always project-scoped.
 
 ### Dependencies
 
@@ -263,7 +263,7 @@ All new panes begin at the project root. “Inherit the current shell directory�
 - Start at the canonical project path.
 - Do not allow the browser to choose an executable.
 - Avoid logging terminal input; it may contain secrets.
-- Persisted history may also contain secrets, so create files with mode `0600` under Anvil's private state directory and document retention.
+- Persisted history may also contain secrets, so create files with mode `0600` under ocode's private state directory and document retention.
 - Starting in an allowlisted project is not filesystem sandboxing. Once a shell is open, the Forge operating-system account's permissions are the actual boundary. This is acceptable for the personal owner-only deployment but must be explicit.
 
 ### Limits
@@ -286,7 +286,7 @@ Keeping a PTY alive is not enough; reconnect must restore visible context.
 
 For each terminal:
 
-1. Persist a bounded replayable history outside the Anvil event journal.
+1. Persist a bounded replayable history outside the ocode event journal.
 2. Give terminal runtime events a per-terminal sequence or epoch/offset.
 3. On attach, subscribe to live output before reading the snapshot.
 4. Buffer events received while the snapshot is prepared.
@@ -328,7 +328,7 @@ A JSON message protocol is sufficient initially because `node-pty` and xterm.js 
 - `terminal.error`
 - `terminal.reset`
 
-Use shared protocol types and runtime validation. The terminal protocol may have its own channel version while remaining part of the client-independent Anvil contract.
+Use shared protocol types and runtime validation. The terminal protocol may have its own channel version while remaining part of the client-independent ocode contract.
 
 Keep new contracts modular instead of extending the already-large `packages/protocol/src/index.ts` indefinitely. Prefer dedicated modules such as `packages/protocol/src/terminal.ts` and `packages/protocol/src/resources.ts`, re-exported through the package entry point. Likewise, keep WebSocket upgrade/channel logic in a focused module such as `apps/forge/src/http/terminalWebSocket.ts`, with only a narrow registration/delegation hook in `ForgeHttpServer`.
 
@@ -337,7 +337,7 @@ Do not route high-volume terminal output through:
 - `POST /api/v1/commands`
 - the global SSE stream
 - SQLite's global event journal
-- the durable Anvil snapshot reducer
+- the durable ocode snapshot reducer
 
 Terminal lifecycle metadata may be exposed through the terminal WebSocket snapshot/subscription. There is no need to journal every open/close/resize operation globally.
 
@@ -413,7 +413,7 @@ Use two explicit shapes at one mandatory enrichment boundary:
 
 ```ts
 // Durable session-relative representation stored in the tool timeline.
-// Its owning Anvil event/session supplies project identity.
+// Its owning ocode event/session supplies project identity.
 type ProjectResourceContentBlock = {
   id: string;
   type: "projectResource";
@@ -437,7 +437,7 @@ The canonical durable protocol representation is always `ProjectResourceContentB
 
 Entry points will include:
 
-- Agent `anvil_open_file` tool.
+- Agent `ocode_open_file` tool.
 - Future file tree.
 - File search.
 - Terminal path links.
@@ -481,7 +481,7 @@ File-content responses must be inert:
 - HTML preview must consume that text and render it only through the sandboxed iframe/CSP pipeline.
 - Allowlist raster image types such as PNG, JPEG, GIF, and WebP. Fetch them as authenticated bytes/blob URLs with `X-Content-Type-Options: nosniff` and a safe content disposition.
 - Exclude SVG from direct image preview in the first version unless it is separately sanitized; SVG can contain active content.
-- Never allow project JavaScript, HTML, or SVG responses to execute in the Anvil origin.
+- Never allow project JavaScript, HTML, or SVG responses to execute in the ocode origin.
 
 The current session-scoped `/api/v1/sessions/:id/files` search can remain temporarily for compatibility, but new UI must use project-scoped APIs and the old route should eventually delegate to the project file service.
 
@@ -500,10 +500,10 @@ Every file operation must:
 
 ### Agent tool
 
-Add a Pi extension tool following the existing Anvil extension/tool pattern:
+Add a Pi extension tool following the existing ocode extension/tool pattern:
 
 ```text
-anvil_open_file
+ocode_open_file
 ```
 
 Parameters:
@@ -518,11 +518,11 @@ The tool must:
 - Require a trusted project/workspace.
 - Validate that the target is a regular file inside the project.
 - Enforce a metadata/size check.
-- Return a small normalized project-relative reference, not the entire file contents, in tool details with a fixed internal discriminator such as `kind: "anvil.open-file"`.
+- Return a small normalized project-relative reference, not the entire file contents, in tool details with a fixed internal discriminator such as `kind: "ocode.open-file"`.
 - Require the Pi RPC adapter/normalizer to convert that internal tool result into the canonical durable `ProjectResourceContentBlock` protocol variant.
 - Produce a normal timeline representation that remains useful if the side panel is unavailable.
 
-The current Pi tool context exposes the trusted `cwd`, not an Anvil `projectId`. The extension emits only normalized project-relative path plus view/line/column metadata. The Pi RPC adapter creates `ProjectResourceContentBlock` without a project ID. The web client then calls `resolveProjectResourceReference(block, session)` using the owning `SessionSummary.projectId` before `openProjectResource`. Do not make the extension guess project IDs, accept one from the model, or expose generic tool details directly to the resource UI.
+The current Pi tool context exposes the trusted `cwd`, not an ocode `projectId`. The extension emits only normalized project-relative path plus view/line/column metadata. The Pi RPC adapter creates `ProjectResourceContentBlock` without a project ID. The web client then calls `resolveProjectResourceReference(block, session)` using the owning `SessionSummary.projectId` before `openProjectResource`. Do not make the extension guess project IDs, accept one from the model, or expose generic tool details directly to the resource UI.
 
 Do not make historical timeline hydration repeatedly reopen old files. Auto-open only for a newly observed successful tool completion in the active client context. The timeline result must retain an explicit “Open file” action so a user reconnecting after the live event can open it manually.
 
@@ -576,7 +576,7 @@ Future tree concerns:
 
 ### Keep channels separate
 
-- Existing Anvil protocol/snapshot/SSE: durable Pi/session state.
+- Existing ocode protocol/snapshot/SSE: durable Pi/session state.
 - Terminal WebSocket protocol: high-volume ephemeral terminal runtime plus attach snapshots.
 - Project file HTTP API: bounded request/response content and tree/search metadata.
 - Tool timeline reference: durable reference to a project resource, without embedding arbitrary file bytes.
@@ -732,7 +732,7 @@ Scope:
 - Add project resource tabs/state.
 - Implement source, Markdown, safe HTML, image, unsupported, loading, and error views.
 - Mount only through `WorkspaceLayout.right` and the shared mobile resource surface.
-- Add `anvil_open_file` Pi extension tool.
+- Add `ocode_open_file` Pi extension tool.
 - Normalize/render the typed tool result.
 - Reuse safe HTML rendering logic rather than duplicating it.
 
@@ -874,12 +874,12 @@ Do not implement unrelated improvements.
 1. Open two terminals in Project A.
 2. Run a long command in one terminal.
 3. Close the browser completely.
-4. Open Anvil on another device.
+4. Open ocode on another device.
 5. Select Project A and confirm both terminals are discoverable.
 6. Attach and confirm bounded history plus current live output.
 7. Switch between two Pi threads in Project A and confirm terminal identity does not change.
 8. Switch to Project B and confirm its terminal workspace is isolated.
-9. Ask Pi to call `anvil_open_file` for source, Markdown, and self-contained HTML files.
+9. Ask Pi to call `ocode_open_file` for source, Markdown, and self-contained HTML files.
 10. Confirm desktop side panel and mobile full-screen resource behavior.
 11. Restart Forge and confirm terminal processes are accurately gone while persisted history remains available/restartable.
 
@@ -891,7 +891,7 @@ Do not implement unrelated improvements.
 - Verify Tailscale Serve forwards WebSocket upgrades and identity headers.
 - Keep Forge bound to loopback and never enable Funnel.
 - Do not weaken `KillMode=control-group` to preserve terminal processes; doing so risks leaking Pi and shell subprocesses across service restarts.
-- Include terminal history in backup/privacy documentation if it is persisted under Anvil state.
+- Include terminal history in backup/privacy documentation if it is persisted under ocode state.
 
 ## Explicit Non-Goals
 
@@ -903,7 +903,7 @@ Do not implement unrelated improvements.
 - Filesystem sandboxing beyond the Forge account's OS permissions.
 - Full code editing or IDE behavior.
 - File create/rename/delete operations.
-- Executing arbitrary project HTML/JavaScript in the Anvil origin.
+- Executing arbitrary project HTML/JavaScript in the ocode origin.
 - Development-server preview orchestration.
 - Public internet terminal access.
 
@@ -931,7 +931,7 @@ Web client
 └── source/Markdown/HTML viewers
 
 Pi extension
-└── anvil_open_file                emits validated project resource reference
+└── ocode_open_file                emits validated project resource reference
 ```
 
 The most important constraint is ownership: sessions own Pi conversations; projects own terminals and files; the shared workspace layout presents all three without conflating them.

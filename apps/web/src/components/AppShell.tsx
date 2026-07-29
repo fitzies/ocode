@@ -66,7 +66,8 @@ import { WorkspaceSurfaceProvider, useWorkspaceSurfaces } from "./workspace/Work
 import { DeleteThreadDialog, NewProjectDialog, ProjectsRootDialog, RenameThreadDialog } from "./WorkspaceDialogs";
 
 const EMPTY_CATALOG: CapabilityCatalog = { models: [], commands: [], skills: [] };
-const DISPLAY_PREFERENCES_KEY = "anvil.display-preferences";
+const DISPLAY_PREFERENCES_KEY = "ocode.display-preferences";
+const LEGACY_DISPLAY_PREFERENCES_KEY = "anvil.display-preferences";
 
 type MessageFontSize = "small" | "default" | "large" | "extra-large";
 type MessageWidth = "narrow" | "full";
@@ -80,7 +81,16 @@ const DEFAULT_DISPLAY_PREFERENCES: DisplayPreferences = { fontSize: "default", w
 
 function loadDisplayPreferences(): DisplayPreferences {
   try {
-    const stored = JSON.parse(localStorage.getItem(DISPLAY_PREFERENCES_KEY) ?? "null") as Partial<DisplayPreferences> | null;
+    const canonical = localStorage.getItem(DISPLAY_PREFERENCES_KEY);
+    const legacy = canonical === null ? localStorage.getItem(LEGACY_DISPLAY_PREFERENCES_KEY) : null;
+    if (legacy !== null) {
+      try {
+        localStorage.setItem(DISPLAY_PREFERENCES_KEY, legacy);
+      } catch {
+        // Continue using the legacy preferences when migration storage is unavailable.
+      }
+    }
+    const stored = JSON.parse(canonical ?? legacy ?? "null") as Partial<DisplayPreferences> | null;
     return {
       fontSize: stored?.fontSize && ["small", "default", "large", "extra-large"].includes(stored.fontSize) ? stored.fontSize : "default",
       width: stored?.width && ["narrow", "full"].includes(stored.width) ? stored.width : "narrow",
@@ -440,7 +450,7 @@ function AppShellContent() {
   }, [activeSession?.id, activeSession?.status]);
 
   useEffect(() => {
-    document.title = activeSession?.title ? `${activeSession.title} · Anvil` : "Anvil";
+    document.title = activeSession?.title ? `${activeSession.title} · ocode` : "ocode";
   }, [activeSession?.title]);
 
   useEffect(() => {
@@ -464,7 +474,7 @@ function AppShellContent() {
           const notification = new Notification("Thread completed", {
             body: session.title,
             icon: "/favicon.svg",
-            tag: `anvil-completed-${session.id}`,
+            tag: `ocode-completed-${session.id}`,
           });
           notification.onclick = () => {
             window.focus();

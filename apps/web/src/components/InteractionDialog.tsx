@@ -231,8 +231,8 @@ function InteractionForm({
   if (request.method === "unknown" && !request.fields) {
     return (
       <div className="grid gap-2">
-        <strong className="text-destructive">Anvil cannot respond to this interaction yet.</strong>
-        <p className="m-0 text-muted-foreground">The raw request is preserved, but this terminal-only component needs an Anvil adapter.</p>
+        <strong className="text-destructive">ocode cannot respond to this interaction yet.</strong>
+        <p className="m-0 text-muted-foreground">The raw request is preserved, but this terminal-only component needs an ocode adapter.</p>
         <details>
           <summary className="cursor-pointer text-muted-foreground">Request payload</summary>
           <pre className="mt-2 overflow-auto rounded-md bg-muted p-3 font-mono text-[0.6875rem]">{JSON.stringify(request.raw, null, 2)}</pre>

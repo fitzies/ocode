@@ -9,8 +9,8 @@ import { secureOpenProjectPath } from "../files/secureProjectPath.ts";
 
 const MAX_INLINE_HTML_BYTES = 192 * 1024;
 const MAX_OPEN_FILE_BYTES = 20 * 1024 * 1024;
-const TOOL_NAME = "anvil_render_html_file";
-const OPEN_FILE_TOOL_NAME = "anvil_open_file";
+const TOOL_NAME = "ocode_render_html_file";
+const OPEN_FILE_TOOL_NAME = "ocode_open_file";
 const OPEN_FILE_TEXT_EXTENSIONS = new Set([
   ".c", ".cc", ".conf", ".cpp", ".css", ".csv", ".go", ".h", ".hpp", ".htm", ".html", ".ini",
   ".java", ".js", ".json", ".jsx", ".log", ".lua", ".md", ".mdx", ".mjs", ".py", ".rb", ".rs", ".sh",
@@ -54,12 +54,12 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
     name: TOOL_NAME,
     label: "Render HTML artifact",
     description:
-      "Render a small, self-contained HTML file inline in Anvil chat. The path must be a regular .html or .htm file inside the trusted workspace and the file must be no larger than 192 KiB.",
-    promptSnippet: "Render a small local HTML file inline in Anvil chat",
+      "Render a small, self-contained HTML file inline in ocode chat. The path must be a regular .html or .htm file inside the trusted workspace and the file must be no larger than 192 KiB.",
+    promptSnippet: "Render a small local HTML file inline in ocode chat",
     promptGuidelines: [
-      "Use anvil_render_html_file after writing a small self-contained HTML artifact that the user should see inline in chat.",
-      "Keep anvil_render_html_file artifacts visually clean: use a transparent page background, responsive layout, and no external network resources.",
-      "Use HTML, CSS, and SVG for anvil_render_html_file artifacts; generated JavaScript is blocked by the renderer.",
+      "Use ocode_render_html_file after writing a small self-contained HTML artifact that the user should see inline in chat.",
+      "Keep ocode_render_html_file artifacts visually clean: use a transparent page background, responsive layout, and no external network resources.",
+      "Use HTML, CSS, and SVG for ocode_render_html_file artifacts; generated JavaScript is blocked by the renderer.",
       "When a visual artifact benefits from being drawn in stages, put a subtle CSS or SVG entrance animation in the completed HTML and respect prefers-reduced-motion.",
     ],
     parameters: Type.Object({
@@ -128,7 +128,7 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
       return {
         content: [{ type: "text", text: `Rendered ${title} inline.` }],
         details: {
-          kind: "anvil.inline-html",
+          kind: "ocode.inline-html",
           schemaVersion: 1,
           title,
           sourcePath,
@@ -143,12 +143,12 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
     name: OPEN_FILE_TOOL_NAME,
     label: "Open project file",
     description:
-      "Open a regular file from the trusted workspace in Anvil's read-only resource viewer. The path must be project-relative. This tool returns navigation metadata, not file contents.",
-    promptSnippet: "Open a project file in Anvil's read-only resource viewer",
+      "Open a regular file from the trusted workspace in ocode's read-only resource viewer. The path must be project-relative. This tool returns navigation metadata, not file contents.",
+    promptSnippet: "Open a project file in ocode's read-only resource viewer",
     promptGuidelines: [
-      "Use anvil_open_file when the user should inspect a source, Markdown, HTML, raster image, or other project file in Anvil.",
+      "Use ocode_open_file when the user should inspect a source, Markdown, HTML, raster image, or other project file in ocode.",
       "Pass only a project-relative path. Never pass or guess a project ID or an absolute filesystem path.",
-      "Use source for code and raw text, preview for Markdown, HTML, and allowlisted raster images, or auto to let Anvil choose.",
+      "Use source for code and raw text, preview for Markdown, HTML, and allowlisted raster images, or auto to let ocode choose.",
     ],
     parameters: Type.Object({
       path: Type.String({ description: "Project-relative path to a regular file." }),
@@ -204,7 +204,7 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
       return {
         content: [{ type: "text", text: `Ready to open ${path}.` }],
         details: {
-          kind: "anvil.open-file",
+          kind: "ocode.open-file",
           schemaVersion: 1,
           path,
           ...(view ? { view } : {}),

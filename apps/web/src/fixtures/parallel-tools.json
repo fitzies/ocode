@@ -3,10 +3,10 @@
   "name": "Parallel unknown tools",
   "description": "Interleaved Firecrawl and Agent Browser progress with arbitrary details and an image.",
   "baseTimestamp": "2026-07-21T08:10:00.000Z",
-  "project": { "id": "anvil", "name": "anvil", "path": "~/code/anvil" },
+  "project": { "id": "ocode", "name": "ocode", "path": "~/code/ocode" },
   "session": {
     "id": "parallel-tools",
-    "projectId": "anvil",
+    "projectId": "ocode",
     "title": "Compare live documentation",
     "updatedAt": "2026-07-21T08:10:09.000Z",
     "status": "idle",
@@ -106,7 +106,7 @@
             { "type": "text", "text": "Captured the rendered interaction table." },
             { "type": "image", "mimeType": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "alt": "Documentation screenshot preview" }
           ],
-          "details": { "artifact": { "path": "/tmp/anvil/docs-preview.png", "verified": true }, "consoleErrors": [] }
+          "details": { "artifact": { "path": "/tmp/ocode/docs-preview.png", "verified": true }, "consoleErrors": [] }
         },
         "isError": false
       }

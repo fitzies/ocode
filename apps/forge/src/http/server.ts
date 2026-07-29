@@ -595,7 +595,7 @@ export class ForgeHttpServer {
       return;
     }
     if (!isAnvilClientCommand(value)) {
-      sendJson(response, 400, apiError("invalid_command", "Command does not match the Anvil protocol"));
+      sendJson(response, 400, apiError("invalid_command", "Command does not match the ocode protocol"));
       return;
     }
     if (!this.options.handleCommand) {

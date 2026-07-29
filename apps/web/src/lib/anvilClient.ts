@@ -2133,8 +2133,9 @@ export class ForgeAnvilClient implements AnvilClient {
   }
 }
 
-const useFixtureTransport = import.meta.env.VITE_ANVIL_TRANSPORT === "fixture" ||
-  (import.meta.env.DEV && import.meta.env.VITE_ANVIL_TRANSPORT !== "forge");
+const configuredTransport = import.meta.env.VITE_OCODE_TRANSPORT ?? import.meta.env.VITE_ANVIL_TRANSPORT;
+const useFixtureTransport = configuredTransport === "fixture" ||
+  (import.meta.env.DEV && configuredTransport !== "forge");
 
 export const anvilClient: AnvilClient = useFixtureTransport
   ? new FixtureAnvilClient()

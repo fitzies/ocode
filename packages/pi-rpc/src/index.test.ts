@@ -234,11 +234,11 @@ describe("Pi RPC normalization", () => {
     const [event] = normalizePiRpcRecord(state(), {
       type: "tool_execution_end",
       toolCallId: "call-artifact",
-      toolName: "anvil_render_html_file",
+      toolName: "ocode_render_html_file",
       result: {
         content: [{ type: "text", text: "Rendered Usage inline." }],
         details: {
-          kind: "anvil.inline-html",
+          kind: "ocode.inline-html",
           schemaVersion: 1,
           title: "Usage",
           sourcePath: "artifacts/usage.html",
@@ -261,7 +261,7 @@ describe("Pi RPC normalization", () => {
           sourcePath: "artifacts/usage.html",
         }],
         details: {
-          kind: "anvil.inline-html",
+          kind: "ocode.inline-html",
           schemaVersion: 1,
           title: "Usage",
         },
@@ -279,10 +279,10 @@ describe("Pi RPC normalization", () => {
       message: {
         role: "toolResult",
         toolCallId: "call-restored-artifact",
-        toolName: "anvil_render_html_file",
+        toolName: "ocode_render_html_file",
         content: [{ type: "text", text: "Rendered preview inline." }],
         details: {
-          kind: "anvil.inline-html",
+          kind: "ocode.inline-html",
           schemaVersion: 1,
           title: "Restored preview",
           byteLength: new TextEncoder().encode(html).byteLength,
@@ -295,7 +295,7 @@ describe("Pi RPC normalization", () => {
     expect(events).toHaveLength(2);
     expect(events[0]).toMatchObject({
       type: "tool.started",
-      payload: { tool: { name: "anvil_render_html_file" } },
+      payload: { tool: { name: "ocode_render_html_file" } },
     });
     expect(events[1]).toMatchObject({
       type: "tool.completed",
@@ -304,14 +304,42 @@ describe("Pi RPC normalization", () => {
     expect(events.every((event) => !("raw" in event))).toBe(true);
   });
 
+  it("accepts legacy inline HTML tool names and detail kinds while emitting canonical metadata", () => {
+    const html = "<div>Legacy preview</div>";
+    const [event] = normalizePiRpcRecord(state(), {
+      type: "tool_execution_end",
+      toolCallId: "call-legacy-artifact",
+      toolName: "anvil_render_html_file",
+      result: {
+        content: [{ type: "text", text: "Rendered preview inline." }],
+        details: {
+          kind: "anvil.inline-html",
+          schemaVersion: 1,
+          title: "Legacy preview",
+          byteLength: new TextEncoder().encode(html).byteLength,
+          html,
+        },
+      },
+      isError: false,
+    });
+
+    expect(event).toMatchObject({
+      type: "tool.completed",
+      payload: {
+        output: [{ type: "inlineHtml", html }],
+        details: { kind: "ocode.inline-html" },
+      },
+    });
+  });
+
   it("keeps malformed inline artifact envelopes on the generic tool fallback", () => {
     const [event] = normalizePiRpcRecord(state(), {
       type: "tool_execution_end",
       toolCallId: "call-bad-artifact",
-      toolName: "anvil_render_html_file",
+      toolName: "ocode_render_html_file",
       result: {
         content: [{ type: "text", text: "No preview" }],
-        details: { kind: "anvil.inline-html", schemaVersion: 99, html: "<p>Bad</p>" },
+        details: { kind: "ocode.inline-html", schemaVersion: 99, html: "<p>Bad</p>" },
       },
       isError: false,
     });
@@ -325,7 +353,7 @@ describe("Pi RPC normalization", () => {
 
   it("normalizes live and restored open-file results into durable project resources", () => {
     const details = {
-      kind: "anvil.open-file",
+      kind: "ocode.open-file",
       schemaVersion: 1,
       path: "src/main.ts",
       view: "source",
@@ -335,7 +363,7 @@ describe("Pi RPC normalization", () => {
     const [live] = normalizePiRpcRecord(state(), {
       type: "tool_execution_end",
       toolCallId: "call-open",
-      toolName: "anvil_open_file",
+      toolName: "ocode_open_file",
       result: { content: [{ type: "text", text: "Ready to open src/main.ts." }], details },
       isError: false,
     });
@@ -344,7 +372,7 @@ describe("Pi RPC normalization", () => {
       message: {
         role: "toolResult",
         toolCallId: "call-restored-open",
-        toolName: "anvil_open_file",
+        toolName: "ocode_open_file",
         content: [{ type: "text", text: "Ready to open src/main.ts." }],
         details,
         isError: false,
@@ -373,25 +401,46 @@ describe("Pi RPC normalization", () => {
     expect(restored.every((event) => !("raw" in event))).toBe(true);
   });
 
+  it("accepts legacy open-file tool names and detail kinds while emitting canonical metadata", () => {
+    const [event] = normalizePiRpcRecord(state(), {
+      type: "tool_execution_end",
+      toolCallId: "call-legacy-open",
+      toolName: "anvil_open_file",
+      result: {
+        content: [{ type: "text", text: "Ready to open src/legacy.ts." }],
+        details: { kind: "anvil.open-file", schemaVersion: 1, path: "src/legacy.ts" },
+      },
+      isError: false,
+    });
+
+    expect(event).toMatchObject({
+      type: "tool.completed",
+      payload: {
+        output: [{ type: "projectResource", path: "src/legacy.ts" }],
+        details: { kind: "ocode.open-file" },
+      },
+    });
+  });
+
   it("keeps malformed or failed open-file results on the generic fallback", () => {
     for (const record of [
       {
         type: "tool_execution_end",
         toolCallId: "call-bad-open",
-        toolName: "anvil_open_file",
+        toolName: "ocode_open_file",
         result: {
           content: [{ type: "text", text: "Malformed" }],
-          details: { kind: "anvil.open-file", schemaVersion: 1, path: "../secret" },
+          details: { kind: "ocode.open-file", schemaVersion: 1, path: "../secret" },
         },
         isError: false,
       },
       {
         type: "tool_execution_end",
         toolCallId: "call-failed-open",
-        toolName: "anvil_open_file",
+        toolName: "ocode_open_file",
         result: {
           content: [{ type: "text", text: "Failed" }],
-          details: { kind: "anvil.open-file", schemaVersion: 1, path: "src/main.ts" },
+          details: { kind: "ocode.open-file", schemaVersion: 1, path: "src/main.ts" },
         },
         isError: true,
       },
@@ -409,10 +458,10 @@ describe("Pi RPC normalization", () => {
     const [event] = normalizePiRpcRecord(state(), {
       type: "tool_execution_end",
       toolCallId: "call-cancelled-name",
-      toolName: "anvil_open_file",
+      toolName: "ocode_open_file",
       result: {
         content: [{ type: "text", text: "Ready to open aborted/cancelled.ts." }],
-        details: { kind: "anvil.open-file", schemaVersion: 1, path: "aborted/cancelled.ts" },
+        details: { kind: "ocode.open-file", schemaVersion: 1, path: "aborted/cancelled.ts" },
       },
       isError: false,
     });
@@ -423,11 +472,11 @@ describe("Pi RPC normalization", () => {
   });
 
   it("keeps cancelled live and restored open-file results generic and non-clickable", () => {
-    const details = { kind: "anvil.open-file", schemaVersion: 1, path: "src/main.ts" };
+    const details = { kind: "ocode.open-file", schemaVersion: 1, path: "src/main.ts" };
     const [live] = normalizePiRpcRecord(state(), {
       type: "tool_execution_end",
       toolCallId: "call-cancelled-open",
-      toolName: "anvil_open_file",
+      toolName: "ocode_open_file",
       result: { content: [{ type: "text", text: "Command cancelled" }], details, cancelled: true },
       isError: false,
     });
@@ -436,7 +485,7 @@ describe("Pi RPC normalization", () => {
       message: {
         role: "toolResult",
         toolCallId: "call-restored-cancelled-open",
-        toolName: "anvil_open_file",
+        toolName: "ocode_open_file",
         content: [{ type: "text", text: "Command cancelled" }],
         details,
         cancelled: true,

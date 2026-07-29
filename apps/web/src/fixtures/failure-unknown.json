@@ -109,7 +109,7 @@
         "id": "unsupported-canvas",
         "method": "customCanvas",
         "title": "Arrange workflow nodes",
-        "message": "This terminal-only custom component needs an Anvil adapter.",
+        "message": "This terminal-only custom component needs an ocode adapter.",
         "canvas": { "nodes": 4, "edges": 3 }
       }
     },

@@ -243,23 +243,26 @@ describe("Timeline tool presentation", () => {
     expect(html).toContain("tool-event--file");
   });
 
-  it("renders an inline artifact loading state without generic tool chrome", () => {
-    const html = renderToStaticMarkup(
-      <Timeline
-        session={{ ...session, status: "running" }}
-        entries={[tool({
-          name: "anvil_render_html_file",
-          arguments: { path: "artifacts/usage.html", title: "Usage preview" },
-        })]}
-        onSuggestion={() => undefined}
-      />,
-    );
+  it.each(["ocode_render_html_file", "anvil_render_html_file"])(
+    "renders an inline artifact loading state for %s without generic tool chrome",
+    (name) => {
+      const html = renderToStaticMarkup(
+        <Timeline
+          session={{ ...session, status: "running" }}
+          entries={[tool({
+            name,
+            arguments: { path: "artifacts/usage.html", title: "Usage preview" },
+          })]}
+          onSuggestion={() => undefined}
+        />,
+      );
 
-    expect(html).toContain("Usage preview");
-    expect(html).toContain("Building preview…");
-    expect(html).toContain('data-slot="spinner"');
-    expect(html).not.toContain("tool-event--generic");
-  });
+      expect(html).toContain("Usage preview");
+      expect(html).toContain("Building preview…");
+      expect(html).toContain('data-slot="spinner"');
+      expect(html).not.toContain("tool-event--generic");
+    },
+  );
 
   it("renders completed HTML artifacts in a sandboxed inline iframe", () => {
     const artifactHtml = "<!doctype html><html><body><strong>34% used</strong></body></html>";
@@ -267,7 +270,7 @@ describe("Timeline tool presentation", () => {
       <Timeline
         session={session}
         entries={[tool({
-          name: "anvil_render_html_file",
+          name: "ocode_render_html_file",
           status: "completed",
           arguments: { path: "artifacts/usage.html", title: "Usage preview" },
           output: [{
@@ -372,6 +375,25 @@ describe("Timeline tool presentation", () => {
     expect(html).toContain("Done · 1.3s");
     expect(html).toContain("tool-event--generic");
     expect(html).not.toContain("tool-event--file");
+  });
+
+  it("presents legacy ocode tool aliases without exposing the former product name", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[tool({
+          name: "anvil_open_file",
+          label: undefined,
+          status: "failed",
+          output: [{ id: "failure-legacy", type: "text", text: "File unavailable" }],
+          endedAt: "2026-03-22T00:00:01.000Z",
+        })]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("ocode_open_file");
+    expect(html).not.toContain("anvil_open_file");
   });
 
   it("keeps an unknown tool's exact identity visible when its friendly label fails", () => {

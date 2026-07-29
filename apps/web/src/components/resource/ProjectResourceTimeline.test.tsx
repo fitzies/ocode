@@ -18,7 +18,7 @@ it("keeps an explicit manual Open file action on completed timeline results", ()
     id: "tool-1",
     kind: "tool",
     toolCallId: "call-1",
-    name: "anvil_open_file",
+    name: "ocode_open_file",
     summary: "Open file",
     status: "completed",
     arguments: { path: "src/main.ts" },

@@ -11,7 +11,7 @@ import "./styles.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <ThemeProvider defaultTheme="system" storageKey="anvil-theme">
+    <ThemeProvider defaultTheme="system" storageKey="ocode-theme">
       <TooltipProvider delayDuration={350}>
         <RouterProvider router={router} />
         <Toaster position="bottom-right" />

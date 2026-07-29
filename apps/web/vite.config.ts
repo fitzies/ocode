@@ -15,7 +15,7 @@ export default defineConfig(({ mode }) => {
     server: {
       proxy: {
         "/api": {
-          target: environment.ANVIL_DEV_FORGE_URL ?? "http://127.0.0.1:3210",
+          target: environment.OCODE_DEV_FORGE_URL ?? environment.ANVIL_DEV_FORGE_URL ?? "http://127.0.0.1:3210",
           ws: true,
         },
       },

@@ -32,7 +32,7 @@ import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "r
 import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
 import { MarkdownText } from "./MarkdownText";
 import { Button } from "./ui/button";
-import { presentTool, type ToolCategory } from "./toolPresentation";
+import { displayToolName, presentTool, type ToolCategory } from "./toolPresentation";
 
 interface TimelineProps {
   session: SessionSummary;
@@ -220,6 +220,10 @@ export function trustedFileToolResource(entry: ToolEntry): ProjectResourceConten
   return { id: `${entry.id}-project-resource`, type: "projectResource", path, view: "auto" };
 }
 
+function isInlineHtmlTool(name: string): boolean {
+  return name === "ocode_render_html_file" || name === "anvil_render_html_file";
+}
+
 function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
   entry: TimelineEntry;
   entering?: boolean;
@@ -275,7 +279,7 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
         </div>
       );
     }
-    if (entry.name === "anvil_render_html_file" && (entry.status === "running" || entry.status === "queued")) {
+    if (isInlineHtmlTool(entry.name) && (entry.status === "running" || entry.status === "queued")) {
       const args = entry.arguments && typeof entry.arguments === "object" && !Array.isArray(entry.arguments)
         ? entry.arguments as Record<string, JsonValue>
         : {};
@@ -293,7 +297,7 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
     const fileToolResource = trustedFileToolResource(entry);
     const failureText = entry.status === "failed" ? firstTextOutput(entry) : undefined;
     const summaryDetail = failureText && presentation.category === "generic"
-      ? `${entry.name} · ${failureText}`
+      ? `${displayToolName(entry.name)} · ${failureText}`
       : failureText ?? presentation.detail;
     const argumentsRecord = entry.arguments && typeof entry.arguments === "object" && !Array.isArray(entry.arguments)
       ? entry.arguments as Record<string, JsonValue>
@@ -386,12 +390,12 @@ function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   let index = 0;
   while (index < entries.length) {
     const entry = entries[index]!;
-    if (entry.kind === "tool" && entry.batchId && entry.name !== "anvil_render_html_file") {
+    if (entry.kind === "tool" && entry.batchId && !isInlineHtmlTool(entry.name)) {
       const tools: ToolEntry[] = [entry];
       let nextIndex = index + 1;
       while (nextIndex < entries.length) {
         const candidate = entries[nextIndex];
-        if (candidate?.kind !== "tool" || candidate.batchId !== entry.batchId || candidate.name === "anvil_render_html_file") break;
+        if (candidate?.kind !== "tool" || candidate.batchId !== entry.batchId || isInlineHtmlTool(candidate.name)) break;
         tools.push(candidate);
         nextIndex += 1;
       }

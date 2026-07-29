@@ -1,7 +1,8 @@
 [Unit]
-Description=Anvil Forge runtime
+Description=ocode Forge runtime
 After=network-online.target tailscaled.service
 Wants=network-online.target
+Conflicts=anvil-forge.service
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -9,9 +10,11 @@ StartLimitBurst=5
 Type=simple
 User=forge
 Group=forge
-WorkingDirectory=/opt/anvil
+WorkingDirectory=/opt/ocode
+# Legacy variables remain valid; canonical values loaded second take precedence.
 EnvironmentFile=-/etc/anvil/forge.env
-ExecStart=/usr/bin/node /opt/anvil/apps/forge/dist/main.js
+EnvironmentFile=-/etc/ocode/forge.env
+ExecStart=/usr/bin/node /opt/ocode/apps/forge/dist/main.js
 Restart=on-failure
 RestartPreventExitStatus=75
 RestartSec=3

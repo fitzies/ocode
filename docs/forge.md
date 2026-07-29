@@ -10,11 +10,13 @@
 
 ## Configuration
 
-Copy `deploy/config.example.json` to `/home/forge/.config/anvil/config.json` and update `ownerLogin`, the Pi executable, and initial project paths. `ownerLogin` must exactly match the login forwarded by Tailscale Serve in `Tailscale-User-Login`; Forge rejects non-owner API requests when it is configured. Forge canonicalizes every configured project path at startup and rejects duplicate or missing directories.
+Copy `deploy/config.example.json` to `/home/forge/.config/ocode/config.json` and update `ownerLogin`, the Pi executable, and initial project paths. `ownerLogin` must exactly match the login forwarded by Tailscale Serve in `Tailscale-User-Login`; Forge rejects non-owner API requests when it is configured. Forge canonicalizes every configured project path at startup and rejects duplicate or missing directories.
 
 Configured projects seed the trusted workspace registry. The authenticated owner can add another Forge-local directory from the Workspaces `+` control; Forge validates and canonicalizes the path, then persists it in SQLite across restarts. This is a privileged action because Pi receives full access inside that directory.
 
-Environment overrides are documented in `.env.example`. Persistent data defaults to `/home/forge/.local/state/anvil`; keep that directory private and include the SQLite database, Pi session directory, artifact directory, and `terminal-history` directory in backups. `ANVIL_TERMINAL_HISTORY_DIR` overrides the latter.
+Environment overrides are documented in `.env.example`. Canonical `OCODE_*` and `VITE_OCODE_*` variables take precedence; legacy `ANVIL_*` and `VITE_ANVIL_*` names remain accepted as migration fallbacks. Fresh persistent data defaults to `/home/forge/.local/state/ocode`; keep that directory private and include the SQLite database, Pi session directory, artifact directory, and `terminal-history` directory in backups. `OCODE_TERMINAL_HISTORY_DIR` overrides the latter. With no explicit path variable, Forge automatically continues using populated legacy config and state paths, even if an empty canonical state directory exists.
+
+For an existing installation, do **not** copy the fresh-install `OCODE_DATA_DIR` example before moving state. Either omit explicit path variables and let compatibility detection use the legacy state, or point `OCODE_DATA_DIR` at the existing legacy directory. Move SQLite together with its `-wal`, `-shm`, and instance-lock sidecars, Pi sessions, artifacts, and terminal history only during a stopped-service migration. Keep the stable project `id`, but change a former `"name": "Anvil"` entry to `"name": "ocode"` so the workspace label updates without breaking session associations.
 
 Project terminals are owner-authenticated shells running with the Forge operating-system account's permissions. Their initial working directory is always the canonical trusted project root; this is not a filesystem sandbox. Terminal history may contain commands, output, and secrets. It is retained in mode-`0600` files, bounded to 5,000 lines and 512 KiB per terminal, and deleted when the terminal tab is explicitly closed. Forge permits at most eight running terminals per project, 64 KiB input messages, and bounded WebSocket client queues.
 
@@ -32,7 +34,7 @@ Owner-authenticated routes are:
 
 Project-file routes reject browser requests marked cross-site and emit `Cross-Origin-Resource-Policy: same-origin` in addition to exact owner authentication. Workspace files are never copied into or served from the static web root. Source, Markdown, HTML, JavaScript, XML, and SVG travel only as JSON text. HTML preview is reconstructed in a sandboxed opaque-origin iframe under a deny-by-default CSP; scripts, event handlers, forms, navigation, and external resources are blocked. SVG direct preview is intentionally unsupported. Unknown/binary files show metadata instead of being decoded.
 
-The bundled `anvil_open_file` Pi tool requires a trusted workspace, accepts only project-relative paths, validates a bounded regular file, and returns navigation metadata without contents or a project ID. Pi RPC stores that result as a durable session-relative `projectResource` block. A newly streamed successful completion can open it once on the active client; restored or replayed history never imperatively reopens files, and every timeline result keeps a manual **Open file** action.
+The bundled `ocode_open_file` Pi tool requires a trusted workspace, accepts only project-relative paths, validates a bounded regular file, and returns navigation metadata without contents or a project ID. Pi RPC stores that result as a durable session-relative `projectResource` block. A newly streamed successful completion can open it once on the active client; restored or replayed history never imperatively reopens files, and every timeline result keeps a manual **Open file** action.
 
 Resource tabs are client-local and project-scoped. There is no project file explorer or project-scoped tree/search API: resources open only from live agent requests or explicit timeline actions, including validated project-relative paths on successful write/edit tools. File viewing is read-only: editing, create/rename/delete, arbitrary binary download, SVG preview, development-server preview, and filesystem watching are not implemented. Changes are detected by ETag with stale-while-revalidate checks when a resource is refreshed or the client regains focus.
 
@@ -51,37 +53,50 @@ corepack pnpm install
 corepack pnpm build
 
 # terminal 1
-ANVIL_CONFIG=/path/to/config.json ANVIL_ALLOW_UNAUTHENTICATED=true corepack pnpm dev:forge
+OCODE_CONFIG=/path/to/config.json OCODE_ALLOW_UNAUTHENTICATED=true corepack pnpm dev:forge
 
 # terminal 2
-VITE_ANVIL_TRANSPORT=forge corepack pnpm dev:web
+VITE_OCODE_TRANSPORT=forge corepack pnpm dev:web
 ```
 
-Vite proxies `/api` HTTP requests and WebSocket upgrades to `http://127.0.0.1:3210`. Without `VITE_ANVIL_TRANSPORT=forge`, conversation development continues to use deterministic fixtures; project terminals require Forge.
+Vite proxies `/api` HTTP requests and WebSocket upgrades to `http://127.0.0.1:3210`. Without `VITE_OCODE_TRANSPORT=forge`, conversation development continues to use deterministic fixtures; project terminals require Forge.
 
-Stop the system service before starting a development Forge that uses the same data directory. Forge takes an exclusive instance lock before opening SQLite, so a second process cannot mutate the journal even when it uses a different port. Use a separate `ANVIL_DATA_DIR` when production and development instances must run at the same time.
+Stop the system service before starting a development Forge that uses the same data directory. Forge takes an exclusive instance lock before opening SQLite, so a second process cannot mutate the journal even when it uses a different port. Use a separate `OCODE_DATA_DIR` when production and development instances must run at the same time.
 
 ## Service installation
 
-Build and install Anvil at `/opt/anvil`, then adapt `deploy/anvil-forge.service` if the Forge account or paths differ. Install the management command somewhere on the administrator's `PATH`:
+Build and install ocode at `/opt/ocode`, then adapt `deploy/ocode-forge.service` if the Forge account or paths differ. Install the management command somewhere on the administrator's `PATH`:
 
 ```bash
-sudo ln -sf /opt/anvil/bin/anvil /usr/local/bin/anvil
-anvil status
+sudo ln -sf /opt/ocode/bin/ocode /usr/local/bin/ocode
+ocode status
 ```
 
-`anvil start`, `stop`, `restart`, `rebuild`, `status`, and `logs` manage the service. Status gives a compact service and Tailscale summary followed by every running Pi process on the host.
+`ocode start`, `stop`, `restart`, `rebuild`, `status`, and `logs` manage the service. `OCODE_URL` configures its backend URL, with `ANVIL_URL` accepted as a fallback. The command manages `ocode-forge` when that unit is installed and automatically falls back to an existing `anvil-forge` unit during migration. The legacy `bin/anvil` command remains as a warning compatibility shim. Status gives a compact service and Tailscale summary followed by every running Pi process on the host.
 
-Install the systemd unit:
+Install the systemd unit on a fresh host:
 
 ```bash
-sudo install -m 0644 deploy/anvil-forge.service /etc/systemd/system/anvil-forge.service
+sudo install -m 0644 deploy/ocode-forge.service /etc/systemd/system/ocode-forge.service
 sudo systemctl daemon-reload
-sudo systemctl enable --now anvil-forge.service
-sudo systemctl status anvil-forge.service
+sudo systemctl enable --now ocode-forge.service
+sudo systemctl status ocode-forge.service
 ```
 
-The service intentionally runs as the account that owns Pi configuration, credentials, sessions, and repositories. It binds only to loopback. Keep that restriction: forwarded Tailscale identity headers are trusted only because direct remote access to the backend is impossible.
+The unit reads `/etc/anvil/forge.env` first for migration compatibility and `/etc/ocode/forge.env` second so canonical values override legacy ones. It conflicts with the legacy unit as an additional guard against duplicate runtimes. It intentionally runs as the account that owns Pi configuration, credentials, sessions, and repositories. It binds only to loopback. Keep that restriction: forwarded Tailscale identity headers are trusted only because direct remote access to the backend is impossible.
+
+On a host where `anvil-forge.service` is already active, adapt the new unit paths and environment first, then perform one explicit cutover. Do not use `enable --now` before the legacy unit is stopped:
+
+```bash
+sudo install -m 0644 deploy/ocode-forge.service /etc/systemd/system/ocode-forge.service
+sudo systemctl daemon-reload
+sudo systemctl stop anvil-forge.service
+sudo systemctl disable anvil-forge.service
+sudo systemctl enable --now ocode-forge.service
+sudo systemctl status ocode-forge.service
+```
+
+After verifying health and state restoration, remove the old installed unit file if desired and run `sudo systemctl daemon-reload`. Never leave both units enabled: otherwise both may compete at boot even though the runtime lock and unit conflict protect normal starts.
 
 ## Tailscale exposure
 
@@ -91,13 +106,13 @@ Expose the loopback listener to the tailnet with Tailscale Serve and restrict th
 sudo tailscale serve --bg http://127.0.0.1:3210
 ```
 
-Verify the generated tailnet HTTPS URL from another authorized device. Do not use `tailscale funnel`, public port forwarding, or a non-loopback `ANVIL_HOST`.
+Verify the generated tailnet HTTPS URL from another authorized device. Do not use `tailscale funnel`, public port forwarding, or a non-loopback `OCODE_HOST`.
 
 ## Real Pi compatibility
 
 Acceptance against Pi 0.80.10 found two live RPC events that are not listed in the RPC documentation's event table:
 
-- `session_info_changed { name }` updates the Anvil session title.
+- `session_info_changed { name }` updates the ocode session title.
 - `thinking_level_changed { level }` updates the selected thinking level.
 
 Both shapes are covered by adapter fixtures. Unknown future records remain preserved as generic timeline events until their semantics are understood.

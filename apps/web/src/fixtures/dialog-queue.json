@@ -3,10 +3,10 @@
   "name": "Extension dialog queue",
   "description": "Native select, multi-select, confirm, input, editor, and schema-driven interactions.",
   "baseTimestamp": "2026-07-21T08:20:00.000Z",
-  "project": { "id": "anvil", "name": "anvil", "path": "~/code/anvil" },
+  "project": { "id": "ocode", "name": "ocode", "path": "~/code/ocode" },
   "session": {
     "id": "dialog-queue",
-    "projectId": "anvil",
+    "projectId": "ocode",
     "title": "Extension interaction contract",
     "updatedAt": "2026-07-21T08:20:07.000Z",
     "status": "waiting",
@@ -94,7 +94,7 @@
         "id": "dialog-confirm",
         "method": "confirm",
         "title": "Continue fixture replay?",
-        "message": "This is a normal extension confirmation, not an Anvil approval gate."
+        "message": "This is a normal extension confirmation, not an ocode approval gate."
       }
     },
     {

@@ -1,5 +1,5 @@
 {
-  "name": "anvil",
+  "name": "ocode",
   "private": true,
   "packageManager": "pnpm@11.15.1",
   "scripts": {

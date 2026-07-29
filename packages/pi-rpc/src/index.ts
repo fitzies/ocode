@@ -120,7 +120,8 @@ function contentBlocks(value: unknown, prefix: string): ContentBlock[] {
   });
 }
 
-const INLINE_HTML_TOOL = "anvil_render_html_file";
+const INLINE_HTML_TOOLS = new Set(["ocode_render_html_file", "anvil_render_html_file"]);
+const INLINE_HTML_KINDS = new Set(["ocode.inline-html", "anvil.inline-html"]);
 const MAX_INLINE_HTML_BYTES = 192 * 1024;
 
 function inlineHtmlBlock(
@@ -128,10 +129,10 @@ function inlineHtmlBlock(
   detailsValue: unknown,
   id: string,
 ): Extract<ContentBlock, { type: "inlineHtml" }> | undefined {
-  if (toolName !== INLINE_HTML_TOOL) return undefined;
+  if (!INLINE_HTML_TOOLS.has(toolName)) return undefined;
   const details = recordOf(detailsValue);
   if (
-    details.kind !== "anvil.inline-html" ||
+    !INLINE_HTML_KINDS.has(String(details.kind)) ||
     details.schemaVersion !== 1 ||
     typeof details.title !== "string" ||
     !details.title.trim() ||
@@ -156,7 +157,7 @@ function inlineHtmlBlock(
 
 function inlineHtmlMetadata(block: Extract<ContentBlock, { type: "inlineHtml" }>): JsonValue {
   return {
-    kind: "anvil.inline-html",
+    kind: "ocode.inline-html",
     schemaVersion: 1,
     title: block.title,
     byteLength: block.byteLength,
@@ -164,17 +165,18 @@ function inlineHtmlMetadata(block: Extract<ContentBlock, { type: "inlineHtml" }>
   };
 }
 
-const OPEN_FILE_TOOL = "anvil_open_file";
+const OPEN_FILE_TOOLS = new Set(["ocode_open_file", "anvil_open_file"]);
+const OPEN_FILE_KINDS = new Set(["ocode.open-file", "anvil.open-file"]);
 
 function projectResourceBlock(
   toolName: string,
   detailsValue: unknown,
   id: string,
 ): Extract<ContentBlock, { type: "projectResource" }> | undefined {
-  if (toolName !== OPEN_FILE_TOOL) return undefined;
+  if (!OPEN_FILE_TOOLS.has(toolName)) return undefined;
   const details = recordOf(detailsValue);
   if (
-    details.kind !== "anvil.open-file" ||
+    !OPEN_FILE_KINDS.has(String(details.kind)) ||
     details.schemaVersion !== 1 ||
     typeof details.path !== "string" ||
     normalizeProjectResourcePath(details.path) !== details.path ||
@@ -194,7 +196,7 @@ function projectResourceBlock(
 
 function projectResourceMetadata(block: Extract<ContentBlock, { type: "projectResource" }>): JsonValue {
   return {
-    kind: "anvil.open-file",
+    kind: "ocode.open-file",
     schemaVersion: 1,
     path: block.path,
     ...(block.view ? { view: block.view } : {}),

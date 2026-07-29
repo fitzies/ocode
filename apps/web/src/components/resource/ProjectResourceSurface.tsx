@@ -58,7 +58,7 @@ export function ResourceViewer({ tab, state }: { tab: ProjectResourceTab; state:
   return (
     <div className="resource-unsupported">
       <strong>Preview unavailable</strong>
-      <p>{requestedView === "preview" ? "This file type does not have a safe preview." : "Anvil will not decode this file as text."}</p>
+      <p>{requestedView === "preview" ? "This file type does not have a safe preview." : "ocode will not decode this file as text."}</p>
       <dl>
         <div><dt>Type</dt><dd>{state.file.mediaType}</dd></div>
         <div><dt>Size</dt><dd>{formatBytes(state.file.size)}</dd></div>

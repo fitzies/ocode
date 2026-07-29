@@ -46,10 +46,71 @@ const summary: AnvilSummaryBootstrap = {
   cursor: detail.throughSequence,
 };
 
+function seedLegacyCache(records: { details?: unknown[]; metadata?: unknown[] }): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("anvil-thread-cache", 1);
+    request.onupgradeneeded = () => {
+      request.result.createObjectStore("details", { keyPath: "sessionId" });
+      request.result.createObjectStore("meta", { keyPath: "key" });
+    };
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      const database = request.result;
+      const transaction = database.transaction(["details", "meta"], "readwrite");
+      for (const record of records.details ?? []) transaction.objectStore("details").put(record);
+      for (const record of records.metadata ?? []) transaction.objectStore("meta").put(record);
+      transaction.oncomplete = () => {
+        database.close();
+        resolve();
+      };
+      transaction.onerror = () => reject(transaction.error);
+    };
+  });
+}
+
 beforeEach(() => vi.stubGlobal("indexedDB", new IDBFactory()));
 afterEach(() => vi.unstubAllGlobals());
 
 describe("ThreadCache", () => {
+  it("migrates details, shell metadata, and the prompt outbox from the legacy database", async () => {
+    const command = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "legacy-command",
+      sessionId: detail.sessionId,
+      timestamp: "2026-07-23T01:00:00.000Z",
+      type: "prompt.send" as const,
+      payload: { content: "Continue", delivery: "prompt" as const },
+    };
+    await seedLegacyCache({
+      details: [{ sessionId: detail.sessionId, detail, persistedAt: 1, lastAccessedAt: 1, bytes: 1 }],
+      metadata: [
+        { key: "shell", bootstrap: summary, activeSessionId: detail.sessionId, persistedAt: 1 },
+        { key: "prompt-outbox", prompts: [{ command, content: "Continue" }] },
+      ],
+    });
+
+    const cache = new ThreadCache();
+    expect(await cache.readDetail(detail.sessionId)).toEqual(detail);
+    expect(await cache.readShell()).toMatchObject({ bootstrap: summary, activeSessionId: detail.sessionId });
+    expect(await cache.readPromptOutbox()).toEqual([{ command, content: "Continue" }]);
+  });
+
+  it("does not replace canonical data when both databases exist", async () => {
+    const canonical = new ThreadCache();
+    await canonical.writeDetail(detail);
+    await seedLegacyCache({
+      details: [{
+        sessionId: detail.sessionId,
+        detail: { ...detail, throughSequence: 99, timeline: [] },
+        persistedAt: 2,
+        lastAccessedAt: 2,
+        bytes: 1,
+      }],
+    });
+
+    expect(await new ThreadCache().readDetail(detail.sessionId)).toEqual(detail);
+  });
+
   it("persists shell and detail across cache instances", async () => {
     const writer = new ThreadCache();
     const workspaceLocation = { projectId: "anvil", sessionId: detail.sessionId };

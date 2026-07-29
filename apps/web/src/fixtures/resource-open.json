@@ -1,16 +1,16 @@
 {
   "id": "resource-open",
   "name": "Project resource",
-  "description": "A successful and malformed anvil_open_file result for resource fallback coverage.",
+  "description": "A successful and malformed ocode_open_file result for resource fallback coverage.",
   "baseTimestamp": "2026-07-23T10:00:00.000Z",
   "project": {
-    "id": "anvil",
-    "name": "Anvil",
-    "path": "/home/oli/code/anvil"
+    "id": "ocode",
+    "name": "ocode",
+    "path": "/home/oli/code/ocode"
   },
   "session": {
     "id": "fixture-resource-open",
-    "projectId": "anvil",
+    "projectId": "ocode",
     "title": "Inspect resource",
     "updatedAt": "2026-07-23T10:00:00.000Z",
     "status": "idle",
@@ -23,7 +23,7 @@
       "record": {
         "type": "tool_execution_start",
         "toolCallId": "open-readme",
-        "toolName": "anvil_open_file",
+        "toolName": "ocode_open_file",
         "args": { "path": "README.md", "view": "preview" }
       }
     },
@@ -32,12 +32,12 @@
       "record": {
         "type": "tool_execution_end",
         "toolCallId": "open-readme",
-        "toolName": "anvil_open_file",
+        "toolName": "ocode_open_file",
         "isError": false,
         "result": {
           "content": [{ "type": "text", "text": "Ready to open README.md." }],
           "details": {
-            "kind": "anvil.open-file",
+            "kind": "ocode.open-file",
             "schemaVersion": 1,
             "path": "README.md",
             "view": "preview",
@@ -51,12 +51,12 @@
       "record": {
         "type": "tool_execution_end",
         "toolCallId": "open-malformed",
-        "toolName": "anvil_open_file",
+        "toolName": "ocode_open_file",
         "isError": false,
         "result": {
           "content": [{ "type": "text", "text": "Malformed reference retained generically." }],
           "details": {
-            "kind": "anvil.open-file",
+            "kind": "ocode.open-file",
             "schemaVersion": 99,
             "path": "../secret"
           }

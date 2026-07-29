@@ -4,9 +4,9 @@
   "projectsRoot": "/code",
   "projects": [
     {
-      "id": "anvil",
-      "name": "Anvil",
-      "path": "/code/anvil"
+      "id": "ocode",
+      "name": "ocode",
+      "path": "/code/ocode"
     }
   ]
 }

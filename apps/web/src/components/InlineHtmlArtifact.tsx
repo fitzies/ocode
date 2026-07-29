@@ -10,7 +10,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Spinner } from "./ui/spinner";
 
-const MESSAGE_TYPE = "anvil:inline-html";
+const MESSAGE_TYPE = "ocode:inline-html";
 const COLLAPSED_MAX_HEIGHT = 640;
 const EXPANDED_MAX_HEIGHT = 1_100;
 

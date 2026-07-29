@@ -1327,7 +1327,7 @@ export class SessionManager {
       const ownedDirectory = `${resolve(this.config.sessionDir, sessionId)}${sep}`;
       const sessionFile = resolve(piState.sessionFile);
       if (!sessionFile.startsWith(ownedDirectory)) {
-        throw new Error("Pi reported a session file outside its Anvil session directory");
+        throw new Error("Pi reported a session file outside its ocode session directory");
       }
       piState = { ...piState, sessionFile };
     }

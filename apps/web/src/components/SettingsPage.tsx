@@ -102,7 +102,7 @@ function SettingsGroup({
 function GeneralSettings({ theme }: Pick<SettingsPageProps, "theme">) {
   return (
     <>
-      <SettingsGroup title="Appearance" description="Keep Anvil comfortable across every device.">
+      <SettingsGroup title="Appearance" description="Keep ocode comfortable across every device.">
         <SettingRow title="Theme" description="Choose how the interface looks on this device." align="start">
           <div className="settings-theme-picker" role="group" aria-label="Theme">
             {([
@@ -137,7 +137,7 @@ function GeneralSettings({ theme }: Pick<SettingsPageProps, "theme">) {
       </SettingsGroup>
 
       <SettingsGroup title="Startup">
-        <SettingRow title="Resume last thread" description="Open the most recently viewed thread when Anvil starts.">
+        <SettingRow title="Resume last thread" description="Open the most recently viewed thread when ocode starts.">
           <PreviewSwitch checked label="Resume last thread" />
         </SettingRow>
         <SettingRow title="Confirm destructive actions" description="Ask before deleting threads, workspaces, or cached data.">
@@ -237,8 +237,8 @@ function WorkspaceSettings({ projects }: Pick<SettingsPageProps, "projects">) {
 function NotificationSettings() {
   return (
     <>
-      <SettingsGroup title="Thread activity" description="Choose when Anvil should get your attention.">
-        <SettingRow title="Thread completed" description="Notify when Pi finishes while Anvil is in the background.">
+      <SettingsGroup title="Thread activity" description="Choose when ocode should get your attention.">
+        <SettingRow title="Thread completed" description="Notify when Pi finishes while ocode is in the background.">
           <PreviewSwitch checked label="Thread completed notifications" />
         </SettingRow>
         <SettingRow title="Input required" description="Notify when Pi is waiting for an answer or approval.">
@@ -291,7 +291,7 @@ function ForgeSettings({ connection }: Pick<SettingsPageProps, "connection">) {
       <SettingsGroup title="Web interface" description="Apply the latest frontend changes without interrupting running threads.">
         <div className="settings-action-row">
           <div>
-            <strong>Rebuild Anvil</strong>
+            <strong>Rebuild ocode</strong>
             <p>Build the latest React changes, then reload this client.</p>
           </div>
           <Button size="sm" disabled><HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />Rebuild</Button>
@@ -333,7 +333,7 @@ function AdvancedSettings() {
 
       <SettingsGroup title="Danger zone">
         <div className="settings-action-row settings-action-row--danger">
-          <div><strong>Reset settings</strong><p>Restore all Anvil preferences to their defaults.</p></div>
+          <div><strong>Reset settings</strong><p>Restore all ocode preferences to their defaults.</p></div>
           <Button variant="destructive" size="sm" disabled>Reset settings</Button>
         </div>
       </SettingsGroup>
@@ -343,9 +343,9 @@ function AdvancedSettings() {
 
 const sectionCopy: Record<SettingsSection, { title: string; description: string; icon: typeof Settings01Icon }> = {
   general: { title: "General", description: "Appearance, startup, and everyday interface preferences.", icon: PaintBoardIcon },
-  pi: { title: "Pi", description: "Choose the defaults Anvil uses for new Pi sessions.", icon: AiSettingIcon },
+  pi: { title: "Pi", description: "Choose the defaults ocode uses for new Pi sessions.", icon: AiSettingIcon },
   workspaces: { title: "Workspaces", description: "Manage the trusted projects Forge is allowed to access.", icon: Folder01Icon },
-  notifications: { title: "Notifications", description: "Decide how Anvil lets you know when a thread needs attention.", icon: Notification01Icon },
+  notifications: { title: "Notifications", description: "Decide how ocode lets you know when a thread needs attention.", icon: Notification01Icon },
   forge: { title: "Forge", description: "Inspect the remote runtime that owns your persistent Pi sessions.", icon: ServerStack01Icon },
   advanced: { title: "Advanced", description: "Retention, diagnostics, and recovery controls.", icon: InformationCircleIcon },
 };

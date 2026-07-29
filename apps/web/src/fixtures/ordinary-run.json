@@ -3,10 +3,10 @@
   "name": "Ordinary tool run",
   "description": "Reasoning, streaming text, a tool call, and completion.",
   "baseTimestamp": "2026-07-21T08:00:00.000Z",
-  "project": { "id": "anvil", "name": "anvil", "path": "~/code/anvil" },
+  "project": { "id": "ocode", "name": "ocode", "path": "~/code/ocode" },
   "session": {
     "id": "ordinary-run",
-    "projectId": "anvil",
+    "projectId": "ocode",
     "title": "Build the protocol foundation",
     "updatedAt": "2026-07-21T08:00:08.000Z",
     "status": "idle",

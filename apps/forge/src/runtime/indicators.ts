@@ -75,7 +75,7 @@ export class LiveIndicatorsService {
       const headers: Record<string, string> = {
         authorization: `Bearer ${codex.access}`,
         accept: "application/json",
-        "user-agent": "anvil-forge",
+        "user-agent": "ocode-forge",
       };
       if (typeof codex.accountId === "string") headers["chatgpt-account-id"] = codex.accountId;
       const response = await fetch(`${CHATGPT_BASE_URL}/wham/usage`, { headers, signal: AbortSignal.timeout(10_000) });

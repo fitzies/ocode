@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+OCODE_URL="${OCODE_URL:-${ANVIL_URL:-http://127.0.0.1:3210}}"
+
+service_exists() {
+  systemctl cat "$1.service" >/dev/null 2>&1
+}
+
+service_active() {
+  systemctl is-active --quiet "$1.service" 2>/dev/null
+}
+
+if service_active ocode-forge && service_active anvil-forge; then
+  printf 'Both ocode-forge and legacy anvil-forge are active; stop one before using ocode.\n' >&2
+  exit 75
+elif service_active ocode-forge; then
+  SERVICE="ocode-forge"
+  OTHER_SERVICE="anvil-forge"
+elif service_active anvil-forge; then
+  SERVICE="anvil-forge"
+  OTHER_SERVICE="ocode-forge"
+  printf 'Using active legacy anvil-forge service; complete the documented service cutover when ready.\n' >&2
+elif service_exists ocode-forge; then
+  SERVICE="ocode-forge"
+  OTHER_SERVICE="anvil-forge"
+elif service_exists anvil-forge; then
+  SERVICE="anvil-forge"
+  OTHER_SERVICE="ocode-forge"
+  printf 'Using legacy anvil-forge service; install ocode-forge.service when ready to migrate.\n' >&2
+else
+  SERVICE="ocode-forge"
+  OTHER_SERVICE="anvil-forge"
+fi
+
+ensure_single_service() {
+  if service_active "$OTHER_SERVICE"; then
+    printf 'Refusing to start %s while %s is active.\n' "$SERVICE" "$OTHER_SERVICE" >&2
+    exit 75
+  fi
+}
+
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  BOLD=$'\033[1m'; DIM=$'\033[2m'; GREEN=$'\033[32m'; RED=$'\033[31m'; RESET=$'\033[0m'
+else
+  BOLD=""; DIM=""; GREEN=""; RED=""; RESET=""
+fi
+
+usage() {
+  cat <<EOF
+${BOLD}ocode${RESET} — manage the ocode service
+
+${BOLD}Usage:${RESET} ocode <command>
+
+  start      Start ocode and enable Tailscale Serve
+  stop       Stop ocode and disable Tailscale Serve
+  restart    Rebuild and restart ocode
+  rebuild    Rebuild without restarting
+  status     Show ocode, Tailscale, and every Pi process
+  logs       Follow ocode service logs
+  help       Show this help
+EOF
+}
+
+heading() { printf "\n%s%s%s\n" "$BOLD" "$1" "$RESET"; }
+
+build() {
+  echo "Building ocode…"
+  (cd "$REPO_ROOT" && corepack pnpm build)
+}
+
+enable_serve() {
+  echo "Enabling Tailscale Serve…"
+  sudo tailscale serve --bg "$OCODE_URL"
+}
+
+start() {
+  ensure_single_service
+  echo "Starting ocode…"
+  sudo systemctl start "$SERVICE"
+  enable_serve
+  echo "${GREEN}ocode is running.${RESET}"
+}
+
+stop() {
+  echo "Stopping ocode…"
+  sudo systemctl stop "$SERVICE"
+  echo "Disabling Tailscale Serve…"
+  sudo tailscale serve --https=443 off
+  echo "ocode stopped."
+}
+
+restart() {
+  ensure_single_service
+  build
+  echo "Restarting ocode…"
+  sudo systemctl restart "$SERVICE"
+  enable_serve
+  echo "${GREEN}ocode was rebuilt and restarted.${RESET}"
+}
+
+show_pi_processes() {
+  local rows
+  rows="$(ps -eo pid=,ppid=,user=,etime=,stat=,args= | awk '
+    {
+      command = $0
+      if (command ~ /(^|[[:space:]\/])pi([[:space:]]|$)/ && command !~ /awk /) print
+    }')"
+
+  heading "Pi instances"
+  if [[ -z "$rows" ]]; then
+    echo "${DIM}No Pi processes running.${RESET}"
+    return
+  fi
+  printf "%-8s %-8s %-12s %-12s %-6s %s\n" "PID" "PPID" "USER" "UPTIME" "STATE" "COMMAND"
+  echo "$rows" | awk '{
+    pid=$1; ppid=$2; user=$3; elapsed=$4; state=$5
+    $1=$2=$3=$4=$5=""; sub(/^[[:space:]]+/, "")
+    printf "%-8s %-8s %-12s %-12s %-6s %s\n", pid, ppid, user, elapsed, state, $0
+  }'
+}
+
+status() {
+  local failed=0 state health
+
+  heading "ocode"
+  state="$(systemctl is-active "$SERVICE" 2>/dev/null || true)"
+  if [[ "$state" == "active" ]]; then
+    printf "Service     %s● running%s  %s\n" "$GREEN" "$RESET" "$SERVICE"
+  else
+    printf "Service     %s● %s%s  %s\n" "$RED" "${state:-unknown}" "$RESET" "$SERVICE"
+    failed=1
+  fi
+
+  if health="$(curl --silent --show-error --fail --max-time 3 "$OCODE_URL/api/v1/health/ready" 2>/dev/null)"; then
+    printf "Health      %s● ready%s  %s\n" "$GREEN" "$RESET" "$health"
+  else
+    printf "Health      %s● unavailable%s  %s\n" "$RED" "$RESET" "$OCODE_URL"
+    failed=1
+  fi
+
+  heading "Tailscale Serve"
+  tailscale serve status 2>/dev/null || echo "${DIM}Unavailable.${RESET}"
+
+  show_pi_processes
+  return "$failed"
+}
+
+logs() {
+  exec sudo journalctl -u "$SERVICE" -f --no-pager
+}
+
+case "${1:-help}" in
+  start) start ;;
+  stop|end) stop ;;
+  restart) restart ;;
+  rebuild) build ;;
+  status) status ;;
+  logs) logs ;;
+  help|-h|--help) usage ;;
+  *)
+    echo "Unknown command: $1" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

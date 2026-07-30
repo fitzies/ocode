@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simplified retry state</title>
+<style>
+  :root{color-scheme:dark;--bg:#090a0a;--panel:#101111;--line:#252727;--text:#dedfdd;--muted:#8f9290;--amber:#e9a72f;--green:#67b98a}
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:transparent;color:var(--text);font:15px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  body{display:grid;place-items:center;padding:32px}
+  .frame{width:min(920px,100%);min-height:520px;background:var(--bg);border:1px solid #1b1d1c;border-radius:14px;padding:46px 52px;box-shadow:0 24px 80px rgba(0,0,0,.3)}
+  .thinking{margin:0 0 58px;color:var(--muted);font-style:italic;font-weight:600}
+  .thinking b{color:#c4c6c3}
+  .event{display:grid;grid-template-columns:22px 1fr auto;gap:15px;align-items:start;border-left:3px solid var(--green);padding:20px 20px 18px 25px;background:var(--panel);border-radius:0 12px 12px 0;animation:arrive .35s ease-out both}
+  .icon{display:grid;place-items:center;width:20px;height:20px;border:1.5px solid var(--green);border-radius:50%;color:var(--green);font-size:12px;font-weight:800;margin-top:1px}
+  .copy strong{display:block;font-size:16px;letter-spacing:-.01em}
+  .copy span{display:block;color:var(--muted);margin-top:4px}
+  .status{color:var(--green);font-size:13px;font-weight:650;margin-top:2px}
+  details{grid-column:2/4;border-top:1px solid var(--line);margin-top:12px;padding-top:13px;color:var(--muted)}
+  summary{cursor:pointer;list-style:none;font-weight:600;display:flex;justify-content:space-between}
+  summary::-webkit-details-marker{display:none}
+  summary:after{content:'›';font-size:21px;line-height:14px;transition:transform .18s ease}
+  details[open] summary:after{transform:rotate(90deg)}
+  .detail{margin-top:13px;padding:12px 14px;border-radius:7px;background:#0b0c0c;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:#a8aaa8}
+  .note{margin:34px 0 0 40px;color:#737674;font-size:13px}
+  @keyframes arrive{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  @media (prefers-reduced-motion:reduce){.event{animation:none}}
+  @media(max-width:640px){body{padding:0}.frame{border:0;border-radius:0;padding:36px 22px;min-height:100vh}.event{grid-template-columns:22px 1fr}.status{grid-column:2}.thinking{margin-bottom:42px}details{grid-column:2}}
+</style>
+</head>
+<body>
+<main class="frame" aria-label="Simplified retry event proposal">
+  <p class="thinking">Thinking: <b>Adjusting SCP URL sanitization tests</b></p>
+  <article class="event">
+    <span class="icon" aria-hidden="true">✓</span>
+    <div class="copy">
+      <strong>Connection recovered</strong>
+      <span>A temporary WebSocket error was retried automatically.</span>
+    </div>
+    <span class="status">Resolved</span>
+    <details>
+      <summary>Technical details</summary>
+      <div class="detail">Original error: WebSocket error<br>Retry attempts: 1<br>Outcome: succeeded</div>
+    </details>
+  </article>
+  <p class="note">One resolved event replaces the raw error, “retrying,” and “retry finished” entries.</p>
+</main>
+</body>
+</html>

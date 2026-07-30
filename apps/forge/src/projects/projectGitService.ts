@@ -6,8 +6,16 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import type {
+  ProjectGitCheck,
+  ProjectGitCheckState,
+  ProjectGitConnectRequest,
+  ProjectGitConnectResult,
   ProjectGitGeneratedMessage,
+  ProjectGitLastCommit,
+  ProjectGitPullRequest,
   ProjectGitPushResult,
+  ProjectGitRemote,
+  ProjectGitRepositoryState,
   ProjectGitStatus,
 } from "@anvil/protocol";
 
@@ -41,9 +49,17 @@ interface GitState extends ProjectGitStatus {
   hasChanges: boolean;
   hasHead: boolean;
   head: string | null;
-  remote: string | null;
+  remoteName: string | null;
   upstreamBranchRef: string | null;
   conflicted: boolean;
+}
+
+function safeErrorMessage(value: string, fallback: string): string {
+  const redacted = value
+    .replace(/:\/\/[^/@\s]+@/g, "://")
+    .replace(/\b(?:gh[opusr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b/g, "[redacted]")
+    .replace(/([?&](?:access_?token|auth|password|token)=)[^&\s]+/gi, "$1[redacted]");
+  return redacted.trim().slice(0, 1_000) || fallback;
 }
 
 function commandError(error: unknown, fallback: string): ProjectGitError {
@@ -51,7 +67,7 @@ function commandError(error: unknown, fallback: string): ProjectGitError {
   const stderr = typeof item?.stderr === "string" ? item.stderr.trim() : "";
   const stdout = typeof item?.stdout === "string" ? item.stdout.trim() : "";
   const message = stderr || stdout || (typeof item?.message === "string" ? item.message : fallback);
-  return new ProjectGitError("git_failed", message || fallback, 500);
+  return new ProjectGitError("git_failed", safeErrorMessage(message, fallback), 500);
 }
 
 function parseNumstat(value: string): { additions: number; deletions: number } {
@@ -73,6 +89,187 @@ function commitSubject(value: string): string {
   return message;
 }
 
+function validRemoteName(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
+}
+
+function validatedRemoteUrl(value: string): string {
+  if (!value || value !== value.trim() || value.length > 2_048 || value.startsWith("-") || /[\u0000-\u001f\u007f]/.test(value)) {
+    throw new ProjectGitError("invalid_remote_url", "Remote URL is malformed");
+  }
+  if (value.includes("::")) throw new ProjectGitError("invalid_remote_url", "Git remote helpers are not allowed");
+  const hasScheme = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(value);
+  if (hasScheme) {
+    try {
+      const url = new URL(value);
+      if (!["http:", "https:", "ssh:", "git:", "file:"].includes(url.protocol)) throw new Error("unsupported");
+      if (url.protocol !== "file:" && !url.hostname) throw new Error("missing host");
+      if (url.protocol === "file:" && !url.pathname.startsWith("/")) throw new Error("invalid file path");
+    } catch {
+      throw new ProjectGitError("invalid_remote_url", "Remote URL is malformed");
+    }
+    return value;
+  }
+  if (/^(?:[^@/:\s]+@)?[^/:\s]+:[^?#\s]+$/.test(value)) return value;
+  if (/^(?:\/|\.\.?\/)[^\u0000-\u001f\u007f]*$/.test(value)) return value;
+  throw new ProjectGitError("invalid_remote_url", "Use an HTTPS, SSH, SCP-style, or local path remote URL");
+}
+
+function safeConfiguredRemoteUrl(value: string | undefined): value is string {
+  if (!value) return false;
+  try {
+    validatedRemoteUrl(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function repositoryParts(pathname: string): { owner?: string; repository?: string } {
+  const parts = pathname.replace(/^\/+/, "").split("/").filter(Boolean);
+  if (parts.length < 2) return {};
+  const owner = parts.at(-2)!;
+  const repository = parts.at(-1)!.replace(/\.git$/i, "");
+  return owner && repository ? { owner, repository } : {};
+}
+
+function remoteMetadata(name: string, rawUrl: string | undefined): ProjectGitRemote {
+  if (!rawUrl) return { name, url: null, provider: "other" };
+  let sanitized = rawUrl.trim();
+  let host: string | undefined;
+  let parts: { owner?: string; repository?: string } = {};
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(sanitized)) {
+    try {
+      const url = new URL(sanitized);
+      url.username = "";
+      url.password = "";
+      url.search = "";
+      url.hash = "";
+      sanitized = url.toString();
+      host = url.hostname.toLowerCase() || undefined;
+      parts = repositoryParts(url.pathname);
+    } catch {
+      sanitized = "";
+    }
+  } else {
+    const scp = /^(?:[^@/:\s]+@)?([^:/\s]+):([^?#\s]+)(?:[?#].*)?$/.exec(sanitized);
+    if (scp) {
+      host = scp[1]!.toLowerCase();
+      sanitized = `${scp[1]}:${scp[2]}`;
+      parts = repositoryParts(scp[2]!);
+    } else if (!sanitized.startsWith("/") && !sanitized.startsWith("./") && !sanitized.startsWith("../")) {
+      sanitized = "";
+    }
+  }
+  const provider = host === "github.com" ? "github" : "other";
+  return {
+    name,
+    url: sanitized || null,
+    provider,
+    ...(host ? { host } : {}),
+    ...parts,
+    ...(provider === "github" && parts.owner && parts.repository
+      ? { webUrl: `https://github.com/${encodeURIComponent(parts.owner)}/${encodeURIComponent(parts.repository)}` }
+      : {}),
+  };
+}
+
+function lastCommit(value: string | undefined): ProjectGitLastCommit | null {
+  if (!value) return null;
+  const [hash, shortHash, subject, authoredAt] = value.trim().split("\0");
+  return hash && shortHash && subject !== undefined && authoredAt
+    ? { hash, shortHash, subject, authoredAt }
+    : null;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function checkState(item: Record<string, unknown>): ProjectGitCheckState {
+  const status = stringValue(item.status)?.toUpperCase();
+  const conclusion = stringValue(item.conclusion)?.toUpperCase();
+  const state = stringValue(item.state)?.toUpperCase();
+  if (status === "QUEUED" || state === "EXPECTED") return "queued";
+  if (status === "IN_PROGRESS" || status === "PENDING" || state === "PENDING") return "running";
+  const result = conclusion ?? state;
+  if (result === "SUCCESS") return "passed";
+  if (["FAILURE", "ERROR", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(result ?? "")) return "failed";
+  if (result === "CANCELLED") return "cancelled";
+  if (result === "SKIPPED") return "skipped";
+  if (result === "NEUTRAL" || result === "STALE") return "neutral";
+  return "unknown";
+}
+
+function normalizedCheck(value: unknown): ProjectGitCheck | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const name = stringValue(item.name) ?? stringValue(item.context);
+  if (!name) return undefined;
+  const workflow = stringValue(item.workflowName);
+  const category = `${workflow ?? ""} ${name}`;
+  const kind = /agent|copilot|review bot/i.test(category)
+    ? "agent"
+    : /deploy|deployment|preview|vercel|netlify|pages/i.test(category) ? "deployment" : "check";
+  const url = stringValue(item.detailsUrl) ?? stringValue(item.targetUrl);
+  return {
+    name,
+    kind,
+    state: checkState(item),
+    ...(url ? { url } : {}),
+    ...(workflow ? { workflow } : {}),
+    ...(stringValue(item.startedAt) ? { startedAt: stringValue(item.startedAt)! } : {}),
+    ...(stringValue(item.completedAt) ? { completedAt: stringValue(item.completedAt)! } : {}),
+  };
+}
+
+function normalizedPullRequest(value: unknown): ProjectGitPullRequest | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  const number = typeof item.number === "number" ? item.number : undefined;
+  const title = stringValue(item.title);
+  const url = stringValue(item.url);
+  const updatedAt = stringValue(item.updatedAt);
+  const baseBranch = stringValue(item.baseRefName);
+  const rawState = stringValue(item.state)?.toUpperCase();
+  if (number === undefined || !title || !url || !updatedAt || !baseBranch || !["OPEN", "CLOSED", "MERGED"].includes(rawState ?? "")) return undefined;
+  const checks = Array.isArray(item.statusCheckRollup)
+    ? item.statusCheckRollup.map(normalizedCheck).filter((check): check is ProjectGitCheck => Boolean(check))
+    : [];
+  const mergeable = item.mergeable === "MERGEABLE" ? "mergeable" : item.mergeable === "CONFLICTING" ? "conflicting" : "unknown";
+  const review = stringValue(item.reviewDecision)?.toUpperCase();
+  const reviewDecision = review === "APPROVED"
+    ? "approved"
+    : review === "CHANGES_REQUESTED" ? "changes-requested" : review === "REVIEW_REQUIRED" ? "review-required" : "unknown";
+  const state = rawState!.toLowerCase() as "open" | "closed" | "merged";
+  const isDraft = item.isDraft === true;
+  const states = checks.map((check) => check.state);
+  const status = state === "merged"
+    ? "merged"
+    : state === "closed"
+      ? "closed"
+      : isDraft
+        ? "draft"
+        : states.includes("failed")
+          ? "failed"
+          : states.some((check) => check === "queued" || check === "running")
+            ? "running"
+            : mergeable === "conflicting" || reviewDecision === "changes-requested"
+              ? "blocked"
+              : checks.length > 0 && states.every((check) => ["passed", "skipped", "neutral"].includes(check))
+                ? "ready"
+                : "unknown";
+  return { number, title, url, state, status, isDraft, mergeable, reviewDecision, baseBranch, updatedAt, checks };
+}
+
+function safeRemoteError(error: unknown): string {
+  const item = error as { stderr?: unknown; stdout?: unknown; message?: unknown };
+  const message = (typeof item?.stderr === "string" ? item.stderr.trim() : "")
+    || (typeof item?.stdout === "string" ? item.stdout.trim() : "")
+    || (typeof item?.message === "string" ? item.message : "GitHub status is unavailable");
+  return safeErrorMessage(message, "GitHub status is unavailable").slice(0, 500);
+}
+
 export class ProjectGitService {
   private readonly activeOperations = new Set<string>();
 
@@ -82,18 +279,89 @@ export class ProjectGitService {
   ) {}
 
   async status(projectId: string): Promise<ProjectGitStatus> {
-    const state = await this.inspect(projectId);
-    const {
-      cwd: _cwd,
-      hasChanges: _hasChanges,
-      hasHead: _hasHead,
-      head: _head,
-      remote: _remote,
-      upstreamBranchRef: _upstreamBranchRef,
-      conflicted: _conflicted,
-      ...status
-    } = state;
-    return status;
+    return this.publicStatus(await this.inspect(projectId, true));
+  }
+
+  async connect(projectId: string, input: ProjectGitConnectRequest): Promise<ProjectGitConnectResult> {
+    return this.exclusive(projectId, async () => {
+      const project = this.projects.resolveProject(projectId);
+      if (!project) throw new ProjectGitError("project_not_found", "Project not found", 404);
+      try {
+        const metadata = await stat(project.path);
+        if (!metadata.isDirectory()) throw new Error("not a directory");
+      } catch {
+        throw new ProjectGitError("workspace_missing", "The project workspace is unavailable", 404);
+      }
+
+      const remoteName = input.remoteName ?? "origin";
+      if (!validRemoteName(remoteName)) throw new ProjectGitError("invalid_remote_name", "Remote name is malformed");
+      if (input.mode === "existing") validatedRemoteUrl(input.remoteUrl);
+      else if (input.mode === "github") {
+        if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9_.-]+$/.test(input.repository)) {
+          throw new ProjectGitError("invalid_github_repository", "GitHub repository must use owner/name format");
+        }
+        if (input.visibility !== "private" && input.visibility !== "public") {
+          throw new ProjectGitError("invalid_github_visibility", "GitHub visibility must be private or public");
+        }
+      }
+
+      let initialized = false;
+      const inside = await this.tryGit(project.path, ["rev-parse", "--is-inside-work-tree"]);
+      if (inside?.trim() !== "true") {
+        if (input.mode === "select") throw new ProjectGitError("not_a_repository", "The workspace is not a Git repository", 422);
+        try {
+          await this.git(project.path, ["init", "--initial-branch=main"]);
+          initialized = true;
+        } catch (error) {
+          throw commandError(error, "Git could not initialize the workspace");
+        }
+      }
+
+      const existingRemotes = (await this.tryGit(project.path, ["remote"]))?.split("\n").map((item) => item.trim()).filter(Boolean) ?? [];
+      if (input.mode === "select") {
+        if (!existingRemotes.includes(remoteName)) throw new ProjectGitError("remote_not_found", `Git remote '${remoteName}' does not exist`, 404);
+        const selectedUrl = (await this.tryGit(project.path, ["remote", "get-url", remoteName]))?.trim();
+        if (!safeConfiguredRemoteUrl(selectedUrl)) throw new ProjectGitError("unsafe_remote_url", `Git remote '${remoteName}' uses an unsupported URL`, 422);
+        const branch = (await this.tryGit(project.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]))?.trim();
+        if (!branch) throw new ProjectGitError("detached_head", "Git is in detached HEAD state", 422);
+        await this.git(project.path, ["config", `branch.${branch}.remote`, remoteName]);
+      } else {
+        if (existingRemotes.includes(remoteName)) {
+          throw new ProjectGitError("remote_exists", `Git remote '${remoteName}' already exists`, 409);
+        }
+        if (input.mode === "existing") {
+          try {
+            await this.git(project.path, ["remote", "add", remoteName, input.remoteUrl]);
+          } catch (error) {
+            throw commandError(error, "Git could not add the remote");
+          }
+        } else {
+          try {
+            await this.gh(project.path, [
+              "repo",
+              "create",
+              input.repository,
+              input.visibility === "private" ? "--private" : "--public",
+              "--source=.",
+              `--remote=${remoteName}`,
+            ], 120_000);
+          } catch (error) {
+            throw new ProjectGitError("github_create_failed", safeRemoteError(error), 502);
+          }
+        }
+      }
+
+      const state = await this.inspect(projectId, true);
+      if (state.repositoryState !== "connected" || !state.remote) {
+        throw new ProjectGitError("remote_not_connected", "The Git remote was not configured", 500);
+      }
+      return {
+        connected: true,
+        initialized,
+        remote: state.remote,
+        status: this.publicStatus(state),
+      };
+    });
   }
 
   async generateMessage(projectId: string, modelId?: string): Promise<ProjectGitGeneratedMessage> {
@@ -185,7 +453,7 @@ export class ProjectGitService {
         }
       }
 
-      if (!state.branch || !state.remote) {
+      if (!state.branch || !state.remoteName) {
         throw new ProjectGitError(
           "push_unavailable",
           state.reason ?? "The current branch has no Git remote",
@@ -196,9 +464,9 @@ export class ProjectGitService {
 
       try {
         if (state.upstream && state.upstreamBranchRef) {
-          await this.git(state.cwd, ["push", state.remote, `HEAD:${state.upstreamBranchRef}`], 120_000);
+          await this.git(state.cwd, ["push", state.remoteName, `HEAD:${state.upstreamBranchRef}`], 120_000);
         } else {
-          await this.git(state.cwd, ["push", "--set-upstream", state.remote, `HEAD:refs/heads/${state.branch}`], 120_000);
+          await this.git(state.cwd, ["push", "--set-upstream", state.remoteName, `HEAD:refs/heads/${state.branch}`], 120_000);
         }
       } catch (error) {
         const detail = commandError(error, "Git could not push the current branch");
@@ -232,10 +500,29 @@ export class ProjectGitService {
     }
   }
 
-  private async inspect(projectId: string): Promise<GitState> {
+  private publicStatus(state: GitState): ProjectGitStatus {
+    const {
+      cwd: _cwd,
+      hasChanges: _hasChanges,
+      hasHead: _hasHead,
+      head: _head,
+      remoteName: _remoteName,
+      upstreamBranchRef: _upstreamBranchRef,
+      conflicted: _conflicted,
+      ...status
+    } = state;
+    return status;
+  }
+
+  private async inspect(projectId: string, includeRemoteStatus = false): Promise<GitState> {
     const project = this.projects.resolveProject(projectId);
     if (!project) throw new ProjectGitError("project_not_found", "Project not found", 404);
-    const unavailable = (reason: string): GitState => ({
+    const timestamp = new Date().toISOString();
+    const unavailable = (
+      repositoryState: ProjectGitRepositoryState,
+      reason: string,
+      values: Partial<GitState> = {},
+    ): GitState => ({
       action: "unavailable",
       branch: null,
       upstream: null,
@@ -243,67 +530,165 @@ export class ProjectGitService {
       deletions: 0,
       changedFiles: 0,
       ahead: 0,
+      behind: 0,
+      repositoryState,
+      remote: null,
+      lastCommit: null,
+      statusUpdatedAt: timestamp,
       reason,
       cwd: project.path,
       hasChanges: false,
       hasHead: false,
       head: null,
-      remote: null,
+      remoteName: null,
       upstreamBranchRef: null,
       conflicted: false,
+      ...values,
     });
 
-    const inside = await this.tryGit(project.path, ["rev-parse", "--is-inside-work-tree"]);
-    if (inside?.trim() !== "true") return unavailable("This workspace is not a Git repository");
-    const branch = (await this.tryGit(project.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]))?.trim() || null;
-    if (!branch) return unavailable("Git is in detached HEAD state");
+    try {
+      const metadata = await stat(project.path);
+      if (!metadata.isDirectory()) return unavailable("workspace-missing", "The project workspace is unavailable");
+    } catch (error) {
+      return unavailable("workspace-missing", "The project workspace is unavailable", {
+        statusError: error instanceof Error ? error.message : "Workspace metadata could not be read",
+      });
+    }
 
-    const porcelain = await this.git(project.path, ["status", "--porcelain=v1", "--untracked-files=all"]);
+    const inside = await this.tryGit(project.path, ["rev-parse", "--is-inside-work-tree"]);
+    if (inside?.trim() !== "true") return unavailable("not-a-repository", "This workspace is not a Git repository");
+
+    const head = (await this.tryGit(project.path, ["rev-parse", "--verify", "HEAD"]))?.trim() || null;
+    const hasHead = Boolean(head);
+    const latestCommit = hasHead
+      ? lastCommit(await this.tryGit(project.path, ["show", "-s", "--format=%H%x00%h%x00%s%x00%aI", "HEAD"]))
+      : null;
+    const branch = (await this.tryGit(project.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]))?.trim() || null;
+    if (!branch) {
+      return unavailable("detached-head", "Git is in detached HEAD state", {
+        hasHead,
+        head,
+        lastCommit: latestCommit,
+      });
+    }
+
+    let porcelain: string;
+    try {
+      porcelain = await this.git(project.path, ["status", "--porcelain=v1", "--untracked-files=all"]);
+    } catch (error) {
+      return unavailable("connected", "Git status could not be read", {
+        branch,
+        hasHead,
+        head,
+        lastCommit: latestCommit,
+        statusError: commandError(error, "Git status could not be read").message,
+      });
+    }
     const lines = porcelain.split("\n").filter(Boolean);
     const conflicted = lines.some((line) => /^(DD|AU|UD|UA|DU|AA|UU)/.test(line));
     const hasChanges = lines.length > 0;
-    const head = (await this.tryGit(project.path, ["rev-parse", "--verify", "HEAD"]))?.trim() || null;
-    const hasHead = Boolean(head);
     const upstream = hasHead
       ? (await this.tryGit(project.path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"]))?.trim() || null
       : null;
     let ahead = 0;
+    let behind = 0;
     if (upstream) {
-      ahead = Number((await this.tryGit(project.path, ["rev-list", "--count", `${upstream}..HEAD`]))?.trim()) || 0;
+      const counts = (await this.tryGit(project.path, ["rev-list", "--left-right", "--count", `${upstream}...HEAD`]))?.trim().split(/\s+/);
+      behind = Number(counts?.[0]) || 0;
+      ahead = Number(counts?.[1]) || 0;
     }
     const configuredRemote = (await this.tryGit(project.path, ["config", "--get", `branch.${branch}.remote`]))?.trim() || null;
     const upstreamBranchRef = upstream
       ? (await this.tryGit(project.path, ["config", "--get", `branch.${branch}.merge`]))?.trim() || null
       : null;
     const remotes = (await this.tryGit(project.path, ["remote"]))?.split("\n").map((item) => item.trim()).filter(Boolean) ?? [];
-    const remote = configuredRemote && configuredRemote !== "." && remotes.includes(configuredRemote)
+    const remoteEntries = await Promise.all(remotes.map(async (name) => {
+      const rawUrl = (await this.tryGit(project.path, ["remote", "get-url", name]))?.trim();
+      return { name, rawUrl, safe: safeConfiguredRemoteUrl(rawUrl) };
+    }));
+    const safeRemoteNames = remoteEntries.filter((item) => item.safe).map((item) => item.name);
+    const unsafeRemoteCount = remoteEntries.length - safeRemoteNames.length;
+    const remoteName = configuredRemote && configuredRemote !== "." && safeRemoteNames.includes(configuredRemote)
       ? configuredRemote
-      : !upstream && remotes.includes("origin") ? "origin" : !upstream && remotes.length === 1 ? remotes[0]! : null;
+      : safeRemoteNames.includes("origin") ? "origin" : safeRemoteNames.length === 1 ? safeRemoteNames[0]! : null;
+    const ambiguousRemote = !remoteName && safeRemoteNames.length > 1;
+    const configuredRemotes = remoteEntries.map(({ name, rawUrl, safe }) => remoteMetadata(name, safe ? rawUrl : undefined));
+    const remote = remoteName ? configuredRemotes.find((item) => item.name === remoteName) ?? null : null;
     const numstat = hasHead
       ? await this.tryGit(project.path, ["diff", "HEAD", "--numstat", "--no-ext-diff", "--"])
       : undefined;
     const { additions, deletions } = parseNumstat(numstat ?? "");
 
-    const base = {
+    const base: Omit<GitState, "action"> = {
       branch,
       upstream,
       additions,
       deletions,
       changedFiles: lines.length,
       ahead,
+      behind,
+      repositoryState: conflicted
+        ? "conflicted"
+        : remoteName && behind > 0 ? ahead > 0 ? "diverged" : "behind"
+        : remoteName ? "connected"
+        : ambiguousRemote ? "ambiguous-remote" : "no-remote",
+      remote,
+      remotes: configuredRemotes,
+      lastCommit: latestCommit,
+      statusUpdatedAt: timestamp,
       cwd: project.path,
       hasChanges,
       hasHead,
       head,
-      remote,
+      remoteName,
       upstreamBranchRef,
       conflicted,
     };
-    if (conflicted) return { ...base, action: "unavailable", reason: "Resolve merge conflicts before committing" };
-    if (!remote) return { ...base, action: "unavailable", reason: "No unambiguous Git remote is configured" };
-    if (hasChanges) return { ...base, action: "commit-and-push" };
-    if (ahead > 0 || (!upstream && hasHead)) return { ...base, action: "push" };
-    return { ...base, action: "up-to-date" };
+    let state: GitState;
+    if (conflicted) state = { ...base, action: "unavailable", reason: "Resolve merge conflicts before committing" };
+    else if (!remoteName) {
+      state = {
+        ...base,
+        action: "unavailable",
+        reason: ambiguousRemote
+          ? "Multiple Git remotes are configured and none is selected"
+          : unsafeRemoteCount > 0 ? "The configured Git remote uses an unsupported URL" : "No Git remote is configured",
+      };
+    } else if (behind > 0) {
+      state = {
+        ...base,
+        action: "unavailable",
+        reason: ahead > 0 ? "The local and remote branches have diverged" : "Pull remote changes before committing or pushing",
+      };
+    } else if (hasChanges) state = { ...base, action: "commit-and-push" };
+    else if (ahead > 0 || (!upstream && hasHead)) state = { ...base, action: "push" };
+    else state = { ...base, action: "up-to-date" };
+
+    if (includeRemoteStatus && remote?.provider === "github" && remote.owner && remote.repository) {
+      try {
+        const repository = `${remote.owner}/${remote.repository}`;
+        const output = await this.gh(project.path, [
+          "pr",
+          "list",
+          "--repo",
+          repository,
+          "--head",
+          branch,
+          "--state",
+          "open",
+          "--limit",
+          "1",
+          "--json",
+          "number,title,url,state,isDraft,mergeable,reviewDecision,baseRefName,updatedAt,statusCheckRollup",
+        ]);
+        const parsed = JSON.parse(output) as unknown;
+        if (!Array.isArray(parsed)) throw new Error("GitHub returned an invalid pull request response");
+        state.github = { pullRequest: normalizedPullRequest(parsed[0]) ?? null };
+      } catch (error) {
+        state.remoteStatusError = safeRemoteError(error);
+      }
+    }
+    return state;
   }
 
   private assertCommitable(state: GitState): void {
@@ -403,6 +788,21 @@ export class ProjectGitService {
         GIT_TERMINAL_PROMPT: "0",
         GCM_INTERACTIVE: "Never",
         ...extraEnv,
+      },
+    });
+    return stdout;
+  }
+
+  private async gh(cwd: string, args: string[], timeout = 15_000): Promise<string> {
+    const { stdout } = await execFileAsync("gh", args, {
+      cwd,
+      timeout,
+      maxBuffer: GIT_MAX_BUFFER,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GH_PROMPT_DISABLED: "1",
+        GIT_TERMINAL_PROMPT: "0",
       },
     });
     return stdout;

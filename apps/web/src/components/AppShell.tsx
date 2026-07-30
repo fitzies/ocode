@@ -532,9 +532,13 @@ function AppShellContent() {
       if (isTerminalInputTarget(event.target)) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
         event.preventDefault();
-        const projectId = activeProject?.id ??
-          (snapshot.projects.length === 1 ? snapshot.projects[0]?.id : undefined);
-        if (projectId) startSession(projectId);
+        window.dispatchEvent(new Event("ocode:new-thread"));
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
+        event.preventDefault();
+        if (activeSession) requestDeleteSession(activeSession.id);
+        return;
       }
       const threadIndex = threadNumberShortcutIndex(event);
       if (threadIndex !== undefined) {
@@ -564,7 +568,7 @@ function AppShellContent() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProject, isMobile, setOpenMobile, snapshot.activeSessionId, snapshot.projects, snapshot.sessions, startSession]);
+  }, [activeProject, activeSession, isMobile, requestDeleteSession, setOpenMobile, snapshot.activeSessionId, snapshot.sessions]);
 
   if (!snapshot.workspaceLocation && snapshot.connection !== "connected") {
     return (
@@ -616,16 +620,11 @@ function AppShellContent() {
           </div>
 
           <div className="header-actions">
-            {indicators.git && (
-              <span className="git-diff-stat" aria-label={`${indicators.git.additions} lines added, ${indicators.git.deletions} lines deleted`}>
-                <span className="git-additions">+{indicators.git.additions}</span>
-                <span className="git-deletions">−{indicators.git.deletions}</span>
-              </span>
-            )}
             {activeProject && (
               <ProjectGitAction
                 key={activeProject.id}
                 projectId={activeProject.id}
+                projectName={activeProject.name}
                 sessionId={activeSession?.id}
                 onComplete={markGitActionComplete}
               />

@@ -34,7 +34,7 @@
 .conversation-surface[data-message-font-size="small"] { --message-font-size: 12px; }
 .conversation-surface[data-message-font-size="large"] { --message-font-size: 15px; }
 .conversation-surface[data-message-font-size="extra-large"] { --message-font-size: 17px; }
-.conversation-surface[data-message-width="full"] { --message-column-width: 100%; }
+.conversation-surface[data-message-width="full"] { --message-column-width: 1100px; }
 
 .workspace-layout-desktop,
 .workspace-layout-mobile {
@@ -219,8 +219,40 @@
   gap: 7px;
 }
 
+.repository-header-control {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0;
+}
+
+.repository-status-trigger--joined {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.repository-inline-action {
+  position: relative;
+  margin-left: -1px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.repository-status-trigger--joined:hover,
+.repository-status-trigger--joined:focus-visible,
+.repository-inline-action:hover,
+.repository-inline-action:focus-visible {
+  z-index: 1;
+}
+
+.repository-status-trigger,
 .project-git-action {
   font-variant-numeric: tabular-nums;
+}
+
+.repository-status-panel {
+  min-width: 0;
+  color: var(--popover-foreground);
 }
 
 .project-git-action--busy svg {

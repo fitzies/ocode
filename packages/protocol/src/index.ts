@@ -33,6 +33,75 @@ export interface ProjectSummary {
 }
 
 export type ProjectGitAction = "commit-and-push" | "push" | "up-to-date" | "unavailable";
+export type ProjectGitRepositoryState =
+  | "workspace-missing"
+  | "not-a-repository"
+  | "detached-head"
+  | "conflicted"
+  | "no-remote"
+  | "ambiguous-remote"
+  | "behind"
+  | "diverged"
+  | "connected";
+export type ProjectGitRemoteProvider = "github" | "other";
+export type ProjectGitCheckKind = "check" | "deployment" | "agent";
+export type ProjectGitCheckState =
+  | "queued"
+  | "running"
+  | "passed"
+  | "failed"
+  | "cancelled"
+  | "skipped"
+  | "neutral"
+  | "unknown";
+export type ProjectGitPullRequestState = "open" | "closed" | "merged";
+export type ProjectGitPullRequestStatus = "draft" | "running" | "ready" | "failed" | "blocked" | "closed" | "merged" | "unknown";
+
+export interface ProjectGitRemote {
+  name: string;
+  /** Sanitized fetch URL. User information, passwords, query strings, and fragments are removed. */
+  url: string | null;
+  provider: ProjectGitRemoteProvider;
+  host?: string;
+  owner?: string;
+  repository?: string;
+  webUrl?: string;
+}
+
+export interface ProjectGitLastCommit {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  authoredAt: string;
+}
+
+export interface ProjectGitCheck {
+  name: string;
+  kind: ProjectGitCheckKind;
+  state: ProjectGitCheckState;
+  url?: string;
+  workflow?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface ProjectGitPullRequest {
+  number: number;
+  title: string;
+  url: string;
+  state: ProjectGitPullRequestState;
+  status: ProjectGitPullRequestStatus;
+  isDraft: boolean;
+  mergeable: "mergeable" | "conflicting" | "unknown";
+  reviewDecision?: "approved" | "changes-requested" | "review-required" | "unknown";
+  baseBranch: string;
+  updatedAt: string;
+  checks: ProjectGitCheck[];
+}
+
+export interface ProjectGitHubStatus {
+  pullRequest: ProjectGitPullRequest | null;
+}
 
 export interface ProjectGitStatus {
   action: ProjectGitAction;
@@ -43,6 +112,42 @@ export interface ProjectGitStatus {
   changedFiles: number;
   ahead: number;
   reason?: string;
+  /** Absent only on responses recorded before repository-state support. */
+  repositoryState?: ProjectGitRepositoryState;
+  behind?: number;
+  remote?: ProjectGitRemote | null;
+  /** All configured remotes, used when the current branch has no unambiguous selection. */
+  remotes?: ProjectGitRemote[];
+  lastCommit?: ProjectGitLastCommit | null;
+  github?: ProjectGitHubStatus;
+  statusUpdatedAt?: string;
+  statusError?: string;
+  /** A best-effort provider lookup failed; local repository status remains valid. */
+  remoteStatusError?: string;
+}
+
+export type ProjectGitConnectRequest =
+  | {
+    mode: "existing";
+    remoteUrl: string;
+    remoteName?: string;
+  }
+  | {
+    mode: "select";
+    remoteName: string;
+  }
+  | {
+    mode: "github";
+    repository: string;
+    visibility: "private" | "public";
+    remoteName?: string;
+  };
+
+export interface ProjectGitConnectResult {
+  connected: true;
+  initialized: boolean;
+  remote: ProjectGitRemote;
+  status: ProjectGitStatus;
 }
 
 export interface ProjectGitGeneratedMessage {

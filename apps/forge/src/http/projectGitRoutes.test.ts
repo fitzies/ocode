@@ -30,8 +30,8 @@ const gitEnvironment = {
   GIT_COMMITTER_EMAIL: "anvil@example.test",
 };
 
-function git(cwd: string, args: string[]): void {
-  execFileSync("git", args, { cwd, env: gitEnvironment, stdio: "ignore" });
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, env: gitEnvironment, encoding: "utf8" }).trim();
 }
 
 class StubGenerator implements CommitMessageGenerator {
@@ -101,6 +101,34 @@ describe("project Git HTTP routes", () => {
       body: JSON.stringify({ sessionId: "session-1" }),
     });
     expect(rejected.status).toBe(403);
+  });
+
+  it("validates connect requests and connects an existing bare remote", async () => {
+    const invalid = await fetch(`${baseUrl}/api/v1/projects/project-1/git/connect`, {
+      method: "POST",
+      headers: { ...ownerHeaders, origin: baseUrl, "content-type": "application/json" },
+      body: JSON.stringify({ mode: "existing" }),
+    });
+    expect(invalid.status).toBe(400);
+    expect(await invalid.json()).toMatchObject({ code: "invalid_remote_url" });
+
+    git(repository, ["remote", "remove", "origin"]);
+    const disconnected = await fetch(`${baseUrl}/api/v1/projects/project-1/git/status`, { headers: ownerHeaders });
+    expect(await disconnected.json()).toMatchObject({ repositoryState: "no-remote", remote: null });
+
+    const response = await fetch(`${baseUrl}/api/v1/projects/project-1/git/connect`, {
+      method: "POST",
+      headers: { ...ownerHeaders, origin: baseUrl, "content-type": "application/json" },
+      body: JSON.stringify({ mode: "existing", remoteUrl: remote }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      connected: true,
+      initialized: false,
+      remote: { name: "origin", url: remote, provider: "other" },
+      status: { repositoryState: "connected", branch: "main" },
+    });
+    expect(git(repository, ["remote", "get-url", "origin"])).toBe(remote);
   });
 
   it("uses the active session model without exposing a client-selected model id", async () => {

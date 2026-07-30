@@ -370,6 +370,24 @@
   border-radius: 7px;
 }
 .markdown-body pre code { padding: 0; color: inherit; font-size: inherit; background: none; border: 0; border-radius: 0; }
+.markdown-code-block { position: relative; margin: 0 0 0.95em; }
+.markdown-code-block pre { margin: 0; padding-right: 38px; }
+.markdown-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  color: var(--muted-foreground);
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  place-items: center;
+}
+.markdown-code-copy:hover { color: var(--foreground); background: var(--muted); }
+.markdown-code-copy:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.markdown-code-copy svg { width: 13px; height: 13px; }
 .markdown-body hr { height: 1px; margin: 1.25em 0; background: var(--border); border: 0; }
 .markdown-table-scroll {
   width: 100%;
@@ -562,7 +580,20 @@ details[open] > summary .disclosure-icon { transform: rotate(90deg); }
 .tool-event--queued .tool-status { color: var(--legacy-text); }
 .tool-event--failed .tool-status,
 .tool-event--cancelled .tool-status { color: var(--red); }
+.retry-event { --tool-accent: var(--amber); }
+.retry-event--active .tool-status-copy { color: var(--amber); }
+.retry-event--success .tool-status-copy { color: var(--green); }
+.retry-event--failed .tool-status-copy { color: var(--red); }
 .tool-detail { padding: 9px 12px; color: var(--legacy-text-low); font-size: 10px; line-height: 1.55; background: rgba(0, 0, 0, 0.13); border-top: 1px solid var(--border); }
+.retry-detail { display: grid; gap: 10px; }
+.retry-detail section { display: grid; gap: 4px; }
+.retry-detail section + section { padding-top: 9px; border-top: 1px solid color-mix(in oklab, var(--foreground) 5.5%, transparent); }
+.retry-detail p { margin: 0; color: var(--legacy-text); white-space: pre-wrap; }
+.retry-detail ol { display: grid; margin: 0; padding: 0; gap: 5px; list-style: none; }
+.retry-detail li { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+.retry-detail li strong { flex: 0 0 auto; color: var(--legacy-text); font-size: 9.5px; font-weight: 560; }
+.retry-detail li span { overflow: hidden; font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
+.retry-detail .retry-final-error { color: var(--red); }
 .tool-output { display: grid; gap: 6px; margin-bottom: 9px; }
 .detail-label { margin: 0; color: var(--legacy-text-low); font-size: 8.5px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .agent-detail { display: grid; gap: 11px; }

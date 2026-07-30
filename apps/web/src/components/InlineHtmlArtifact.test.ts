@@ -25,6 +25,7 @@ describe("inline HTML document wrapper", () => {
 
     expect(source).toMatch(/^<!doctype html><html><head>/);
     expect(source).toContain("background: transparent !important");
+    expect(source).toContain("overflow-y: clip");
     expect(source).not.toContain('<svg aria-label="Smiley">');
     expect(source).toContain("document.body.append(fragment)");
     expect(source).toContain("if (document.body) install()");

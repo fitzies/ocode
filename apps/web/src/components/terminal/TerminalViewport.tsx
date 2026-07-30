@@ -4,6 +4,26 @@ import { useEffect, useRef } from "react";
 
 import { terminalClient } from "@/lib/terminalClient";
 
+const TERMINAL_LINK_PATTERN = /https?:\/\/[^\s<>"']+|(?:localhost|(?:\d{1,3}\.){3}\d{1,3}):\d{1,5}(?:\/[^\s<>"']*)?/gi;
+const TRAILING_LINK_PUNCTUATION = /[),.;:!?]+$/;
+
+export interface TerminalLinkMatch {
+  start: number;
+  text: string;
+  url: string;
+}
+
+export function findTerminalLinks(text: string): TerminalLinkMatch[] {
+  return Array.from(text.matchAll(TERMINAL_LINK_PATTERN), (match) => {
+    const linkText = match[0].replace(TRAILING_LINK_PUNCTUATION, "");
+    return {
+      start: match.index,
+      text: linkText,
+      url: /^https?:\/\//i.test(linkText) ? linkText : `http://${linkText}`,
+    };
+  }).filter((match) => match.text.length > 0);
+}
+
 export function shouldApplyTerminalEvent(
   currentSequence: number,
   event: { type: "terminal.snapshot" | "terminal.reset" | "terminal.output"; sequence: number },
@@ -64,6 +84,28 @@ export function TerminalViewport({
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(container);
+    const linkProvider = terminal.registerLinkProvider({
+      provideLinks(bufferLineNumber, callback) {
+        const line = terminal.buffer.active.getLine(bufferLineNumber - 1);
+        if (!line) {
+          callback(undefined);
+          return;
+        }
+        const text = line.translateToString(true);
+        const links = findTerminalLinks(text).map((match) => ({
+          text: match.text,
+          range: {
+            start: { x: match.start + 1, y: bufferLineNumber },
+            end: { x: match.start + match.text.length, y: bufferLineNumber },
+          },
+          activate(event: MouseEvent) {
+            if (!event.metaKey && !event.ctrlKey) return;
+            window.open(match.url, "_blank", "noopener,noreferrer");
+          },
+        }));
+        callback(links.length > 0 ? links : undefined);
+      },
+    });
     let sequence = -1;
     let resizeTimer: ReturnType<typeof setTimeout> | undefined;
     const fitAndResize = () => {
@@ -108,6 +150,7 @@ export function TerminalViewport({
       observer.disconnect();
       data.dispose();
       unsubscribe();
+      linkProvider.dispose();
       fit.dispose();
       terminal.dispose();
     };

@@ -84,6 +84,7 @@
 .source-viewer {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: auto;
   background: color-mix(in oklab, var(--background) 98%, var(--muted));
   font-family: "Geist Mono Variable", ui-monospace, monospace;
@@ -102,7 +103,7 @@
 .syntax-number { color: color-mix(in oklab, var(--status-info) 78%, var(--foreground)); }
 .syntax-keyword { color: var(--link); font-weight: 600; }
 
-.resource-markdown { min-width: 0; min-height: 0; overflow: auto; padding: clamp(1rem, 4vw, 2.5rem); }
+.resource-markdown { min-width: 0; min-height: 0; height: 100%; overflow: auto; padding: clamp(1rem, 4vw, 2.5rem); }
 .resource-markdown > * { max-width: 52rem; margin-inline: auto; }
 .resource-html-preview, .sandboxed-html-preview { position: relative; min-width: 0; min-height: 0; height: 100%; overflow: hidden; }
 .sandboxed-html-preview-frame { width: 100%; height: 100%; border: 0; background: transparent; }

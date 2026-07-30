@@ -3,8 +3,10 @@ import type {
   ArtifactReference,
   ContentBlock,
   JsonValue,
+  MessageEntry,
   ProjectResourceContentBlock,
   SessionSummary,
+  SystemEventEntry,
   TimelineEntry,
   ToolEntry,
 } from "@anvil/protocol";
@@ -15,6 +17,7 @@ import {
   ArtificialIntelligence02Icon,
   BrowserIcon,
   CheckmarkCircle02Icon,
+  CloudUploadIcon,
   CommandIcon,
   File01Icon,
   FileEditIcon,
@@ -224,6 +227,113 @@ function isInlineHtmlTool(name: string): boolean {
   return name === "ocode_render_html_file" || name === "anvil_render_html_file";
 }
 
+interface RetryCycle {
+  starts: SystemEventEntry[];
+  end?: SystemEventEntry;
+  errors: MessageEntry[];
+}
+
+function jsonRecord(value: JsonValue | undefined): Record<string, JsonValue> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, JsonValue>
+    : undefined;
+}
+
+function retryEventType(entry: TimelineEntry): "auto_retry_start" | "auto_retry_end" | undefined {
+  if (entry.kind !== "event") return undefined;
+  const type = jsonRecord(entry.raw)?.type;
+  return type === "auto_retry_start" || type === "auto_retry_end" ? type : undefined;
+}
+
+function retryString(entry: SystemEventEntry, field: string): string | undefined {
+  const value = jsonRecord(entry.raw)?.[field];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function retryNumber(entry: SystemEventEntry, field: string): number | undefined {
+  const value = jsonRecord(entry.raw)?.[field];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function retryOriginalError(retry: RetryCycle): string {
+  return retryString(retry.starts[0]!, "errorMessage") ?? retry.starts[0]?.message ?? "Connection error";
+}
+
+function retryAttemptCount(retry: RetryCycle): number {
+  return retry.end
+    ? retryNumber(retry.end, "attempt") ?? retry.starts.length
+    : retryNumber(retry.starts.at(-1)!, "attempt") ?? retry.starts.length;
+}
+
+function RetryTimelineItem({ retry, entering }: { retry: RetryCycle; entering: boolean }) {
+  const active = !retry.end;
+  const succeeded = retry.end ? jsonRecord(retry.end.raw)?.success === true : false;
+  const state = active ? "active" : succeeded ? "success" : "failed";
+  const title = active ? "Reconnecting…" : succeeded ? "Connection recovered" : "Connection failed";
+  const attempts = retryAttemptCount(retry);
+  const detail = active
+    ? `${retryOriginalError(retry)} · attempt ${attempts}`
+    : `${retryOriginalError(retry)} · ${attempts} ${attempts === 1 ? "attempt" : "attempts"}`;
+  const rawDetails: JsonValue = {
+    retryEvents: [...retry.starts, ...(retry.end ? [retry.end] : [])].map((entry) => entry.raw ?? entry.details ?? null),
+    assistantErrors: retry.errors.map((entry) => ({
+      messageId: entry.id,
+      error: entry.error ?? null,
+      content: entry.content.map((block) => JSON.parse(JSON.stringify(block)) as JsonValue),
+      raw: entry.raw ?? null,
+    })),
+  };
+
+  return (
+    <details className={`tool-event retry-event retry-event--${state} tool-event--${active ? "running" : succeeded ? "completed" : "failed"}${entering ? " timeline-entry--entering" : ""}`}>
+      <summary>
+        <span className="tool-icon">
+          <HugeiconsIcon icon={active ? Loading03Icon : CloudUploadIcon} strokeWidth={2} className={`${active ? "spin " : ""}size-3.5`} />
+        </span>
+        <span className="tool-main">
+          <strong>{title}</strong>
+          <span title={detail}>{detail}</span>
+        </span>
+        <span className="tool-status-copy" aria-hidden="true">{active ? "Retrying" : succeeded ? "Resolved" : "Failed"}</span>
+        {!active && (
+          <span className="tool-status">
+            <HugeiconsIcon
+              icon={succeeded ? CheckmarkCircle02Icon : AlertCircleIcon}
+              strokeWidth={2}
+              className="size-3.5"
+              aria-label={succeeded ? "Resolved" : "Failed"}
+            />
+          </span>
+        )}
+        <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
+      </summary>
+      <div className="tool-detail retry-detail">
+        <section>
+          <span className="detail-label">Original error</span>
+          <p>{retryOriginalError(retry)}</p>
+        </section>
+        <section>
+          <span className="detail-label">Attempts</span>
+          <ol>
+            {retry.starts.map((entry, index) => {
+              const attempt = retryNumber(entry, "attempt") ?? index + 1;
+              const delayMs = retryNumber(entry, "delayMs");
+              return (
+                <li key={entry.id}>
+                  <strong>Attempt {attempt}</strong>
+                  <span>{delayMs === undefined ? "Automatic retry" : `Retrying after ${delayMs.toLocaleString()} ms`}</span>
+                </li>
+              );
+            })}
+          </ol>
+          {!active && !succeeded && retry.end && <p className="retry-final-error">{retryString(retry.end, "finalError") ?? retry.end.message}</p>}
+        </section>
+        <JsonDetails label="Raw retry events and errors" value={rawDetails} />
+      </div>
+    </details>
+  );
+}
+
 function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
   entry: TimelineEntry;
   entering?: boolean;
@@ -383,13 +493,56 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
 
 type TimelineRow =
   | { key: string; kind: "entry"; entry: TimelineEntry }
-  | { key: string; kind: "tool-batch"; tools: ToolEntry[] };
+  | { key: string; kind: "tool-batch"; tools: ToolEntry[] }
+  | { key: string; kind: "retry"; retry: RetryCycle };
+
+function takeAssociatedRetryError(rows: TimelineRow[], expectedError: string | undefined): MessageEntry | undefined {
+  if (!expectedError) return undefined;
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const row = rows[index];
+    if (row?.kind === "retry") return undefined;
+    if (row?.kind !== "entry" || row.entry.kind !== "message") continue;
+    if (row.entry.role === "user") return undefined;
+    if (row.entry.role !== "assistant") continue;
+    if (row.entry.status !== "failed" || row.entry.error?.trim() !== expectedError) return undefined;
+    rows.splice(index, 1);
+    return row.entry;
+  }
+  return undefined;
+}
 
 function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   const rows: TimelineRow[] = [];
+  let activeRetry: Extract<TimelineRow, { kind: "retry" }> | undefined;
   let index = 0;
   while (index < entries.length) {
     const entry = entries[index]!;
+    if (entry.kind === "message" && entry.role === "user") activeRetry = undefined;
+    const retryType = retryEventType(entry);
+    if (entry.kind === "event" && retryType === "auto_retry_start") {
+      const associatedError = takeAssociatedRetryError(rows, retryString(entry, "errorMessage"));
+      if (activeRetry) {
+        activeRetry.retry.starts.push(entry);
+        if (associatedError) activeRetry.retry.errors.push(associatedError);
+      } else {
+        activeRetry = {
+          key: `retry-cycle-${entry.id}`,
+          kind: "retry",
+          retry: { starts: [entry], errors: associatedError ? [associatedError] : [] },
+        };
+        rows.push(activeRetry);
+      }
+      index += 1;
+      continue;
+    }
+    if (entry.kind === "event" && retryType === "auto_retry_end" && activeRetry) {
+      const associatedError = takeAssociatedRetryError(rows, retryString(entry, "finalError"));
+      activeRetry.retry.end = entry;
+      if (associatedError) activeRetry.retry.errors.push(associatedError);
+      activeRetry = undefined;
+      index += 1;
+      continue;
+    }
     if (entry.kind === "tool" && entry.batchId && !isInlineHtmlTool(entry.name)) {
       const tools: ToolEntry[] = [entry];
       let nextIndex = index + 1;
@@ -418,6 +571,7 @@ function TimelineRowView({ row, entering = false, onOpenProjectResource }: {
 }) {
   const animateEntrance = useRef(entering).current;
   if (row.kind === "entry") return <TimelineItem entry={row.entry} entering={animateEntrance} onOpenProjectResource={onOpenProjectResource} />;
+  if (row.kind === "retry") return <RetryTimelineItem retry={row.retry} entering={animateEntrance} />;
   const completed = row.tools.filter((tool) => tool.status === "completed").length;
   const running = row.tools.filter((tool) => tool.status === "running").length;
   const queued = row.tools.filter((tool) => tool.status === "queued").length;
@@ -483,6 +637,7 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
   // The CSS bottom anchor owns follow behavior; virtual measurements must not issue competing scroll corrections.
   virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
   const activeTool = entries.some((entry) => entry.kind === "tool" && (entry.status === "running" || entry.status === "queued"));
+  const activeRetry = rows.some((row) => row.kind === "retry" && !row.retry.end);
   const streamingResponse = entries.some((entry) => (
     entry.kind === "message" &&
     entry.role === "assistant" &&
@@ -490,7 +645,7 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
     hasVisibleContent(entry.content)
   ));
   const lastUserMessage = [...entries].reverse().find((entry) => entry.kind === "message" && entry.role === "user");
-  const showWorkingStatus = session.status === "running" && !activeTool && !streamingResponse;
+  const showWorkingStatus = session.status === "running" && !activeTool && !activeRetry && !streamingResponse;
   const statusMessage = workingMessage(`${session.id}:${lastUserMessage?.id ?? "start"}`);
   const hasEntries = entries.length > 0;
 

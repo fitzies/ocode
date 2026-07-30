@@ -1,5 +1,7 @@
 import type {
   ProjectGitApiError,
+  ProjectGitConnectRequest,
+  ProjectGitConnectResult,
   ProjectGitGeneratedMessage,
   ProjectGitPushResult,
   ProjectGitStatus,
@@ -48,6 +50,16 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function getProjectGitStatus(projectId: string, signal?: AbortSignal): Promise<ProjectGitStatus> {
   return requestJson(endpoint(projectId, "status"), { signal });
+}
+
+export function connectProjectGit(
+  projectId: string,
+  input: ProjectGitConnectRequest,
+): Promise<ProjectGitConnectResult> {
+  return requestJson(endpoint(projectId, "connect"), {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export function generateProjectCommitMessage(

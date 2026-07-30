@@ -1,4 +1,4 @@
-import type { MessageEntry, ReasoningEntry, SessionSummary, ToolEntry } from "@anvil/protocol";
+import type { MessageEntry, ReasoningEntry, SessionSummary, SystemEventEntry, ToolEntry } from "@anvil/protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Timeline } from "./Timeline";
@@ -49,6 +49,23 @@ describe("Timeline markdown", () => {
     expect(html).toContain('href="https://example.com"');
     expect(html).toContain('target="_blank"');
     expect(html).not.toContain("**Phase 3 goal:**");
+  });
+
+  it("adds a copy button to fenced assistant code blocks", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          content: [{ id: "copyable", type: "text", text: "```text\nCopy this message\n```" }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('class="markdown-code-block"');
+    expect(html).toContain('aria-label="Copy code"');
+    expect(html).toContain("Copy this message");
   });
 
   it("hides synthetic image attachment markers from user messages", () => {
@@ -452,5 +469,145 @@ describe("Timeline tool presentation", () => {
     expect(html).toContain("1 complete · 1 failed · 1 cancelled");
     expect(html).toContain("tool-batch-progress-complete");
     expect(html).toContain("tool-batch-progress-error");
+  });
+});
+
+function retryEvent(
+  id: string,
+  type: "auto_retry_start" | "auto_retry_end",
+  values: Record<string, string | number | boolean>,
+): SystemEventEntry {
+  const raw = { type, ...values };
+  return {
+    id,
+    kind: "event",
+    category: type === "auto_retry_end" && values.success === false ? "error" : "lifecycle",
+    tone: type === "auto_retry_end" && values.success === false ? "error" : "warning",
+    title: type === "auto_retry_start" ? "Retrying request" : "Retry finished",
+    message: typeof values.errorMessage === "string"
+      ? values.errorMessage
+      : typeof values.finalError === "string"
+        ? values.finalError
+        : undefined,
+    createdAt: "2026-03-22T00:00:01.000Z",
+    details: raw,
+    raw,
+  };
+}
+
+function failedAssistant(id: string, error: string): MessageEntry {
+  return {
+    id,
+    kind: "message",
+    role: "assistant",
+    content: [],
+    status: "failed",
+    error,
+    createdAt: "2026-03-22T00:00:01.000Z",
+    raw: { role: "assistant", stopReason: "error", errorMessage: error },
+  };
+}
+
+function retryMarkup(entries: (MessageEntry | SystemEventEntry)[], running = false): string {
+  return renderToStaticMarkup(
+    <Timeline session={{ ...session, status: running ? "running" : "idle" }} entries={entries} onSuggestion={() => undefined} />,
+  );
+}
+
+describe("Timeline automatic retries", () => {
+  it("shows an active retry as one expandable tool-style row", () => {
+    const html = retryMarkup([
+      failedAssistant("failed-attempt-2", "WebSocket error"),
+      retryEvent("retry-start-2", "auto_retry_start", {
+        attempt: 2,
+        maxAttempts: 3,
+        delayMs: 4_000,
+        errorMessage: "WebSocket error",
+      }),
+    ], true);
+
+    expect(html).toContain("tool-event retry-event retry-event--active");
+    expect(html).toContain("Reconnecting…");
+    expect(html).toContain("WebSocket error · attempt 2");
+    expect(html).toContain("Retrying");
+    expect(html).toContain("Raw retry events and errors");
+    expect(html).toContain("auto_retry_start");
+    expect(html).not.toContain("system-event--warning");
+    expect(html).not.toContain("message-error");
+    expect(html).not.toContain("working-status");
+  });
+
+  it("evolves multiple attempts into one resolved row and retains raw errors", () => {
+    const unrelatedEvent: SystemEventEntry = {
+      id: "unrelated-system-event",
+      kind: "event",
+      category: "notification",
+      tone: "info",
+      title: "Extension notice",
+      message: "Still independent",
+      createdAt: "2026-03-22T00:00:01.500Z",
+      raw: { type: "extension_ui_request" },
+    };
+    const html = retryMarkup([
+      failedAssistant("failed-attempt-1", "WebSocket error"),
+      retryEvent("retry-start-1", "auto_retry_start", { attempt: 1, maxAttempts: 3, delayMs: 2_000, errorMessage: "WebSocket error" }),
+      unrelatedEvent,
+      failedAssistant("failed-attempt-2", "WebSocket error"),
+      retryEvent("retry-start-2", "auto_retry_start", { attempt: 2, maxAttempts: 3, delayMs: 4_000, errorMessage: "WebSocket error" }),
+      retryEvent("retry-end", "auto_retry_end", { success: true, attempt: 2 }),
+    ]);
+
+    expect(html.match(/<details class="tool-event retry-event/g)).toHaveLength(1);
+    expect(html).toContain("retry-event--success");
+    expect(html).toContain("Connection recovered");
+    expect(html).toContain("WebSocket error · 2 attempts");
+    expect(html).toContain("Resolved");
+    expect(html).toContain("Attempt 1");
+    expect(html).toContain("Attempt 2");
+    expect(html).toContain("auto_retry_start");
+    expect(html).toContain("auto_retry_end");
+    expect(html).not.toContain("message-error");
+    expect(html).toContain("system-event system-event--info");
+    expect(html).toContain("Extension notice");
+  });
+
+  it("does not merge retry cycles across user request boundaries", () => {
+    const nextRequest: MessageEntry = {
+      ...message,
+      id: "next-request",
+      role: "user",
+      content: [{ id: "next-request-text", type: "text", text: "Try something else" }],
+      status: "complete",
+    };
+    const html = retryMarkup([
+      retryEvent("stale-retry-start", "auto_retry_start", { attempt: 1, errorMessage: "WebSocket error" }),
+      nextRequest,
+      retryEvent("next-retry-start", "auto_retry_start", { attempt: 1, errorMessage: "Provider unavailable" }),
+      retryEvent("next-retry-end", "auto_retry_end", { success: true, attempt: 1 }),
+    ]);
+
+    expect(html.match(/<details class="tool-event retry-event/g)).toHaveLength(2);
+    expect(html).toContain("WebSocket error · attempt 1");
+    expect(html).toContain("Provider unavailable · 1 attempt");
+  });
+
+  it("shows exhaustion and suppresses only assistant errors belonging to the retry", () => {
+    const html = retryMarkup([
+      failedAssistant("unrelated-failure", "Authentication failed"),
+      failedAssistant("initial-retry-failure", "WebSocket error"),
+      retryEvent("retry-start", "auto_retry_start", { attempt: 1, maxAttempts: 3, delayMs: 2_000, errorMessage: "WebSocket error" }),
+      failedAssistant("final-retry-failure", "WebSocket retries exhausted"),
+      retryEvent("retry-end", "auto_retry_end", { success: false, attempt: 3, finalError: "WebSocket retries exhausted" }),
+    ]);
+
+    expect(html.match(/<details class="tool-event retry-event/g)).toHaveLength(1);
+    expect(html).toContain("retry-event--failed");
+    expect(html).toContain("Connection failed");
+    expect(html).toContain("WebSocket error · 3 attempts");
+    expect(html).toContain("Failed");
+    expect(html).toContain("WebSocket retries exhausted");
+    expect(html.match(/class="message-error"/g)).toHaveLength(1);
+    expect(html).toContain("Authentication failed");
+    expect(html).not.toContain("system-event--error");
   });
 });

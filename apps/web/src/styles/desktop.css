@@ -18,17 +18,7 @@ html[data-ocode-desktop="macos"] [data-sidebar="header"] {
 }
 
 html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) [data-sidebar="header"] {
-  padding-top: var(--ocode-desktop-traffic-lights-row-height);
-}
-
-html[data-ocode-desktop="macos"] [data-sidebar="header"] > :first-child {
-  min-height: 32px;
-  height: 32px;
-}
-
-html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) [data-sidebar="header"] > :first-child .sidebar-close {
-  order: 2;
-  margin-left: auto;
+  padding-top: calc(var(--ocode-desktop-traffic-lights-row-height) + 6px);
 }
 
 html[data-ocode-desktop="macos"] .session-header {

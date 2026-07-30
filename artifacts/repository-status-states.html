@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Repository status states</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #141412;
+    --panel: #1a1a17;
+    --raised: #20201c;
+    --line: #32322d;
+    --line-soft: #292925;
+    --text: #f1f0ea;
+    --muted: #9c9b91;
+    --faint: #737269;
+    --green: #70c991;
+    --green-bg: #18271d;
+    --amber: #e8ba63;
+    --amber-bg: #292217;
+    --red: #ed7d77;
+    --red-bg: #2b1918;
+    --blue: #7fb4e6;
+    --blue-bg: #17232d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: transparent; }
+  body {
+    padding: clamp(16px, 3vw, 34px);
+    color: var(--text);
+    font: 13px/1.45 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  button { font: inherit; }
+  .canvas {
+    width: min(1120px, 100%);
+    margin: 0 auto;
+    overflow: hidden;
+    border: 1px solid #35352f;
+    border-radius: 14px;
+    background: var(--bg);
+    box-shadow: 0 24px 70px rgba(0,0,0,.3);
+  }
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 19px 22px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .eyebrow {
+    margin: 0 0 4px;
+    color: var(--faint);
+    font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  h1 { margin: 0; font-size: 18px; line-height: 1.2; letter-spacing: -.02em; }
+  .legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; color: var(--muted); font-size: 11px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+  .green { color: var(--green); } .amber { color: var(--amber); } .red { color: var(--red); } .blue { color: var(--blue); }
+
+  .content { display: grid; grid-template-columns: minmax(0, 1.02fr) minmax(360px, .98fr); }
+  .section { padding: 22px; }
+  .section + .section { border-left: 1px solid var(--line-soft); }
+  .section-head { display: flex; justify-content: space-between; align-items: end; margin-bottom: 14px; }
+  .section-head h2 { margin: 0; font-size: 13px; letter-spacing: -.01em; }
+  .section-head p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+  .count { color: var(--faint); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .state-list { overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+  .state-row {
+    display: grid;
+    grid-template-columns: 116px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    min-height: 57px;
+    padding: 9px 10px 9px 14px;
+    border-bottom: 1px solid var(--line-soft);
+    animation: enter .42s both;
+  }
+  .state-row:last-child { border-bottom: 0; }
+  .state-row:nth-child(2) { animation-delay: .025s; }
+  .state-row:nth-child(3) { animation-delay: .05s; }
+  .state-row:nth-child(4) { animation-delay: .075s; }
+  .state-row:nth-child(5) { animation-delay: .1s; }
+  .state-row:nth-child(6) { animation-delay: .125s; }
+  .state-row:nth-child(7) { animation-delay: .15s; }
+  .state-row:nth-child(8) { animation-delay: .175s; }
+  .state-row:nth-child(9) { animation-delay: .2s; }
+  .state-name { color: var(--muted); font-size: 11px; }
+  .state-note { color: var(--faint); font-size: 10px; line-height: 1.3; }
+  .trigger, .action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    min-height: 32px;
+    padding: 0 10px;
+    border: 1px solid #3b3b35;
+    border-radius: 7px;
+    background: #1c1c19;
+    color: var(--text);
+    white-space: nowrap;
+    box-shadow: inset 0 1px rgba(255,255,255,.025);
+  }
+  .trigger { justify-self: start; min-width: 0; max-width: 100%; }
+  .trigger .label { overflow: hidden; text-overflow: ellipsis; }
+  .trigger.warning { border-color: #574426; background: var(--amber-bg); }
+  .trigger.danger { border-color: #5b2e2b; background: var(--red-bg); }
+  .trigger.success { border-color: #2d5037; background: var(--green-bg); }
+  .trigger.info { border-color: #29445b; background: var(--blue-bg); }
+  .action { background: #e9e8e1; border-color: #e9e8e1; color: #171714; font-weight: 600; }
+  .action.secondary { background: transparent; border-color: #44443e; color: var(--text); font-weight: 500; }
+  .action.muted { color: var(--muted); background: transparent; }
+  .icon { width: 14px; height: 14px; flex: none; color: var(--muted); }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; box-shadow: 0 0 0 3px rgba(255,255,255,.025); }
+  .spin { border: 1.5px solid currentColor; border-right-color: transparent; background: transparent; }
+  .diff { color: var(--faint); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .diff .add { color: var(--green); } .diff .del { color: var(--red); }
+
+  .popover {
+    overflow: hidden;
+    border: 1px solid #404039;
+    border-radius: 11px;
+    background: var(--panel);
+    box-shadow: 0 18px 45px rgba(0,0,0,.35);
+    animation: pop .5s .08s both;
+  }
+  .pop-head { padding: 15px 16px 13px; }
+  .repo-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .repo-name { font-weight: 650; letter-spacing: -.01em; }
+  .provider { color: var(--muted); font-size: 11px; }
+  .branch { margin-top: 5px; color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .pr-block { padding: 13px 16px; border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); background: #1c1c19; }
+  .pr-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .pr-title { min-width: 0; font-weight: 590; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { display: inline-flex; align-items: center; min-height: 20px; padding: 0 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; }
+  .badge.open { color: var(--green); border-color: #31513a; background: var(--green-bg); }
+  .pr-meta { display: flex; gap: 12px; margin-top: 7px; color: var(--muted); font-size: 10px; }
+  .local { display: grid; grid-template-columns: 1fr auto; gap: 3px 12px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); }
+  .local strong, .checks-head strong { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; }
+  .local span { color: var(--muted); font-size: 10px; }
+  .local .numbers { grid-row: 1 / span 2; grid-column: 2; align-self: center; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .checks { padding: 13px 16px 6px; }
+  .checks-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
+  .checks-head span { color: var(--muted); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .check {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    min-height: 32px;
+    border-top: 1px solid var(--line-soft);
+  }
+  .check:first-of-type { border-top: 0; }
+  .check-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .check-status { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .check-sub { display: block; margin-top: -1px; color: var(--faint); font-size: 9px; }
+  .agent-block { margin: 7px 16px 14px; padding: 10px 11px; border: 1px solid #304152; border-radius: 8px; background: var(--blue-bg); }
+  .agent-top { display: flex; justify-content: space-between; gap: 10px; color: var(--blue); font-size: 11px; }
+  .agent-block p { margin: 4px 0 0 15px; color: var(--muted); font-size: 10px; }
+  .pop-foot { display: flex; align-items: center; justify-content: space-between; padding: 11px 16px; border-top: 1px solid var(--line-soft); color: var(--faint); font-size: 10px; }
+  .link { color: var(--text); }
+
+  .mini-states { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .mini { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+  .mini-label { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 11px; }
+  .mini p { margin: 5px 0 0 13px; color: var(--muted); font-size: 9px; }
+
+  @keyframes enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+  @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  @media (max-width: 820px) {
+    body { padding: 10px; }
+    .topbar { align-items: flex-start; }
+    .legend { display: none; }
+    .content { grid-template-columns: 1fr; }
+    .section + .section { border-left: 0; border-top: 1px solid var(--line-soft); }
+  }
+  @media (max-width: 520px) {
+    .section { padding: 15px; }
+    .state-row { grid-template-columns: 86px minmax(0, 1fr); }
+    .state-row .action { grid-column: 2; justify-self: start; }
+    .state-note { display: none; }
+    .mini-states { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<main class="canvas">
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">Repository control</p>
+      <h1>Git, pull request &amp; delivery states</h1>
+    </div>
+    <div class="legend" aria-label="Status legend">
+      <span class="blue"><i class="dot"></i>Active</span>
+      <span class="green"><i class="dot"></i>Ready</span>
+      <span class="amber"><i class="dot"></i>Attention</span>
+      <span class="red"><i class="dot"></i>Failed</span>
+    </div>
+  </header>
+
+  <div class="content">
+    <section class="section">
+      <div class="section-head">
+        <div><h2>Header states</h2><p>Status opens details; the adjacent button performs the action.</p></div>
+        <span class="count">09 states</span>
+      </div>
+
+      <div class="state-list">
+        <div class="state-row">
+          <div><div class="state-name">Not initialized</div><div class="state-note">Folder is not Git</div></div>
+          <button class="trigger warning"><span class="status-dot amber"></span><span class="label">Repository not connected</span></button>
+          <button class="action">Connect</button>
+        </div>
+        <div class="state-row">
+          <div><div class="state-name">No remote</div><div class="state-note">Local Git only</div></div>
+          <button class="trigger warning"><span class="status-dot amber"></span><span class="label">main · No remote</span></button>
+          <button class="action">Connect</button>
+        </div>
+        <div class="state-row">
+          <div><div class="state-name">Local changes</div><div class="state-note">Ready to publish</div></div>
+          <button class="trigger"><span class="status-dot blue"></span><span class="label">main · 4 changed</span><span class="diff"><span class="add">+128</span> <span class="del">−22</span></span></button>
+          <button class="action">Commit &amp; push</button>
+        </div>
+        <div class="state-row">
+          <div><div class="state-name">Ahead</div><div class="state-note">Commits not pushed</div></div>
+          <button class="trigger"><span class="status-dot blue"></span><span class="label">main · 2 ahead</span></button>
+          <button class="action">Push</button>
+        </div>
+        <div class="state-row">
+          <div><div class="state-name">Clean</div><div class="state-note">No action needed</div></div>
+          <button class="trigger"><span class="status-dot green"></span><span class="label">main · Clean</span></button>
+          <span></span>
+        </div>
+        <div class="state-row">
+          <div><div class="state-name">PR running</div><div class="state-note">Checks in progress</div></div>
+          <button class="trigger info"><span class="status-dot spin blue"></span><span class="label">PR #42 · Building</span><span class="diff">3/5</span></button>
+          <span></span>
+        </div>
+        <div class="state-row">
+          <div><div class="state-name">PR ready</div><div class="state-note">All checks passed</div></div>
+          <button class="trigger success"><span class="status-dot green"></span><span class="label">PR #42 · Ready</span><span class="diff">5/5</span></button>
+          <span></span>
+        </div>
+        <div class="state-row">
+          <div><div class="state-name">PR failed</div><div class="state-note">Check needs attention</div></div>
+          <button class="trigger danger"><span class="status-dot red"></span><span class="label">PR #42 · Checks failed</span><span class="diff">1 failed</span></button>
+          <button class="action secondary">View</button>
+        </div>
+        <div class="state-row">
+          <div><div class="state-name">Path missing</div><div class="state-note">Forge folder unavailable</div></div>
+          <button class="trigger danger"><span class="status-dot red"></span><span class="label">Workspace unavailable</span></button>
+          <button class="action secondary">Repair</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div><h2>Expanded status</h2><p>Desktop popover · mobile bottom sheet</p></div>
+        <span class="count">LIVE VIEW</span>
+      </div>
+
+      <div class="popover">
+        <div class="pop-head">
+          <div class="repo-line"><span class="repo-name">ocode</span><span class="provider">GitHub ↗</span></div>
+          <div class="branch">feature/repository-status → main</div>
+        </div>
+
+        <div class="pr-block">
+          <div class="pr-top">
+            <span class="pr-title">PR #42 · Repository connection UI</span>
+            <span class="badge open">Open</span>
+          </div>
+          <div class="pr-meta"><span>2 approvals</span><span>Mergeable</span><span>Updated 1m ago</span></div>
+        </div>
+
+        <div class="local">
+          <strong>Local</strong>
+          <span>4 changed files · 1 commit ahead</span>
+          <div class="numbers"><span class="green">+128</span>&nbsp; <span class="red">−22</span></div>
+        </div>
+
+        <div class="checks">
+          <div class="checks-head"><strong>Checks &amp; deployments</strong><span>3 / 5</span></div>
+          <div class="check">
+            <span class="green">✓</span><span class="check-name">Lint</span><span class="check-status">18s</span>
+          </div>
+          <div class="check">
+            <span class="green">✓</span><span class="check-name">Unit tests</span><span class="check-status">1m 04s</span>
+          </div>
+          <div class="check">
+            <span class="blue">●</span><span class="check-name">Vercel preview<span class="check-sub">Building deployment</span></span><span class="check-status blue">Deploying…</span>
+          </div>
+          <div class="check">
+            <span class="blue">●</span><span class="check-name">Integration tests<span class="check-sub">12 of 28 suites</span></span><span class="check-status blue">Running…</span>
+          </div>
+          <div class="check">
+            <span class="faint">○</span><span class="check-name">Security scan</span><span class="check-status">Queued</span>
+          </div>
+        </div>
+
+        <div class="agent-block">
+          <div class="agent-top"><span><b>●</b>&nbsp; Review agent</span><span>2m 14s</span></div>
+          <p>Reviewing changed files · 8 of 14 complete</p>
+        </div>
+
+        <div class="pop-foot"><span>Updated 8 seconds ago</span><span class="link">View PR&nbsp; ↗ &nbsp;&nbsp; Refresh&nbsp; ↻</span></div>
+      </div>
+
+      <div class="mini-states" aria-label="Expanded status result variants">
+        <div class="mini"><div class="mini-label green"><i class="status-dot"></i>Ready to merge</div><p>Checks passed · approvals met</p></div>
+        <div class="mini"><div class="mini-label red"><i class="status-dot"></i>Action needed</div><p>Integration tests failed</p></div>
+        <div class="mini"><div class="mini-label amber"><i class="status-dot"></i>Stale</div><p>GitHub last reached 4m ago</p></div>
+      </div>
+    </section>
+  </div>
+</main>
+</body>
+</html>

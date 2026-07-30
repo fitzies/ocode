@@ -1,6 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { ANVIL_PROTOCOL_VERSION, type AnvilApiError } from "@anvil/protocol";
+import {
+  ANVIL_PROTOCOL_VERSION,
+  type AnvilApiError,
+  type ProjectGitConnectRequest,
+} from "@anvil/protocol";
 
 import { ProjectGitError, ProjectGitService } from "../projects/projectGitService.ts";
 import { sameOrigin } from "./security.ts";
@@ -58,7 +62,7 @@ export class ProjectGitRoutes {
   ) {}
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
-    const match = /^\/api\/v1\/projects\/([^/]+)\/git\/(status|generate-message|commit-and-push)$/.exec(url.pathname);
+    const match = /^\/api\/v1\/projects\/([^/]+)\/git\/(status|connect|generate-message|commit-and-push)$/.exec(url.pathname);
     if (!match) return false;
     const operation = match[2]!;
     if ((operation === "status" && request.method !== "GET") || (operation !== "status" && request.method !== "POST")) {
@@ -78,6 +82,45 @@ export class ProjectGitRoutes {
       }
 
       const body = await readJson(request);
+      if (operation === "connect") {
+        let input: ProjectGitConnectRequest;
+        const remoteName = body.remoteName;
+        if (remoteName !== undefined && (typeof remoteName !== "string" || !remoteName)) {
+          throw new ProjectGitError("invalid_remote_name", "Remote name is malformed");
+        }
+        if (body.mode === "existing") {
+          if (typeof body.remoteUrl !== "string" || !body.remoteUrl) {
+            throw new ProjectGitError("invalid_remote_url", "Remote URL is malformed");
+          }
+          input = {
+            mode: "existing",
+            remoteUrl: body.remoteUrl,
+            ...(typeof remoteName === "string" ? { remoteName } : {}),
+          };
+        } else if (body.mode === "select") {
+          if (typeof remoteName !== "string" || !remoteName) {
+            throw new ProjectGitError("invalid_remote_name", "Remote name is malformed");
+          }
+          input = { mode: "select", remoteName };
+        } else if (body.mode === "github") {
+          if (typeof body.repository !== "string" || !body.repository) {
+            throw new ProjectGitError("invalid_github_repository", "GitHub repository must use owner/name format");
+          }
+          if (body.visibility !== "private" && body.visibility !== "public") {
+            throw new ProjectGitError("invalid_github_visibility", "GitHub visibility must be private or public");
+          }
+          input = {
+            mode: "github",
+            repository: body.repository,
+            visibility: body.visibility,
+            ...(typeof remoteName === "string" ? { remoteName } : {}),
+          };
+        } else {
+          throw new ProjectGitError("invalid_connect_mode", "Git connection mode is malformed");
+        }
+        sendJson(response, 200, await this.git.connect(projectId, input));
+        return true;
+      }
       if (operation === "generate-message") {
         let modelId: string | undefined;
         if (body.sessionId !== undefined) {

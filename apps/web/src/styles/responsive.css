@@ -131,8 +131,13 @@
     max-width: 28vw;
   }
 
-  .git-diff-stat {
+  .git-diff-stat,
+  .repository-status-trigger-diff {
     display: none;
+  }
+
+  .repository-status-trigger {
+    max-width: 132px;
   }
 
   .connection-chip,
@@ -237,6 +242,24 @@
 }
 
 @media (max-width: 420px) {
+  .repository-status-trigger-label {
+    display: none;
+  }
+
+  .repository-status-trigger {
+    width: 28px;
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .repository-status-count {
+    display: none;
+  }
+
+  .repository-action-label {
+    display: none;
+  }
+
   .thinking-event,
   .tool-event,
   .tool-batch,

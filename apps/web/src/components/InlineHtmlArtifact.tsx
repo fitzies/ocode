@@ -1,8 +1,6 @@
 import type { InlineHtmlContentBlock } from "@anvil/protocol";
 import {
   CodeIcon,
-  Maximize01Icon,
-  Minimize01Icon,
   ReloadIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -11,8 +9,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Spinner } from "./ui/spinner";
 
 const MESSAGE_TYPE = "ocode:inline-html";
-const COLLAPSED_MAX_HEIGHT = 640;
-const EXPANDED_MAX_HEIGHT = 1_100;
 
 function randomToken(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -36,7 +32,7 @@ function documentInjection(token: string, html: string): string {
 <meta name="referrer" content="no-referrer">
 <style>
   :root { color-scheme: light dark; }
-  html, body { min-height: 0; margin: 0; background: transparent !important; }
+  html, body { min-height: 0; margin: 0; overflow-x: hidden; overflow-y: clip; background: transparent !important; }
   body { overflow-wrap: anywhere; }
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
@@ -169,10 +165,9 @@ export function InlineHtmlArtifact({ block }: { block: InlineHtmlContentBlock })
   const [renderState, setRenderState] = useState<"loading" | "ready" | "error">("loading");
   const [naturalHeight, setNaturalHeight] = useState(180);
   const [showSource, setShowSource] = useState(false);
-  const [expanded, setExpanded] = useState(false);
   const token = useMemo(() => randomToken(), [block.id, reloadKey]);
   const source = useMemo(() => buildInlineHtmlDocument(block.html, token), [block.html, token]);
-  const frameHeight = Math.max(120, Math.min(naturalHeight, expanded ? EXPANDED_MAX_HEIGHT : COLLAPSED_MAX_HEIGHT));
+  const frameHeight = Math.max(120, naturalHeight);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -217,7 +212,7 @@ export function InlineHtmlArtifact({ block }: { block: InlineHtmlContentBlock })
   };
 
   return (
-    <article className={`inline-html-artifact inline-html-artifact--${renderState}${expanded ? " inline-html-artifact--expanded" : ""}`}>
+    <article className={`inline-html-artifact inline-html-artifact--${renderState}`}>
       <header className="inline-html-artifact-header">
         <span className="inline-html-artifact-title">
           <strong>{block.title}</strong>
@@ -231,10 +226,6 @@ export function InlineHtmlArtifact({ block }: { block: InlineHtmlContentBlock })
           <button type="button" onClick={reload} title="Reload preview">
             <HugeiconsIcon icon={ReloadIcon} strokeWidth={2} className="size-3.5" />
             <span className="sr-only">Reload preview</span>
-          </button>
-          <button type="button" onClick={() => setExpanded((value) => !value)} aria-pressed={expanded} title={expanded ? "Collapse preview" : "Expand preview"}>
-            <HugeiconsIcon icon={expanded ? Minimize01Icon : Maximize01Icon} strokeWidth={2} className="size-3.5" />
-            <span className="sr-only">{expanded ? "Collapse preview" : "Expand preview"}</span>
           </button>
         </span>
       </header>

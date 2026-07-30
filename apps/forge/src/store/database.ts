@@ -22,7 +22,7 @@ import {
 const sqliteModuleName = "node:sqlite";
 const { DatabaseSync } = await import(sqliteModuleName) as typeof import("node:sqlite");
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 const RETAINED_EVENT_COUNT = 100_000;
 const MAX_COMPACTION_ROWS_PER_CHECKPOINT = 1_000;
 
@@ -75,10 +75,17 @@ export interface StoredSnapshot {
   cursor: number;
 }
 
+export interface PersistedContextUsage {
+  tokens: number | null;
+  contextWindow: number;
+  percent: number | null;
+}
+
 export interface RuntimeSessionRecord {
   session: SessionSummary;
   piSessionId?: string;
   piSessionFile?: string;
+  contextUsage?: PersistedContextUsage;
 }
 
 export interface StoredTerminalRecord {
@@ -303,7 +310,8 @@ export class ForgeDatabase {
     const row = this.database.prepare(`
       SELECT id, project_id, title, model_id, thinking_level, status, settled, branch, updated_at,
              last_user_message_at, last_user_message_sequence, last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
-             read_through_sequence, pi_session_id, pi_session_file
+             read_through_sequence, pi_session_id, pi_session_file,
+             context_tokens, context_window, context_percent
       FROM sessions WHERE id = ?
     `).get(id) as Record<string, unknown> | undefined;
     if (!row) return undefined;
@@ -327,7 +335,28 @@ export class ForgeDatabase {
       },
       piSessionId: typeof row.pi_session_id === "string" ? row.pi_session_id : undefined,
       piSessionFile: typeof row.pi_session_file === "string" ? row.pi_session_file : undefined,
+      ...(typeof row.context_window === "number" ? {
+        contextUsage: {
+          tokens: typeof row.context_tokens === "number" ? row.context_tokens : null,
+          contextWindow: row.context_window,
+          percent: typeof row.context_percent === "number" ? row.context_percent : null,
+        },
+      } : {}),
     };
+  }
+
+  updateSessionContextUsage(id: string, context: PersistedContextUsage): boolean {
+    const result = this.database.prepare(`
+      UPDATE sessions
+      SET context_tokens = ?, context_window = ?, context_percent = ?
+      WHERE id = ? AND NOT (
+        context_tokens IS ? AND context_window IS ? AND context_percent IS ?
+      )
+    `).run(
+      context.tokens, context.contextWindow, context.percent, id,
+      context.tokens, context.contextWindow, context.percent,
+    );
+    return Number(result.changes) === 1;
   }
 
   listTerminalRecords(projectId?: string): StoredTerminalRecord[] {
@@ -1008,6 +1037,17 @@ export class ForgeDatabase {
         UPDATE sessions
         SET read_through_sequence = COALESCE(last_terminal_sequence, 0);
         PRAGMA user_version = 10;
+        COMMIT;
+      `);
+    }
+
+    if (version < 11) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ALTER TABLE sessions ADD COLUMN context_tokens INTEGER;
+        ALTER TABLE sessions ADD COLUMN context_window INTEGER;
+        ALTER TABLE sessions ADD COLUMN context_percent REAL;
+        PRAGMA user_version = 11;
         COMMIT;
       `);
     }

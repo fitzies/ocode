@@ -32,13 +32,6 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
 import {
   Select,
@@ -51,6 +44,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ProjectFavicon } from "@/components/ProjectFavicon";
+
+function projectRepositoryName(project: { name: string; path: string }): string {
+  return project.path.split(/[\\/]/).filter(Boolean).at(-1) || project.name;
+}
 import {
   Sidebar as SidebarPrimitive,
   SidebarContent,
@@ -158,7 +155,9 @@ export const Sidebar = memo(function Sidebar({
   usage,
 }: SidebarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
+  const [newThreadOpen, setNewThreadOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [projectQuery, setProjectQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [settledOpen, setSettledOpen] = useState(true);
   const [settlementPending, setSettlementPending] = useState<Set<string>>(new Set());
@@ -172,8 +171,13 @@ export const Sidebar = memo(function Sidebar({
         setSearchOpen(true);
       }
     };
+    const openNewThread = () => setNewThreadOpen(true);
     window.addEventListener("keydown", openSearch);
-    return () => window.removeEventListener("keydown", openSearch);
+    window.addEventListener("ocode:new-thread", openNewThread);
+    return () => {
+      window.removeEventListener("keydown", openSearch);
+      window.removeEventListener("ocode:new-thread", openNewThread);
+    };
   }, []);
 
   const closeMobile = () => {
@@ -209,6 +213,7 @@ export const Sidebar = memo(function Sidebar({
     const active = session.id === snapshot.activeSessionId;
     const settling = settlementPending.has(session.id);
     const displayTitle = capitalizeTitle(session.title);
+    const projectName = project ? projectRepositoryName(project) : "unknown";
     const branch = session.branch ?? "unknown";
 
     return (
@@ -223,16 +228,20 @@ export const Sidebar = memo(function Sidebar({
                 closeMobile();
               }}
             >
+              {project && <ProjectFavicon projectId={project.id} projectName={project.name} className="session-settled-project-icon" />}
               <span className="session-copy">
                 <span className="session-project-line">
-                  <span className="session-project">{project?.name.toLowerCase() ?? "unknown"}</span>
+                  <span className="session-project-identity">
+                    {project && <ProjectFavicon projectId={project.id} projectName={project.name} />}
+                    <span className="session-project">{projectName}</span>
+                  </span>
                   {session.status === "running" && <span className="session-spinner" role="status" aria-label="Working" />}
                   {session.status === "waiting" && <span className="session-runtime session-runtime--waiting">Needs you</span>}
                   {session.status === "failed" && <span className="session-runtime session-runtime--failed">Failed</span>}
                 </span>
                 <span className={`session-title ${unread ? "session-title--unread" : ""}`} title={displayTitle}>{displayTitle}</span>
                 <span className="session-meta">
-                  <span className="session-context-copy" title={`${project?.name.toLowerCase() ?? "unknown"}/${branch}`}>{project?.name.toLowerCase() ?? "unknown"}/{branch}</span>
+                  <span className="session-context-copy" title={`${projectName}/${branch}`}>{projectName}/{branch}</span>
                   <span className={`session-recency ${completedUnviewed ? "session-recency--completed" : ""}`}>
                     {session.status === "running"
                       ? session.lastUserMessageAt
@@ -283,13 +292,12 @@ export const Sidebar = memo(function Sidebar({
   };
 
   return (
-    <SidebarPrimitive variant="inset" collapsible="offcanvas" aria-label="Projects and sessions">
+    <SidebarPrimitive variant="sidebar" collapsible="offcanvas" aria-label="Projects and sessions">
       <SidebarHeader className="gap-2 border-b border-sidebar-border p-2.5">
-        <div className="flex min-h-8 items-center gap-1">
+        <div className="flex min-h-8 items-center md:hidden">
           <SidebarTrigger className="sidebar-close" aria-label="Close sidebar" />
-          <span className="px-1 text-xs font-medium tracking-tight text-sidebar-foreground">ocode</span>
         </div>
-        <div className="grid grid-cols-[minmax(0,1fr)_1.75rem] grid-rows-2 gap-1.5">
+        <div className="sidebar-controls grid grid-cols-[minmax(0,1fr)_1.75rem] grid-rows-2 gap-1.5">
           <div className="relative min-w-0">
             <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="pointer-events-none absolute top-1/2 left-2.5 z-10 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <SidebarInput
@@ -318,28 +326,15 @@ export const Sidebar = memo(function Sidebar({
               <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-3.5" />
             </Button>
           ) : (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon" className="border-input bg-muted/20 dark:bg-muted/30" aria-label="Create thread">
-                  <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-3.5" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuLabel>New thread in</DropdownMenuLabel>
-                {snapshot.projects.map((project) => (
-                  <DropdownMenuItem
-                    key={project.id}
-                    onSelect={() => {
-                      onCreateSession(project.id);
-                      closeMobile();
-                    }}
-                  >
-                    {project.name.toLowerCase()}
-                  </DropdownMenuItem>
-                ))}
-                {snapshot.projects.length === 0 && <DropdownMenuItem disabled>Create a project first</DropdownMenuItem>}
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              variant="outline"
+              size="icon"
+              className="border-input bg-muted/20 dark:bg-muted/30"
+              aria-label="Create thread"
+              onClick={() => setNewThreadOpen(true)}
+            >
+              <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-3.5" />
+            </Button>
           )}
           <Select
             value={projectFilter ?? "__all_projects__"}
@@ -349,8 +344,8 @@ export const Sidebar = memo(function Sidebar({
               <SelectValue>
                 {selectedProject ? (
                   <>
-                    <ProjectFavicon projectId={selectedProject.id} />
-                    <span className="truncate">{selectedProject.name.toLowerCase()}</span>
+                    <ProjectFavicon projectId={selectedProject.id} projectName={selectedProject.name} />
+                    <span className="truncate">{projectRepositoryName(selectedProject)}</span>
                   </>
                 ) : (
                   <>
@@ -370,8 +365,8 @@ export const Sidebar = memo(function Sidebar({
                 {snapshot.projects.length > 0 && <SelectSeparator />}
                 {snapshot.projects.map((project) => (
                   <SelectItem value={project.id} key={project.id} title={project.path}>
-                    <ProjectFavicon projectId={project.id} />
-                    <span className="truncate">{project.name.toLowerCase()}</span>
+                    <ProjectFavicon projectId={project.id} projectName={project.name} />
+                    <span className="truncate">{projectRepositoryName(project)}</span>
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -420,6 +415,47 @@ export const Sidebar = memo(function Sidebar({
           </Collapsible>
         )}
       </SidebarContent>
+
+      <CommandDialog
+        open={newThreadOpen}
+        onOpenChange={(open) => {
+          setNewThreadOpen(open);
+          if (!open) setProjectQuery("");
+        }}
+        title="New thread"
+        description="Choose a project for the new thread"
+        className="sm:max-w-sm"
+      >
+        <Command shouldFilter>
+          <CommandInput
+            autoFocus
+            value={projectQuery}
+            onValueChange={setProjectQuery}
+            placeholder="Choose a project…"
+            aria-label="Choose a project"
+          />
+          <CommandList>
+            <CommandEmpty>{snapshot.projects.length === 0 ? "Create a project first." : "No projects found."}</CommandEmpty>
+            <CommandGroup>
+              {snapshot.projects.map((project) => (
+                <CommandItem
+                  key={project.id}
+                  value={`${projectRepositoryName(project)} ${project.name} ${project.path}`}
+                  onSelect={() => {
+                    onCreateSession(project.id);
+                    setNewThreadOpen(false);
+                    setProjectQuery("");
+                    closeMobile();
+                  }}
+                >
+                  <ProjectFavicon projectId={project.id} projectName={project.name} />
+                  <span className="min-w-0 flex-1 truncate">{projectRepositoryName(project)}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </CommandDialog>
 
       <CommandDialog
         open={searchOpen}

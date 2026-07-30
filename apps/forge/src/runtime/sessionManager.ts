@@ -929,27 +929,30 @@ export class SessionManager {
     const project = this.projectResolver.resolveProject(stored.session.projectId);
     if (!project) return undefined;
     const runtime = this.runtimes.get(sessionId);
-    if (!runtime?.rpc.running) return { projectPath: project.path };
+    const cached = { projectPath: project.path, context: stored.contextUsage };
+    if (!runtime?.rpc.running) return cached;
     let response: RpcRecord;
     try {
       response = await this.sendSuppressedRequest(runtime, { type: "get_session_stats" });
     } catch {
-      return { projectPath: project.path };
+      return cached;
     }
-    if (rpcFailure(response)) return { projectPath: project.path };
+    if (rpcFailure(response)) return cached;
     const context = rpcData(response).contextUsage;
     const item = context && typeof context === "object" && !Array.isArray(context)
       ? context as Record<string, unknown>
       : undefined;
     const contextWindow = typeof item?.contextWindow === "number" ? item.contextWindow : undefined;
-    return {
-      projectPath: project.path,
-      context: contextWindow === undefined ? undefined : {
-        tokens: typeof item?.tokens === "number" ? item.tokens : null,
-        contextWindow,
-        percent: typeof item?.percent === "number" ? item.percent : null,
-      },
+    if (contextWindow === undefined) return cached;
+    const current = {
+      tokens: typeof item?.tokens === "number" ? item.tokens : null,
+      contextWindow,
+      percent: typeof item?.percent === "number" ? item.percent : null,
     };
+    // The conditional update in ForgeDatabase avoids a disk write when the
+    // periodic indicator poll returns the same values.
+    this.database.updateSessionContextUsage(sessionId, current);
+    return { projectPath: project.path, context: current };
   }
 
   private async ensureRuntime(stored: RuntimeSessionRecord): Promise<ManagedSession> {

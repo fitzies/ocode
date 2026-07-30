@@ -575,6 +575,13 @@ button:disabled {
   gap: 8px;
 }
 
+.session-project-identity {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+}
+
 .session-project {
   overflow: hidden;
   color: var(--legacy-text-low);
@@ -713,20 +720,23 @@ button:disabled {
 .session-item--settled .session-row {
   height: 33px;
   min-height: 0;
-  padding: 8px 48px 8px 23px;
+  padding: 8px 48px 8px 25px;
   color: var(--legacy-text-faint);
   background: transparent;
   border-color: transparent;
   border-radius: 6px;
 }
 
-.session-item--settled .session-row::after {
+.session-settled-project-icon {
+  display: none;
+}
+
+.session-item--settled .session-settled-project-icon {
   position: absolute;
   top: 10px;
   left: 9px;
-  color: var(--green);
-  font-size: 10px;
-  content: "✓";
+  z-index: 1;
+  display: inline-flex;
 }
 
 .session-item--settled .session-row:hover,

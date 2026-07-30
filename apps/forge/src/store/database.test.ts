@@ -78,6 +78,26 @@ describe("ForgeDatabase event journal", () => {
     database.close();
   });
 
+  it("persists context usage only when it changes", () => {
+    const database = new ForgeDatabase(":memory:");
+    database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);
+    database.createSession({
+      id: "session-context",
+      projectId: "project-1",
+      title: "Context thread",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle",
+      modelId: "test/model",
+      thinkingLevel: "off",
+    });
+    const context = { tokens: 12_345, contextWindow: 200_000, percent: 6.17 };
+
+    expect(database.updateSessionContextUsage("session-context", context)).toBe(true);
+    expect(database.updateSessionContextUsage("session-context", context)).toBe(false);
+    expect(database.getSession("session-context")?.contextUsage).toEqual(context);
+    database.close();
+  });
+
   it("persists a session's settled state", () => {
     const database = new ForgeDatabase(":memory:");
     database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);

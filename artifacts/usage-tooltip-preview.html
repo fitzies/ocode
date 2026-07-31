@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Usage limit tooltip preview</title>
+<style>
+  :root { color-scheme:dark; --panel:#171816; --line:#30322e; --text:#f1f2ee; --muted:#92978d; --track:#292b27; --green:#72b87b; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; min-height:100%; background:transparent; }
+  body { display:grid; place-items:center; padding:72px 28px 32px; font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); }
+  .sidebar { width:min(330px,100%); border:1px solid var(--line); border-radius:12px; background:var(--panel); box-shadow:0 20px 60px rgba(0,0,0,.25); }
+  .filler { height:88px; padding:16px; color:#656960; font-size:11px; }
+  .footer { border-top:1px solid var(--line); padding:13px 14px 16px; }
+  .limits { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .limit { position:relative; display:flex; align-items:center; gap:8px; min-width:0; padding:4px; border-radius:7px; outline:none; }
+  .limit:hover,.limit:focus-visible { background:rgba(255,255,255,.035); }
+  .ring { --used:31; --allowance:40; position:relative; display:grid; width:40px; height:40px; flex:0 0 auto; place-items:center; }
+  .week { --used:10; --allowance:14; }
+  svg { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); }
+  circle { fill:none; stroke-width:4; }
+  .track { stroke:var(--track); }
+  .allowance { stroke:#666b62; stroke-linecap:round; stroke-dasharray:var(--allowance) calc(100 - var(--allowance)); }
+  .used { stroke:var(--green); stroke-linecap:round; stroke-dasharray:var(--used) calc(100 - var(--used)); }
+  .percent { position:relative; color:var(--green); font-size:10px; font-weight:650; letter-spacing:-.03em; }
+  .copy { display:grid; min-width:0; gap:4px; }
+  .label { color:#d8dad5; font-size:10px; line-height:1; }
+  .reset { color:#7f847a; font-size:8px; line-height:1; white-space:nowrap; }
+  .tooltip { position:absolute; z-index:2; left:50%; bottom:calc(100% + 11px); width:218px; padding:11px 12px; transform:translateX(-50%); border-radius:7px; background:#f0f1ed; color:#1c1e1a; box-shadow:0 10px 30px rgba(0,0,0,.32); animation:arrive .18s ease-out both; }
+  .tooltip::after { content:""; position:absolute; left:50%; bottom:-5px; width:10px; height:10px; transform:translateX(-50%) rotate(45deg); border-radius:2px; background:#f0f1ed; }
+  .tooltip-head { display:flex; align-items:baseline; justify-content:space-between; gap:12px; }
+  .tooltip-title { font-size:11px; font-weight:700; }
+  .tooltip-copy { margin:5px 0 9px; color:#5e635a; font-size:9.5px; line-height:1.4; }
+  .meter { position:relative; height:4px; overflow:hidden; border-radius:999px; background:#d7d9d3; }
+  .meter::before { content:""; position:absolute; inset:0 auto 0 0; width:14%; background:#adb1a8; }
+  .meter::after { content:""; position:absolute; inset:0 auto 0 0; width:10%; border-radius:999px; background:#4d9758; }
+  .legend { display:flex; justify-content:space-between; margin-top:6px; color:#747970; font-size:8px; font-variant-numeric:tabular-nums; }
+  @keyframes arrive { from { opacity:0; transform:translate(-50%,4px) scale(.98); } }
+  @media(max-width:420px) { body{padding-inline:14px}.tooltip{left:auto;right:-8px;transform:none}.tooltip::after{left:auto;right:35px}.limits{gap:2px} }
+  @media(prefers-reduced-motion:reduce) { .tooltip{animation:none} }
+</style>
+</head>
+<body>
+  <section class="sidebar" aria-label="Sidebar usage tooltip concept">
+    <div class="filler">…sidebar content…</div>
+    <footer class="footer">
+      <div class="limits" aria-label="Codex usage limits">
+        <div class="limit" tabindex="0">
+          <div class="ring" role="img" aria-label="5 hour usage: 31 percent used">
+            <svg viewBox="0 0 44 44" aria-hidden="true"><circle class="track" cx="22" cy="22" r="17" pathLength="100"/><circle class="allowance" cx="22" cy="22" r="17" pathLength="100"/><circle class="used" cx="22" cy="22" r="17" pathLength="100"/></svg>
+            <span class="percent">31%</span>
+          </div>
+          <span class="copy"><span class="label">5 hours</span><span class="reset">Resets in 2h 14m</span></span>
+        </div>
+        <div class="limit" tabindex="0" aria-describedby="weekly-tip">
+          <div class="tooltip" id="weekly-tip" role="tooltip">
+            <div class="tooltip-head"><span class="tooltip-title">Weekly limit</span></div>
+            <p class="tooltip-copy">10% used. You can use 4% more right now and stay evenly paced.</p>
+            <div class="meter" aria-hidden="true"></div>
+            <div class="legend"><span>10% used</span><span>14% pace target</span></div>
+          </div>
+          <div class="ring week" role="img" aria-label="Weekly usage: 10 percent used">
+            <svg viewBox="0 0 44 44" aria-hidden="true"><circle class="track" cx="22" cy="22" r="17" pathLength="100"/><circle class="allowance" cx="22" cy="22" r="17" pathLength="100"/><circle class="used" cx="22" cy="22" r="17" pathLength="100"/></svg>
+            <span class="percent">10%</span>
+          </div>
+          <span class="copy"><span class="label">Weekly</span><span class="reset">Resets in 5d 18h</span></span>
+        </div>
+      </div>
+    </footer>
+  </section>
+</body>
+</html>

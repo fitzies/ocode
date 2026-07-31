@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Compact header audio player</title>
+<style>
+:root{color-scheme:dark;--bg:#0d0e10;--line:#292c31;--text:#eeeeea;--muted:#8d929a;--green:#72d889;--soft:rgba(114,216,137,.11)}*{box-sizing:border-box}html,body{margin:0;background:transparent}body{padding:16px;color:var(--text);font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.mock{width:min(920px,100%);margin:auto;overflow:hidden;background:var(--bg);border:1px solid var(--line);border-radius:11px;box-shadow:0 18px 50px #0006;animation:in .3s cubic-bezier(.16,1,.3,1) both}.header{display:flex;min-height:54px;align-items:center;justify-content:space-between;padding:0 11px 0 16px;gap:14px}.title{min-width:0;overflow:hidden;font-size:12px;font-weight:600;text-overflow:ellipsis;white-space:nowrap}.title span{color:var(--muted);font-weight:500}.actions{display:flex;min-width:0;align-items:center;gap:6px}.git,.player,.square{height:31px;border:1px solid var(--line);border-radius:8px;background:transparent}.git{display:flex;align-items:center;padding:0 9px;gap:6px;font-size:10px;font-weight:620}.git svg{color:var(--muted)}.player{position:relative;display:flex;overflow:hidden;align-items:stretch}.player button{display:grid;min-width:31px;padding:0;place-items:center;color:var(--muted);background:transparent;border:0;border-left:1px solid var(--line)}.player button:first-child{border-left:0}.player .pause{color:var(--green);background:var(--soft)}.player .speed{width:43px;color:var(--text);font:650 8px/1 ui-monospace,monospace}.progress{position:absolute;right:0;bottom:0;left:0;height:2px;background:#22252a}.progress span{display:block;width:18%;height:100%;background:var(--green)}.square{display:grid;width:31px;place-items:center;color:var(--muted)}svg{display:block;width:13px;height:13px}.skip{position:relative}.skip b{position:absolute;font:700 5.5px/1 ui-monospace,monospace}.caption{display:flex;align-items:center;justify-content:center;padding:9px 12px;gap:14px;color:var(--muted);border-top:1px solid #202328;font-size:9px}.caption span{display:flex;align-items:center;gap:5px}.dot{width:4px;height:4px;border-radius:50%;background:var(--green)}@keyframes in{from{opacity:0;transform:translateY(6px)}}@media(prefers-reduced-motion:reduce){*{animation:none!important}}@media(max-width:620px){body{padding:8px}.title,.git,.square{display:none}.actions,.player{width:100%}.player{flex:1}.player .speed{margin-left:auto}.caption{justify-content:flex-start;overflow:auto;white-space:nowrap}}
+</style>
+</head>
+<body>
+<div class="mock">
+  <header class="header">
+    <div class="title"><span>ocode /</span> Improve voice playback</div>
+    <div class="actions">
+      <div class="git">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="4" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="6" cy="20" r="2"/><path d="M6 6v12M8 14c5 0 8-2 8-6"/></svg>main
+      </div>
+      <div class="player" role="group" aria-label="Audio player">
+        <button class="skip" aria-label="Back 10 seconds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 8V4m0 0h4M5 4l3 3a8 8 0 1 1-2 10"/></svg><b>10</b></button>
+        <button class="pause" aria-label="Pause"><svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></button>
+        <button class="skip" aria-label="Forward 10 seconds"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 8V4m0 0h-4m4 0-3 3a8 8 0 1 0 2 10"/></svg><b>10</b></button>
+        <button class="speed" aria-label="Playback speed">1.25×</button>
+        <div class="progress"><span></span></div>
+      </div>
+      <button class="square" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A8 8 0 0 0 15 6l-.3-2.6h-4L10.4 6A8 8 0 0 0 9 7.1l-2.4-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1A8 8 0 0 0 10.4 18l.3 2.6h4L15 18a8 8 0 0 0 1.5-1.1l2.4 1 2-3.4-2-1.5a7 7 0 0 0 .1-1Z"/></svg></button>
+    </div>
+  </header>
+  <div class="caption"><span><i class="dot"></i>persists across threads</span><span>appears while loading</span><span>0.75×–2×</span></div>
+</div>
+</body>
+</html>

@@ -10,6 +10,7 @@ import {
 } from "./content.js";
 
 export * from "@anvil/protocol/content";
+export * from "./askUserQuestion.js";
 export * from "@anvil/protocol/resources";
 export * from "@anvil/protocol/terminal";
 
@@ -314,6 +315,7 @@ interface InteractionRequestBase {
   message?: string;
   requestedAt: string;
   timeoutMs?: number;
+  presentation?: import("./askUserQuestion.js").AskUserQuestionPresentation;
   raw?: JsonValue;
 }
 
@@ -381,6 +383,13 @@ export type InteractionRequest =
   | InputInteractionRequest
   | EditorInteractionRequest
   | UnknownInteractionRequest;
+
+export type AskUserQuestionInteractionRequest = Extract<
+  InteractionRequest,
+  { method: "input" | "select" | "multiSelect" }
+> & {
+  presentation: import("./askUserQuestion.js").AskUserQuestionPresentation;
+};
 
 export type InteractionMethod = InteractionRequest["method"];
 
@@ -739,6 +748,15 @@ function isInteractionRequest(value: unknown): boolean {
   if ((value.method === "select" || value.method === "multiSelect") &&
       (!Array.isArray(value.options) || !value.options.every(isInteractionOption))) return false;
   if (value.method === "unknown" && typeof value.originalMethod !== "string") return false;
+  if (value.presentation !== undefined) {
+    if (
+      !isRecord(value.presentation) ||
+      value.presentation.type !== "ask_user_question" ||
+      value.presentation.schemaVersion !== 1 ||
+      (value.presentation.otherLabel !== undefined && typeof value.presentation.otherLabel !== "string") ||
+      !["input", "select", "multiSelect"].includes(String(value.method))
+    ) return false;
+  }
   return true;
 }
 

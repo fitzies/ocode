@@ -2,7 +2,15 @@ import { constants } from "node:fs";
 import { open, realpath } from "node:fs/promises";
 import { basename, extname, isAbsolute, relative, resolve, sep } from "node:path";
 
-import { normalizeProjectResourcePath } from "@anvil/protocol";
+import {
+  type AskUserQuestionMode,
+  type OcodeAskUserQuestionEditorEnvelope,
+  OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL,
+  OCODE_ASK_USER_QUESTION_KIND,
+  OCODE_ASK_USER_QUESTION_SCHEMA_VERSION,
+  normalizeProjectResourcePath,
+  parseOcodeAskUserQuestionResponse,
+} from "@anvil/protocol";
 import { Type } from "typebox";
 
 import { secureOpenProjectPath } from "../files/secureProjectPath.ts";
@@ -21,27 +29,206 @@ const OPEN_FILE_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".w
 interface ToolContext {
   cwd: string;
   isProjectTrusted(): boolean;
+  hasUI?: boolean;
+  ui?: {
+    editor(title: string, prefill?: string): Promise<unknown>;
+  };
+}
+
+interface ToolDefinition {
+  name: string;
+  label: string;
+  description: string;
+  promptSnippet: string;
+  promptGuidelines: string[];
+  parameters: ReturnType<typeof Type.Object>;
+  execute(
+    toolCallId: string,
+    params: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    onUpdate: unknown,
+    context: ToolContext,
+  ): Promise<{
+    content: Array<{ type: "text"; text: string }>;
+    details: Record<string, unknown>;
+  }>;
 }
 
 interface ExtensionApi {
-  registerTool(definition: {
-    name: string;
-    label: string;
-    description: string;
-    promptSnippet: string;
-    promptGuidelines: string[];
-    parameters: ReturnType<typeof Type.Object>;
-    execute(
-      toolCallId: string,
-      params: Record<string, unknown>,
-      signal: AbortSignal | undefined,
-      onUpdate: unknown,
-      context: ToolContext,
-    ): Promise<{
-      content: Array<{ type: "text"; text: string }>;
-      details: Record<string, unknown>;
-    }>;
-  }): void;
+  registerTool(definition: ToolDefinition): void;
+  on(event: "session_start", handler: () => void): void;
+}
+
+interface AskOption {
+  label: string;
+  value: string;
+  description?: string;
+}
+
+type AskAnswer =
+  | { type: "text"; label: string; value: string }
+  | { type: "option"; label: string; value: string; index: number }
+  | { type: "other"; label: string; value: string };
+
+const AskOptionSchema = Type.Object({
+  label: Type.String({
+    description:
+      'Display label for the option. If you recommend an option, place it first and append "(Recommended)" to the label.',
+  }),
+  value: Type.Optional(Type.String({
+    description: "Optional machine-readable value returned for the option. Defaults to the label.",
+  })),
+  description: Type.Optional(Type.String({ description: "Optional extra detail shown below the option." })),
+});
+
+const AskUserQuestionParams = Type.Object({
+  question: Type.String({
+    description: "The single question to ask the user. Ask exactly one question per tool call.",
+  }),
+  details: Type.Optional(Type.String({
+    description: "Optional extra context or instructions shown under the question.",
+  })),
+  options: Type.Optional(Type.Array(AskOptionSchema, {
+    description:
+      "Optional multiple-choice options. Omit or pass an empty array for free-form text input. Users will always be able to choose Other and type a custom answer when options are provided.",
+  })),
+  multiSelect: Type.Optional(Type.Boolean({
+    description: "Set to true to allow multiple answers to be selected for a question.",
+  })),
+});
+
+function normalizeAskOptions(value: unknown): AskOption[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): AskOption[] => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const option = item as Record<string, unknown>;
+    if (typeof option.label !== "string") return [];
+    const label = option.label.trim();
+    if (!label) return [];
+    return [{
+      label,
+      value: typeof option.value === "string" && option.value.trim() ? option.value.trim() : label,
+      ...(typeof option.description === "string" && option.description.trim()
+        ? { description: option.description.trim() }
+        : {}),
+    }];
+  });
+}
+
+function askResultDetails(
+  status: "answered" | "cancelled" | "unavailable",
+  question: string,
+  mode: AskUserQuestionMode,
+  answers: AskAnswer[],
+  context?: string,
+  message?: string,
+): Record<string, unknown> {
+  return { status, question, context, mode, answers, message };
+}
+
+function cancelledAskResult(question: string, mode: AskUserQuestionMode, context?: string, message = "User cancelled the question") {
+  return {
+    content: [{ type: "text" as const, text: message }],
+    details: { ...askResultDetails("cancelled", question, mode, [], context, message), cancelled: true },
+  };
+}
+
+function unavailableAskResult(question: string, mode: AskUserQuestionMode, context?: string) {
+  const message = "ask_user_question requires interactive mode UI";
+  return {
+    content: [{ type: "text" as const, text: message }],
+    details: askResultDetails("unavailable", question, mode, [], context, message),
+  };
+}
+
+function formatAskAnswer(answer: AskAnswer): string {
+  if (answer.type === "option") return `${answer.index}. ${answer.label}`;
+  if (answer.type === "other") return `Other: ${answer.label}`;
+  return answer.label;
+}
+
+function answeredAskResult(question: string, mode: AskUserQuestionMode, answers: AskAnswer[], context?: string) {
+  const text = mode === "text"
+    ? answers[0]!.label.trim() ? `User answered: ${answers[0]!.label}` : "User submitted an empty response"
+    : mode === "single-select"
+      ? `User selected: ${formatAskAnswer(answers[0]!)}`
+      : `User selected:\n${answers.map((answer) => `- ${formatAskAnswer(answer)}`).join("\n")}`;
+  return {
+    content: [{ type: "text" as const, text }],
+    details: askResultDetails("answered", question, mode, answers, context),
+  };
+}
+
+function askUserQuestionTool(): ToolDefinition {
+  return {
+    name: "ask_user_question",
+    label: "ask_user_question",
+    description:
+      "Ask the user a single question and pause execution until they answer. Use this when requirements are ambiguous, user preferences are needed, a decision would materially affect implementation, or you need confirmation before proceeding. Ask exactly one question per tool call, and prefer multiple separate tool calls over bundling unrelated questions together.",
+    promptSnippet:
+      "Use this tool to ask exactly one clarifying question, missing-requirement question, preference question, or decision question before continuing.",
+    promptGuidelines: [
+      "Ask exactly one question per tool call.",
+      "If you need answers to multiple questions, make multiple separate ask_user_question tool calls instead of combining them into one prompt.",
+      'Users will always be able to select "Other" to provide custom text input when options are provided.',
+      "Use multiSelect: true only when you need multiple answers to the same question.",
+      'If you recommend a specific option, make it the first option in the list and add "(Recommended)" at the end of the label.',
+      "Prefer this tool over guessing when requirements, preferences, or implementation choices are unclear.",
+      "Use this tool when multiple valid implementation paths exist and the preferred path depends on user choice.",
+    ],
+    parameters: AskUserQuestionParams,
+
+    async execute(_toolCallId, params, signal, _onUpdate, context) {
+      const question = typeof params.question === "string" ? params.question : "";
+      const options = normalizeAskOptions(params.options);
+      const details = typeof params.details === "string" ? params.details.trim() || undefined : undefined;
+      const mode: AskUserQuestionMode = options.length === 0
+        ? "text"
+        : params.multiSelect === true ? "multi-select" : "single-select";
+      if (signal?.aborted) return cancelledAskResult(question, mode, details);
+      if (context.hasUI !== true || !context.ui) {
+        return unavailableAskResult(question, mode, details);
+      }
+
+      const envelope: OcodeAskUserQuestionEditorEnvelope = {
+        kind: OCODE_ASK_USER_QUESTION_KIND,
+        schemaVersion: OCODE_ASK_USER_QUESTION_SCHEMA_VERSION,
+        question,
+        ...(details ? { context: details } : {}),
+        mode,
+        options,
+      };
+      const rawResponse = await context.ui.editor(
+        OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL,
+        JSON.stringify(envelope),
+      );
+      if (signal?.aborted || rawResponse === undefined) return cancelledAskResult(question, mode, details);
+      const response = parseOcodeAskUserQuestionResponse(rawResponse, envelope);
+      if (!response) return cancelledAskResult(question, mode, details);
+
+      const answers = response.answers.map((answer): AskAnswer => {
+        if (answer.type === "text") {
+          const value = answer.value.trim();
+          return { type: "text", label: value, value };
+        }
+        if (answer.type === "other") {
+          const value = answer.value.trim();
+          return { type: "other", label: value, value };
+        }
+        const option = options[answer.optionIndex]!;
+        return {
+          type: "option",
+          label: option.label,
+          value: option.value,
+          index: answer.optionIndex + 1,
+        };
+      }).sort((left, right) => {
+        const rank = (answer: AskAnswer) => answer.type === "option" ? answer.index : Number.MAX_SAFE_INTEGER;
+        return rank(left) - rank(right);
+      });
+      return answeredAskResult(question, mode, answers, details);
+    },
+  };
 }
 
 function isInside(root: string, candidate: string): boolean {
@@ -213,5 +400,11 @@ export default function anvilInlineArtifact(pi: ExtensionApi): void {
         },
       };
     },
+  });
+
+  // Defer the compatibility override until startup. This avoids initial duplicate-tool
+  // diagnostics while ensuring this first-loaded CLI extension owns the final tool.
+  pi.on("session_start", () => {
+    pi.registerTool(askUserQuestionTool());
   });
 }

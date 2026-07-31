@@ -447,11 +447,6 @@ export function Composer({
   return (
     <div className="composer-wrap">
       {aboveWidgets.map((widget) => <Widget key={widget.key} widget={widget} />)}
-      {status === "waiting" && (
-        <div className="attention-banner">
-          <span /> Pi is waiting for your input before it can continue.
-        </div>
-      )}
       {queueCount > 0 && (
         <div className="queue-banner" aria-live="polite">
           {queue.steering.length > 0 && `${queue.steering.length} steering`}

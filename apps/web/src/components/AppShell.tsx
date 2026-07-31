@@ -16,6 +16,7 @@ import {
   RefreshIcon,
   ServerStack01Icon,
   Settings01Icon,
+  Speaker01Icon,
   Sun03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
@@ -59,12 +60,17 @@ import { cycledThreadTarget, numberedThreadTarget } from "../lib/threadNavigatio
 import { shouldAutoOpenProjectResource } from "../lib/workspace";
 import { equalAppShellSnapshots, selectAppShellSnapshot } from "../lib/appShellSnapshot";
 import { subagentActivityForSession } from "../lib/subagentActivity";
+import { matchesShortcut } from "../lib/shortcuts";
 import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
+import { HeaderAudioPlayer } from "./HeaderAudioPlayer";
 import { InteractionPanel } from "./InteractionDialog";
 import { ProjectGitAction } from "./ProjectGitAction";
 import { Sidebar } from "./Sidebar";
+import { ShortcutsDialog } from "./ShortcutsDialog";
+import { SpeechProvider } from "./SpeechProvider";
 import { Timeline } from "./Timeline";
+import { VoiceSettingsDialog } from "./VoiceSettingsDialog";
 import { ProjectResourceSurface } from "./resource/ProjectResourceSurface";
 import { ProjectTerminalSurface } from "./terminal/ProjectTerminalSurface";
 import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
@@ -165,6 +171,7 @@ function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
       type="button"
       variant={active ? "secondary" : "ghost"}
       size="icon-sm"
+      className="header-outline-control"
       aria-label={active ? "Hide project terminals" : "Show project terminals"}
       aria-pressed={active}
       title="Project terminal (Ctrl+`)"
@@ -223,7 +230,9 @@ export function AppShell() {
       className="h-full min-h-0 overflow-hidden"
       style={{ "--sidebar-width": "17.625rem" } as CSSProperties}
     >
-      <AppShellContent />
+      <SpeechProvider>
+        <AppShellContent />
+      </SpeechProvider>
     </SidebarProvider>
   );
 }
@@ -241,6 +250,8 @@ function AppShellContent() {
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [projectsRootDialogOpen, setProjectsRootDialogOpen] = useState(false);
+  const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
+  const [voiceSettingsDialogOpen, setVoiceSettingsDialogOpen] = useState(false);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
   const [indicators, setIndicators] = useState<LiveIndicators>({});
@@ -530,12 +541,12 @@ function AppShellContent() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isTerminalInputTarget(event.target)) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "n") {
+      if (matchesShortcut(event, "newThread")) {
         event.preventDefault();
         window.dispatchEvent(new Event("ocode:new-thread"));
         return;
       }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "w") {
+      if (matchesShortcut(event, "closeThread")) {
         event.preventDefault();
         if (activeSession) requestDeleteSession(activeSession.id);
         return;
@@ -620,6 +631,7 @@ function AppShellContent() {
           </div>
 
           <div className="header-actions">
+            <HeaderAudioPlayer />
             {activeProject && (
               <ProjectGitAction
                 key={activeProject.id}
@@ -632,7 +644,7 @@ function AppShellContent() {
             {activeProject && <TerminalSurfaceToggle isMobile={isMobile} />}
             <DropdownMenu onOpenChange={(open) => open && setRebuildError(undefined)}>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label="Forge settings">
+                <Button variant="ghost" size="icon-sm" className="header-outline-control" aria-label="Forge settings">
                   <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
                 </Button>
               </DropdownMenuTrigger>
@@ -684,7 +696,15 @@ function AppShellContent() {
                     </DropdownMenuRadioGroup>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
+                <DropdownMenuItem onSelect={() => setVoiceSettingsDialogOpen(true)}>
+                  <HugeiconsIcon icon={Speaker01Icon} strokeWidth={2} />
+                  Voice settings
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem onSelect={() => setShortcutsDialogOpen(true)}>
+                  <span className="text-base leading-none" aria-hidden="true">⌨</span>
+                  Keyboard shortcuts
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setProjectsRootDialogOpen(true)}>
                   <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
                   Projects root
@@ -789,6 +809,8 @@ function AppShellContent() {
         </WorkspaceSurfaceProvider>
       </SidebarInset>
 
+      <ShortcutsDialog open={shortcutsDialogOpen} onOpenChange={setShortcutsDialogOpen} />
+      <VoiceSettingsDialog open={voiceSettingsDialogOpen} onOpenChange={setVoiceSettingsDialogOpen} />
       {newProjectOpen && (
         <NewProjectDialog
           onClose={() => setNewProjectOpen(false)}

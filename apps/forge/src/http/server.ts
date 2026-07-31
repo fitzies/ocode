@@ -20,11 +20,13 @@ import { ProjectFileService } from "../projects/projectFileService.ts";
 import { ProjectGitService } from "../projects/projectGitService.ts";
 import { ProjectsRootValidationError } from "../projects/projectsRoot.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
+import type { SpeechController } from "../speech/speechRuntime.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
 import { ProjectFileRoutes } from "./projectFileRoutes.ts";
 import { ProjectGitRoutes } from "./projectGitRoutes.ts";
 import { authorizedOwner, sameOrigin } from "./security.ts";
+import { SpeechRoutes } from "./speechRoutes.ts";
 import { TerminalWebSocketChannel } from "./terminalWebSocket.ts";
 
 const MAX_COMMAND_BYTES = 2 * 1024 * 1024;
@@ -43,6 +45,7 @@ export interface ForgeHttpServerOptions {
   getProjectsRoot?: () => string;
   setProjectsRoot?: (path: string) => string;
   requestRebuild?: () => Promise<void>;
+  speech?: SpeechController;
   terminals?: TerminalManager;
   instanceId?: string;
   ownerLogin?: string;
@@ -98,10 +101,12 @@ export class ForgeHttpServer {
   private readonly instanceId: string;
   private readonly projectFileRoutes?: ProjectFileRoutes;
   private readonly projectGitRoutes?: ProjectGitRoutes;
+  private readonly speechRoutes: SpeechRoutes;
   private readonly terminalChannel?: TerminalWebSocketChannel;
 
   constructor(private readonly options: ForgeHttpServerOptions) {
     this.instanceId = options.instanceId ?? randomUUID();
+    this.speechRoutes = new SpeechRoutes(options.speech);
     this.server = createServer((request, response) => {
       void this.route(request, response).catch((error) => {
         if (response.headersSent) {
@@ -171,6 +176,7 @@ export class ForgeHttpServer {
       sendJson(response, 403, apiError("owner_rejected", "Tailscale identity is not authorized"));
       return;
     }
+    if (await this.speechRoutes.handle(request, response, url)) return;
     if (request.method === "GET" && url.pathname === "/api/v1/settings/projects-root") {
       this.projectsRoot(response);
       return;

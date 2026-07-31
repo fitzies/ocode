@@ -14,13 +14,44 @@ Copy `deploy/config.example.json` to `/home/forge/.config/ocode/config.json` and
 
 Configured projects seed the trusted workspace registry. The authenticated owner can add another Forge-local directory from the Workspaces `+` control; Forge validates and canonicalizes the path, then persists it in SQLite across restarts. This is a privileged action because Pi receives full access inside that directory.
 
-Environment overrides are documented in `.env.example`. Canonical `OCODE_*` and `VITE_OCODE_*` variables take precedence; legacy `ANVIL_*` and `VITE_ANVIL_*` names remain accepted as migration fallbacks. Fresh persistent data defaults to `/home/forge/.local/state/ocode`; keep that directory private and include the SQLite database, Pi session directory, artifact directory, and `terminal-history` directory in backups. `OCODE_TERMINAL_HISTORY_DIR` overrides the latter. With no explicit path variable, Forge automatically continues using populated legacy config and state paths, even if an empty canonical state directory exists.
+Environment overrides are documented in `.env.example`. Canonical `OCODE_*` and `VITE_OCODE_*` variables take precedence; legacy `ANVIL_*` and `VITE_ANVIL_*` names remain accepted as migration fallbacks. Fresh persistent data defaults to `/home/forge/.local/state/ocode`; keep that directory private and include the SQLite database, Pi session directory, artifact directory, and `terminal-history` directory in backups. The `secrets` directory contains UI-managed credentials and should be excluded from ordinary state backups or protected as a credential store. `OCODE_TERMINAL_HISTORY_DIR` overrides the terminal history location. With no explicit path variable, Forge automatically continues using populated legacy config and state paths, even if an empty canonical state directory exists.
 
 For an existing installation, do **not** copy the fresh-install `OCODE_DATA_DIR` example before moving state. Either omit explicit path variables and let compatibility detection use the legacy state, or point `OCODE_DATA_DIR` at the existing legacy directory. Move SQLite together with its `-wal`, `-shm`, and instance-lock sidecars, Pi sessions, artifacts, and terminal history only during a stopped-service migration. Keep the stable project `id`, but change a former `"name": "Anvil"` entry to `"name": "ocode"` so the workspace label updates without breaking session associations.
 
 Project terminals are owner-authenticated shells running with the Forge operating-system account's permissions. Their initial working directory is always the canonical trusted project root; this is not a filesystem sandbox. Terminal history may contain commands, output, and secrets. It is retained in mode-`0600` files, bounded to 5,000 lines and 512 KiB per terminal, and deleted when the terminal tab is explicitly closed. Forge permits at most eight running terminals per project, 64 KiB input messages, and bounded WebSocket client queues.
 
 Tool output, images, raw RPC records, or structured details larger than 256 KiB are externalized before they enter SQLite, snapshots, or SSE. Artifact files are mode `0600`, live outside the static web root, and are served only through the owner-authenticated `/api/v1/artifacts/:id` route. Deleting a thread removes its artifact metadata and files; startup removes files that have no durable metadata.
+
+## Optional text-to-speech
+
+The easiest setup is **Settings → Voice settings** in the owner-authenticated web client: paste an OpenAI API key and save it. No `speech` object is required in `config.json`, and Forge activates speech immediately without a restart. The defaults are OpenAI's fixed `gpt-4o-mini-tts` model, voice `marin`, style `natural`, 100,000 generated Unicode characters per UTC day, and 250 paid requests per UTC day.
+
+A key entered in the UI is stored on Forge as plaintext in `~/.local/state/ocode/secrets/speech-secrets.json` (more precisely, in a `secrets` directory next to the effective SQLite database, including when `OCODE_DATABASE` selects another path). Forge creates and restricts only that dedicated directory to mode `0700` and the secrets file to mode `0600`; it never changes the state root or configuration directory permissions. The file is replaced with an atomic write. This is **not encryption at rest**: privacy depends on the Forge account and filesystem permissions. Never put the key in `config.json`, copy the secrets file into the repository, or include the `secrets` directory in ordinary state or configuration backups. If the state root is backed up, explicitly exclude `secrets` or protect that backup as a credential store.
+
+`OCODE_OPENAI_API_KEY` remains an advanced alternative, including for root-managed systemd deployments. For example, place it in `/etc/ocode/forge.env`, restrict that file to the service administrator and Forge account (such as mode `0640` with an appropriate group), and restart Forge after changing the environment. A UI-saved key takes precedence over the environment key. Removing the key in Settings deletes only `speech-secrets.json`: Forge immediately falls back to `OCODE_OPENAI_API_KEY` when present, or disables generation when no environment key exists. The status and settings APIs never return the key or any key fragment.
+
+The optional `speech` object remains the advanced way to override defaults and local limits; it does not enable speech by itself and does not contain credentials:
+
+```json
+{
+  "ownerLogin": "you@example.com",
+  "piExecutable": "/usr/local/bin/pi",
+  "speech": {
+    "provider": "openai",
+    "voice": "marin",
+    "style": "natural",
+    "dailyCharacterLimit": 100000,
+    "dailyRequestLimit": 250
+  },
+  "projects": []
+}
+```
+
+Only `provider` is required within `speech`. Configured voice and style IDs are validated at startup and act as initial defaults, not restrictions: each request may select any supported value. A request may contain at most 3,500 Unicode code points. Supported voices are `alloy`, `ash`, `ballad`, `coral`, `echo`, `fable`, `nova`, `onyx`, `sage`, `shimmer`, `verse`, `marin`, and `cedar`. Supported server-owned style presets are `natural`, `warm`, `focused`, `lively`, and `gentle`. Forge supplies the corresponding style instructions; clients cannot send arbitrary OpenAI instructions.
+
+OpenAI currently estimates TTS at roughly **$0.015 per generated minute**, subject to provider and pricing changes. The Forge daily counters are a local safety guard, not a billing guarantee: upstream attempts can incur cost, character-to-minute ratios vary, and another client using the same key is outside Forge's counters. **Set a hard OpenAI project/API spend limit and billing alert in addition to conservative Forge limits.** Counters are shared across credential changes. Forge allows at most two paid generations at once and queues none; identical in-flight requests and temporary cache hits do not consume another Forge budget reservation.
+
+Assistant text is sent to OpenAI only when the owner explicitly clicks the speech action. Completed MP3 clips are held temporarily in Forge memory for at most one hour (within a 64 MiB cache) and are returned with private, no-store response headers. Forge does not persist speech text, audio, or cache hashes. SQLite stores only aggregate UTC-day request and character counters. The API key is kept out of `config.json`, SQLite, SSE, API responses, and application logs.
 
 ## Project file access and resource viewing
 

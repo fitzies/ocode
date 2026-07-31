@@ -14,6 +14,8 @@ import {
   ANVIL_PROTOCOL_VERSION,
   normalizeProjectSlug,
   normalizeSessionTitle,
+  parseOcodeAskUserQuestionEditorEnvelope,
+  parseOcodeAskUserQuestionResponse,
   SESSION_TITLE_MAX_LENGTH,
   type AnvilClientCommand,
   type AnvilCommandResponse,
@@ -399,8 +401,28 @@ export class SessionManager {
       return response;
     }
     if (command.type === "interaction.respond") {
-      const pending = this.events.hasPendingInteraction(sessionId, command.payload.requestId);
+      const pending = this.events.pendingInteractionsForSession(sessionId).find(
+        (request) => request.id === command.payload.requestId,
+      );
       if (!pending) return commandResponse(command, false, { error: "Interaction is no longer pending" });
+      if (pending.presentation?.type === "ask_user_question") {
+        const raw = pending.raw;
+        const prefill = raw !== null && typeof raw === "object" && !Array.isArray(raw)
+          ? (raw as Record<string, unknown>).prefill
+          : undefined;
+        const envelope = parseOcodeAskUserQuestionEditorEnvelope(prefill);
+        const cancellation = command.payload.cancelled === true &&
+          command.payload.value === undefined &&
+          command.payload.confirmed === undefined;
+        const answer = command.payload.cancelled === undefined &&
+          command.payload.confirmed === undefined &&
+          command.payload.value !== undefined &&
+          envelope !== undefined &&
+          parseOcodeAskUserQuestionResponse(command.payload.value, envelope) !== undefined;
+        if (!envelope || (!cancellation && !answer)) {
+          return commandResponse(command, false, { error: "Invalid ask_user_question response" });
+        }
+      }
       runtime.rpc.send({
         type: "extension_ui_response",
         id: command.payload.requestId,

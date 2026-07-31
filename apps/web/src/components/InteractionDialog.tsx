@@ -1,4 +1,5 @@
 import type {
+  AskUserQuestionInteractionRequest,
   GenericInteractionField,
   InteractionRequest,
   InteractionResponse,
@@ -7,12 +8,11 @@ import type {
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
-  Cancel01Icon,
-  HelpCircleIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
+import { AskUserQuestion } from "@/components/AskUserQuestion";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -42,7 +42,18 @@ export function selectionCountIsValid(count: number, minimum = 0, maximum = Numb
   return count >= minimum && count <= maximum;
 }
 
+function isAskUserQuestionRequest(request: InteractionRequest): request is AskUserQuestionInteractionRequest {
+  return request.presentation?.type === "ask_user_question" &&
+    request.presentation.schemaVersion === 1 &&
+    ["input", "select", "multiSelect"].includes(request.method);
+}
+
 function requestDescription(request: InteractionRequest) {
+  if (isAskUserQuestionRequest(request)) {
+    if (request.method === "select") return "Choose one";
+    if (request.method === "multiSelect") return "Choose any";
+    return "Your answer";
+  }
   if (request.method === "multiSelect") return "Select one or more options";
   if (request.method === "editor") return "Edit multi-line text";
   if (request.method === "unknown") return `Extension interaction · ${request.originalMethod}`;
@@ -187,6 +198,10 @@ function InteractionForm({
   }, [request]);
   const [genericValues, setGenericValues] = useState<Record<string, JsonValue>>(initialGenericValues);
   const [genericError, setGenericError] = useState<string>();
+
+  if (isAskUserQuestionRequest(request)) {
+    return <AskUserQuestion request={request} onRespond={onRespond} />;
+  }
 
   const cancel = () => onRespond({ requestId: request.id, cancelled: true });
   const submit = (event: FormEvent) => {
@@ -361,24 +376,18 @@ export function InteractionPanel({ requests, onRespond }: InteractionPanelProps)
   const messageId = `interaction-message-${request.id}`;
 
   return (
-    <section className="w-full shrink-0 px-3 sm:px-6" aria-labelledby={titleId} aria-describedby={request.message ? messageId : undefined}>
-      <div className="mx-auto max-h-[min(32rem,54dvh)] w-full max-w-[49rem] overflow-auto rounded-xl border border-amber-500/20 bg-card text-card-foreground shadow-lg">
-        <header className="sticky top-0 z-10 flex min-h-16 items-center gap-3 border-b border-border bg-card/95 px-4 py-3 backdrop-blur">
-          <span className="grid size-8 shrink-0 place-items-center rounded-md border border-amber-500/20 bg-amber-500/10 text-amber-700 dark:text-amber-300">
-            <HugeiconsIcon icon={HelpCircleIcon} strokeWidth={2} className="size-4" />
-          </span>
+    <section className="w-full shrink-0 px-3 sm:px-6" aria-labelledby={titleId} aria-describedby={request.message && !isAskUserQuestionRequest(request) ? messageId : undefined}>
+      <div className="mx-auto max-h-[min(30rem,54dvh)] w-full max-w-[790px] overflow-auto rounded-lg border border-border bg-card text-card-foreground shadow-lg">
+        <header className="sticky top-0 z-10 flex min-h-14 items-start gap-3 border-b border-border bg-card/95 px-4 py-3 backdrop-blur">
           <span className="min-w-0 flex-1">
-            <small className="block truncate font-mono text-[0.625rem] uppercase tracking-[0.08em] text-muted-foreground">
-              {requestDescription(request)} · this thread
+            <small className="mb-1 block truncate text-[0.6875rem] leading-normal text-muted-foreground">
+              {requestDescription(request)}
             </small>
-            <h2 className="truncate text-sm font-medium" id={titleId}>{request.title}</h2>
+            <h2 className="text-[13px] font-medium leading-relaxed" id={titleId}>{request.title}</h2>
           </span>
-          <Button variant="ghost" size="icon-sm" type="button" aria-label="Cancel interaction" onClick={() => onRespond({ requestId: request.id, cancelled: true })}>
-            <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
-          </Button>
         </header>
-        {request.message && <p className="m-0 px-4 pt-4 text-xs/relaxed text-muted-foreground" id={messageId}>{request.message}</p>}
-        <div className="p-4"><InteractionForm key={request.id} request={request} onRespond={onRespond} /></div>
+        {request.message && !isAskUserQuestionRequest(request) && <p className="m-0 px-4 pt-3 text-xs/relaxed text-muted-foreground" id={messageId}>{request.message}</p>}
+        <div className="px-4 py-3"><InteractionForm key={request.id} request={request} onRespond={onRespond} /></div>
         {requests.length > 1 && (
           <footer className="sticky bottom-0 grid min-h-10 grid-cols-[2rem_1fr_2rem] items-center border-t border-border bg-card/95 px-3 text-center text-[0.6875rem] text-muted-foreground backdrop-blur">
             <Button variant="ghost" size="icon-sm" type="button" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0} aria-label="Previous pending request">

@@ -2,7 +2,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { ANVIL_PROTOCOL_VERSION, type AnvilClientCommand } from "@anvil/protocol";
+import {
+  ANVIL_PROTOCOL_VERSION,
+  createOcodeAskUserQuestionResponse,
+  type AnvilClientCommand,
+} from "@anvil/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
@@ -57,6 +61,7 @@ beforeEach(() => {
     let sessionId = "pi-session-1";
     let sessionName = "Runtime test";
     let pendingDialogPromptId;
+    let askRequestId = 0;
     let aborted = false;
     input.on("line", (line) => {
       const request = JSON.parse(line);
@@ -120,6 +125,25 @@ beforeEach(() => {
             method: "confirm",
             title: "Continue?",
             ...(request.message === "Open timed dialog" ? { timeout: 10 } : {}),
+          });
+        } else if (request.message === "Open ask dialog") {
+          pendingDialogPromptId = request.id;
+          askRequestId += 1;
+          send({
+            type: "extension_ui_request",
+            id: "ask-dialog-" + askRequestId,
+            method: "editor",
+            title: "__ocode_ask_user_question_v1__",
+            prefill: JSON.stringify({
+              kind: "ocode.ask-user-question",
+              schemaVersion: 1,
+              question: "Which approach?",
+              mode: "single-select",
+              options: [
+                { label: "Direct", value: "direct" },
+                { label: "Layered", value: "layered" },
+              ],
+            }),
           });
         } else {
           send({ type: "response", id: request.id, command: request.type, success: true });
@@ -371,6 +395,73 @@ describe("SessionManager", () => {
       confirmed: true,
     }));
     await prompt;
+  });
+
+  it("validates specialized ask responses before resolving or sending them to Pi", async () => {
+    await manager.handleCommand(command("create-ask", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    await waitUntil(() => events.currentSnapshot().sessions.some(
+      (session) => session.id === requestedSessionId && session.title === "Runtime test",
+    ));
+
+    let firstPromptSettled = false;
+    const firstPrompt = manager.handleCommand(command("prompt-ask-1", "prompt.send", requestedSessionId, {
+      content: "Open ask dialog",
+      delivery: "prompt",
+    })).finally(() => { firstPromptSettled = true; });
+    await waitUntil(() => events.currentSnapshot().pendingInteractions.some(
+      (request) => request.sessionId === requestedSessionId && request.presentation?.type === "ask_user_question",
+    ));
+    const firstRequest = events.pendingInteractionsForSession(requestedSessionId).find(
+      (request) => request.presentation?.type === "ask_user_question",
+    )!;
+    const validValue = createOcodeAskUserQuestionResponse([{ type: "option", optionIndex: 1 }]);
+    const invalidPayloads = [
+      { requestId: firstRequest.id },
+      {
+        requestId: firstRequest.id,
+        value: createOcodeAskUserQuestionResponse([{ type: "option", optionIndex: 2 }]),
+      },
+      { requestId: firstRequest.id, cancelled: true, value: validValue },
+    ];
+
+    for (const [index, payload] of invalidPayloads.entries()) {
+      const response = await manager.handleCommand(command(
+        `invalid-ask-${index}`,
+        "interaction.respond",
+        requestedSessionId,
+        payload,
+      ));
+      expect(response).toMatchObject({ success: false, error: "Invalid ask_user_question response" });
+      expect(events.hasPendingInteraction(requestedSessionId, firstRequest.id)).toBe(true);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(firstPromptSettled).toBe(false);
+
+    const answered = await manager.handleCommand(command("answer-ask", "interaction.respond", requestedSessionId, {
+      requestId: firstRequest.id,
+      value: validValue,
+    }));
+    expect(answered.success).toBe(true);
+    expect(events.hasPendingInteraction(requestedSessionId, firstRequest.id)).toBe(false);
+    await firstPrompt;
+
+    const secondPrompt = manager.handleCommand(command("prompt-ask-2", "prompt.send", requestedSessionId, {
+      content: "Open ask dialog",
+      delivery: "prompt",
+    }));
+    await waitUntil(() => events.currentSnapshot().pendingInteractions.some(
+      (request) => request.id === "ask-dialog-2",
+    ));
+    const cancelled = await manager.handleCommand(command("cancel-ask", "interaction.respond", requestedSessionId, {
+      requestId: "ask-dialog-2",
+      cancelled: true,
+    }));
+    expect(cancelled.success).toBe(true);
+    expect(events.hasPendingInteraction(requestedSessionId, "ask-dialog-2")).toBe(false);
+    await secondPrompt;
   });
 
   it("resolves uploaded attachments into Pi prompt context", async () => {

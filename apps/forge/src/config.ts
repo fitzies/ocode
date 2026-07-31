@@ -5,6 +5,12 @@ import { fileURLToPath } from "node:url";
 
 import type { ProjectSummary } from "@anvil/protocol";
 
+import {
+  DEFAULT_DAILY_CHARACTER_LIMIT,
+  DEFAULT_DAILY_REQUEST_LIMIT,
+  type SpeechConfig,
+} from "./speech/types.ts";
+
 export interface ForgeConfig {
   host: "127.0.0.1" | "::1";
   port: number;
@@ -18,6 +24,7 @@ export interface ForgeConfig {
   webRoot: string;
   projectsRoot: string;
   projects: ProjectSummary[];
+  speech?: SpeechConfig;
 }
 
 interface ConfigFile {
@@ -25,6 +32,7 @@ interface ConfigFile {
   piExecutable?: unknown;
   projectsRoot?: unknown;
   projects?: unknown;
+  speech?: unknown;
 }
 
 function environmentValue(environment: NodeJS.ProcessEnv, name: string): string | undefined {
@@ -58,6 +66,45 @@ function defaultStateDirectory(): string {
     join(homedir(), ".local", "state", "ocode"),
     join(homedir(), ".local", "state", "anvil"),
   );
+}
+
+export function speechApiKey(environment: NodeJS.ProcessEnv = process.env): string | undefined {
+  return environment.OCODE_OPENAI_API_KEY?.trim() || undefined;
+}
+
+function configuredSpeech(value: unknown): SpeechConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("speech must be an object when configured");
+  }
+  const record = value as Record<string, unknown>;
+  const allowed = new Set(["provider", "voice", "style", "dailyCharacterLimit", "dailyRequestLimit"]);
+  const unsupported = Object.keys(record).find((key) => !allowed.has(key));
+  if (unsupported) throw new Error(`speech contains unsupported property: ${unsupported}`);
+  if (record.provider !== "openai") throw new Error('speech.provider must be "openai"');
+  for (const property of ["voice", "style"] as const) {
+    const option = record[property];
+    if (option !== undefined && (typeof option !== "string" || !option)) {
+      throw new Error(`speech.${property} must be a non-empty string when configured`);
+    }
+  }
+  for (const property of ["dailyCharacterLimit", "dailyRequestLimit"] as const) {
+    const limit = record[property];
+    if (limit !== undefined && (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1)) {
+      throw new Error(`speech.${property} must be a positive safe integer`);
+    }
+  }
+  return {
+    provider: "openai",
+    ...(typeof record.voice === "string" ? { voice: record.voice } : {}),
+    ...(typeof record.style === "string" ? { style: record.style } : {}),
+    dailyCharacterLimit: typeof record.dailyCharacterLimit === "number"
+      ? record.dailyCharacterLimit
+      : DEFAULT_DAILY_CHARACTER_LIMIT,
+    dailyRequestLimit: typeof record.dailyRequestLimit === "number"
+      ? record.dailyRequestLimit
+      : DEFAULT_DAILY_REQUEST_LIMIT,
+  };
 }
 
 function configuredProjects(value: unknown): ProjectSummary[] {
@@ -112,6 +159,7 @@ export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): F
     throw new Error("Forge requires ownerLogin; set OCODE_ALLOW_UNAUTHENTICATED=true only for loopback development");
   }
   const projects = configuredProjects(file.projects);
+  const speech = configuredSpeech(file.speech);
   if (file.projectsRoot !== undefined && (typeof file.projectsRoot !== "string" || !file.projectsRoot.trim())) {
     throw new Error("projectsRoot must be a non-empty directory path when configured");
   }
@@ -140,6 +188,7 @@ export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): F
     ),
     projectsRoot,
     projects,
+    ...(speech ? { speech } : {}),
   };
 }
 

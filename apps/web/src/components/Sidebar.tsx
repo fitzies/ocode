@@ -32,7 +32,6 @@ import {
   ContextMenuItem,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import { Progress } from "@/components/ui/progress";
 import {
   Select,
   SelectContent,
@@ -44,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ProjectFavicon } from "@/components/ProjectFavicon";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 function projectRepositoryName(project: { name: string; path: string }): string {
   return project.path.split(/[\\/]/).filter(Boolean).at(-1) || project.name;
@@ -59,6 +59,7 @@ import {
 } from "@/components/ui/sidebar";
 import type { AnvilClientSnapshot } from "../lib/anvilClient";
 import { isTerminalInputTarget } from "../lib/keyboardScope";
+import { matchesShortcut } from "../lib/shortcuts";
 
 export type SidebarSnapshot = Pick<
   AnvilClientSnapshot,
@@ -98,16 +99,22 @@ function RunningElapsed({ since }: { since: string }) {
   return <span>{minutes > 0 ? `${minutes}m ${remainder}s` : `${seconds}s`}</span>;
 }
 
+function usageAllowance(window: { usedPercent: number; resetAt?: number } | undefined, hours: number) {
+  if (!window?.resetAt) return 100;
+  const duration = hours * 60 * 60;
+  const remaining = Math.max(0, window.resetAt - Date.now() / 1000);
+  return ((duration - Math.min(duration, remaining)) / duration) * 100;
+}
+
 function usageTone(window: { usedPercent: number; resetAt?: number } | undefined, hours: number) {
   if (!window) return "muted";
   if (!window.resetAt) return window.usedPercent >= 90 ? "danger" : window.usedPercent >= 80 ? "warning" : "success";
-  const duration = hours * 60 * 60;
-  const remaining = Math.max(0, window.resetAt - Date.now() / 1000);
-  const expected = ((duration - Math.min(duration, remaining)) / duration) * 100;
-  const grace = hours <= 5 ? 5 : 3;
-  if (window.usedPercent <= expected + grace) return "success";
-  if (window.usedPercent <= expected + grace + 10) return "warning";
-  return "danger";
+  const expected = usageAllowance(window, hours);
+  if (window.usedPercent > expected) return "danger";
+  const remaining = expected - window.usedPercent;
+  const closeThreshold = hours <= 5 ? 5 : 3;
+  if (remaining <= closeThreshold) return "warning";
+  return "success";
 }
 
 function capitalizeTitle(value: string) {
@@ -135,12 +142,101 @@ function formatUpdatedAt(value: string) {
   return `${Math.floor(elapsedMinutes / (24 * 60))}d`;
 }
 
-const usageIndicatorClass = {
-  success: "[&_[data-slot=progress-indicator]]:bg-[var(--green)]",
-  warning: "[&_[data-slot=progress-indicator]]:bg-amber-600 dark:[&_[data-slot=progress-indicator]]:bg-amber-400",
-  danger: "[&_[data-slot=progress-indicator]]:bg-destructive",
-  muted: "[&_[data-slot=progress-indicator]]:bg-muted-foreground/25",
+const usageStrokeClass = {
+  success: "stroke-[var(--green)]",
+  warning: "stroke-amber-600 dark:stroke-amber-400",
+  danger: "stroke-destructive",
+  muted: "stroke-muted-foreground/25",
 } as const;
+
+function UsageCircle({
+  label,
+  hours,
+  window,
+}: {
+  label: string;
+  hours: number;
+  window: { usedPercent: number; resetAt?: number } | undefined;
+}) {
+  const used = Math.max(0, Math.min(100, window?.usedPercent ?? 0));
+  const allowance = Math.max(used, Math.min(100, usageAllowance(window, hours)));
+  const available = Math.max(0, allowance - used);
+  const tone = usageTone(window, hours);
+  const usedLabel = window ? `${Math.round(used)}%` : "—";
+  const availableLabel = window ? `${Math.round(available)}% available` : "Unavailable";
+  const paceCopy = !window
+    ? "Usage data is currently unavailable."
+    : !window.resetAt
+      ? `${usedLabel} of this limit has been used.`
+      : available > 0
+        ? `${usedLabel} used. You can use ${Math.round(available)}% more right now and stay evenly paced.`
+        : used > allowance
+          ? `${usedLabel} used. This is ${Math.round(used - allowance)}% ahead of an even pace.`
+          : `${usedLabel} used. You are at the current pace target.`;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="flex min-w-0 items-center gap-2 rounded-md p-1 text-left outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+          aria-label={`${label} usage: ${usedLabel} used, ${availableLabel}`}
+        >
+          <span className="relative grid size-10 shrink-0 place-items-center" aria-hidden="true">
+            <svg className="absolute inset-0 size-full -rotate-90" viewBox="0 0 44 44">
+              <circle className="fill-none stroke-foreground/8 [stroke-width:4]" cx="22" cy="22" r="17" pathLength="100" />
+              {allowance > 0 && (
+                <circle
+                  className="fill-none stroke-muted-foreground/55 [stroke-linecap:round] [stroke-width:4]"
+                  cx="22"
+                  cy="22"
+                  r="17"
+                  pathLength="100"
+                  strokeDasharray={`${allowance} ${100 - allowance}`}
+                />
+              )}
+              {used > 0 && (
+                <circle
+                  className={`fill-none [stroke-linecap:round] [stroke-width:4] ${usageStrokeClass[tone]}`}
+                  cx="22"
+                  cy="22"
+                  r="17"
+                  pathLength="100"
+                  strokeDasharray={`${used} ${100 - used}`}
+                />
+              )}
+            </svg>
+            <span className={`relative text-[0.625rem] font-semibold tracking-tight tabular-nums ${tone === "success" ? "text-[var(--green)]" : tone === "warning" ? "text-amber-600 dark:text-amber-400" : tone === "danger" ? "text-destructive" : "text-muted-foreground"}`}>
+              {usedLabel}
+            </span>
+          </span>
+          <span className="grid min-w-0 gap-1">
+            <span className="text-[0.625rem] leading-none text-foreground/75">{label}</span>
+            <span className="whitespace-nowrap text-[0.5rem] leading-none text-muted-foreground/70">
+              {window?.resetAt ? formatUsageReset(window.resetAt) : "Unavailable"}
+            </span>
+          </span>
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" sideOffset={8} className="block w-56 px-3 py-2.5">
+        <p className="font-semibold">{label} limit</p>
+        <p className="mt-1 leading-relaxed opacity-70">{paceCopy}</p>
+        {window?.resetAt && (
+          <>
+            <div className="relative mt-2 h-1 overflow-hidden rounded-full bg-background/20">
+              <span className="absolute inset-y-0 left-0 bg-background/35" style={{ width: `${allowance}%` }} />
+              <span className="absolute inset-y-0 left-0 rounded-full bg-background" style={{ width: `${used}%` }} />
+            </div>
+            <div className="mt-1.5 flex justify-between text-[0.625rem] tabular-nums opacity-65">
+              <span>{usedLabel} used</span>
+              <span>{Math.round(allowance)}% pace target</span>
+            </div>
+          </>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 export const Sidebar = memo(function Sidebar({
   snapshot,
@@ -166,7 +262,7 @@ export const Sidebar = memo(function Sidebar({
   useEffect(() => {
     const openSearch = (event: KeyboardEvent) => {
       if (isTerminalInputTarget(event.target)) return;
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      if (matchesShortcut(event, "search")) {
         event.preventDefault();
         setSearchOpen(true);
       }
@@ -512,22 +608,9 @@ export const Sidebar = memo(function Sidebar({
 
       <SidebarFooter className="border-t border-sidebar-border p-3 pb-5">
         {usage && (usage.fiveHour || usage.weekly) && (
-          <div className="grid gap-3.5" aria-label="Codex usage limits">
-            {([["5 hours", 5, usage.fiveHour], ["Weekly", 7 * 24, usage.weekly]] as const).map(([label, hours, window]) => {
-              const tone = usageTone(window, hours);
-              return (
-                <div className="grid gap-1.5" key={label} title={window?.resetAt ? `Resets ${new Date(window.resetAt * 1000).toLocaleString()}` : undefined}>
-                  <div className="flex items-center justify-between text-[0.6875rem] leading-none">
-                    <span className="text-foreground/75">{label}</span>
-                    <span className="tabular-nums text-muted-foreground">{window ? `${Math.round(window.usedPercent)}% used` : "Unavailable"}</span>
-                  </div>
-                  <Progress className={`h-1 w-full bg-foreground/8 ${usageIndicatorClass[tone]}`} value={window ? Math.max(0, Math.min(100, window.usedPercent)) : 0} />
-                  <span className="font-mono text-[0.5625rem] leading-none text-muted-foreground/70">
-                    {formatUsageReset(window?.resetAt)}
-                  </span>
-                </div>
-              );
-            })}
+          <div className="grid grid-cols-2 gap-2" aria-label="Codex usage limits">
+            <UsageCircle label="5 hours" hours={5} window={usage.fiveHour} />
+            <UsageCircle label="Weekly" hours={7 * 24} window={usage.weekly} />
           </div>
         )}
       </SidebarFooter>

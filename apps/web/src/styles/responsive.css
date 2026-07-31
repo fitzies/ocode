@@ -140,6 +140,10 @@
     max-width: 132px;
   }
 
+  .session-header:has(.header-audio-player) .repository-status-trigger {
+    max-width: 65px;
+  }
+
   .connection-chip,
   .trust-chip,
   .header-run-state {
@@ -299,6 +303,12 @@
 
   .header-actions {
     gap: 4px;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .session-header:has(.header-audio-player) {
+    min-height: 72px;
   }
 }
 

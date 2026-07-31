@@ -32,8 +32,10 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { assistantMarkdown } from "../lib/speechText";
 import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
 import { MarkdownText } from "./MarkdownText";
+import { MessageActions } from "./MessageActions";
 import { Button } from "./ui/button";
 import { displayToolName, presentTool, type ToolCategory } from "./toolPresentation";
 
@@ -347,6 +349,8 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
       : entry.content.filter((block) => block.type !== "toolCall");
     if (!visibleContent.length && !entry.error && entry.status !== "streaming") return null;
     const messageClass = entry.role === "user" ? "user-message" : entry.role === "assistant" ? "assistant-message" : "system-message";
+    const responseMarkdown = entry.role === "assistant" && entry.status === "complete" ? assistantMarkdown(entry.content) : "";
+    const showResponseActions = responseMarkdown.trim().length > 0;
     return (
       <article className={`${messageClass} message-status--${entry.status}${entranceClass}`}>
         <ContentBlocks blocks={visibleContent} onOpenProjectResource={onOpenProjectResource} />
@@ -355,6 +359,7 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
               {entry.raw && typeof entry.raw === "object" && !Array.isArray(entry.raw) && entry.raw.delivery === "steer" ? "Queueing…" : "Sending…"}
             </span>
           : entry.status === "streaming" && hasVisibleContent(visibleContent) && <span className="stream-caret" aria-label="Streaming" />}
+        {showResponseActions && <MessageActions messageId={entry.id} markdown={responseMarkdown} />}
         {entry.error && <div className="message-error">{entry.error}</div>}
         {(entry.role === "extension" || entry.status === "failed") && <JsonDetails label="Raw message" value={entry.raw} />}
       </article>
@@ -465,16 +470,26 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
   }
 
   if (entry.kind === "interaction") {
+    const statusLabel = entry.status === "pending" ? "Waiting" : entry.status === "answered" ? "Done" : entry.status;
+    const statusIcon = entry.status === "pending"
+      ? Loading03Icon
+      : entry.status === "answered" ? CheckmarkCircle02Icon : AlertCircleIcon;
     return (
-      <article className={`interaction-event interaction-event--${entry.status}${entranceClass}`}>
-        <span className="interaction-icon"><HugeiconsIcon icon={HelpCircleIcon} strokeWidth={2} className="size-4" /></span>
-        <span className="interaction-copy">
-          <strong>{entry.title}</strong>
-          <span>{entry.summary ?? (entry.status === "pending" ? "Waiting for your response" : `Request ${entry.status}`)}</span>
-        </span>
-        <span className="event-state-label">{entry.status}</span>
-        <JsonDetails label="Request payload" value={entry.raw} />
-      </article>
+      <details className={`tool-event tool-event--interaction tool-event--${entry.status}${entranceClass}`}>
+        <summary>
+          <span className="tool-icon"><HugeiconsIcon icon={HelpCircleIcon} strokeWidth={2} className="size-4" /></span>
+          <span className="tool-main">
+            <strong>{entry.title}</strong>
+            <span>{entry.summary ?? (entry.status === "pending" ? "Waiting for your response" : `Request ${entry.status}`)}</span>
+          </span>
+          <span className="tool-status-copy" aria-hidden="true">{statusLabel}</span>
+          <span className="tool-status"><HugeiconsIcon icon={statusIcon} strokeWidth={2} className={entry.status === "pending" ? "size-3.5 animate-spin" : "size-4"} /></span>
+          <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
+        </summary>
+        <div className="tool-detail">
+          <JsonDetails label="Request payload" value={entry.raw} />
+        </div>
+      </details>
     );
   }
 

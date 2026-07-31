@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Paced usage circles preview</title>
+<style>
+  :root { color-scheme:dark; --panel:#171816; --line:#30322e; --text:#f1f2ee; --muted:#979b91; --track:#292b27; --available:#676b63; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; min-height:100%; background:transparent; }
+  body { display:grid; place-items:center; padding:28px; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); }
+  .sidebar { width:min(330px,100%); overflow:hidden; border:1px solid var(--line); border-radius:12px; background:var(--panel); box-shadow:0 18px 50px rgba(0,0,0,.22); }
+  .filler { height:104px; padding:18px; color:#6f736b; font-size:12px; }
+  .footer { border-top:1px solid var(--line); padding:15px 16px 17px; }
+  .eyebrow { margin:0 0 13px; color:#7f837a; font-size:9px; font-weight:650; letter-spacing:.12em; text-transform:uppercase; }
+  .limits { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+  .limit { display:flex; align-items:center; gap:10px; min-width:0; }
+  .ring { --used:31; --allowed:40; --tone:#d5a83d; position:relative; width:58px; height:58px; flex:0 0 auto; display:grid; place-items:center; }
+  .ring.week { --used:10; --allowed:14; --tone:#78b77d; }
+  svg { position:absolute; inset:0; width:100%; height:100%; transform:rotate(-90deg); overflow:visible; }
+  circle { fill:none; stroke-width:4; }
+  .track { stroke:var(--track); }
+  .allowance { stroke:var(--available); stroke-linecap:round; stroke-dasharray:var(--allowed) calc(100 - var(--allowed)); }
+  .used { stroke:var(--tone); stroke-linecap:round; stroke-dasharray:var(--used) calc(100 - var(--used)); }
+  .percent { position:relative; color:var(--tone); font-size:12px; font-weight:700; letter-spacing:-.04em; }
+  .copy { min-width:0; }
+  .label { display:block; margin-bottom:5px; color:#d7d9d3; font-size:11px; line-height:1; }
+  .pace { display:block; color:#a9ada4; font-size:9px; font-weight:550; line-height:1.25; white-space:nowrap; }
+  .reset { display:block; margin-top:3px; color:#70746c; font-size:9px; line-height:1.2; white-space:nowrap; }
+  .legend { display:flex; gap:13px; margin-top:14px; padding-top:11px; border-top:1px solid rgba(255,255,255,.055); color:#797d74; font-size:8.5px; }
+  .key { display:flex; align-items:center; gap:5px; }
+  .dot { width:6px; height:6px; border-radius:50%; background:#78b77d; }
+  .dot.gray { background:var(--available); }
+  @media(max-width:420px){ body{padding:16px}.limits{gap:12px}.ring{width:53px;height:53px}.limit{gap:8px} }
+</style>
+</head>
+<body>
+  <section class="sidebar" aria-label="Sidebar usage preview">
+    <div class="filler">…sidebar content…</div>
+    <footer class="footer">
+      <p class="eyebrow">Usage limits</p>
+      <div class="limits">
+        <div class="limit" title="31% used; 9% remains in your current allowance">
+          <div class="ring" role="img" aria-label="5 hour usage: 31 percent used of 40 percent currently available">
+            <svg viewBox="0 0 44 44" aria-hidden="true"><circle class="track" cx="22" cy="22" r="17" pathLength="100"/><circle class="allowance" cx="22" cy="22" r="17" pathLength="100"/><circle class="used" cx="22" cy="22" r="17" pathLength="100"/></svg>
+            <span class="percent">31%</span>
+          </div>
+          <div class="copy"><span class="label">5 hours</span><span class="pace">9% available</span><span class="reset">resets in 2h</span></div>
+        </div>
+        <div class="limit" title="10% used; 4% remains in today's allowance">
+          <div class="ring week" role="img" aria-label="Weekly usage: 10 percent used of 14 percent currently available">
+            <svg viewBox="0 0 44 44" aria-hidden="true"><circle class="track" cx="22" cy="22" r="17" pathLength="100"/><circle class="allowance" cx="22" cy="22" r="17" pathLength="100"/><circle class="used" cx="22" cy="22" r="17" pathLength="100"/></svg>
+            <span class="percent">10%</span>
+          </div>
+          <div class="copy"><span class="label">Weekly</span><span class="pace">4% available</span><span class="reset">resets Monday</span></div>
+        </div>
+      </div>
+    </footer>
+  </section>
+</body>
+</html>

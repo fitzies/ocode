@@ -1,6 +1,8 @@
 import {
   type AnvilEvent,
   type CapabilityCatalog,
+  OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL,
+  OCODE_ASK_USER_QUESTION_SCHEMA_VERSION,
   type ContentBlock,
   type GenericInteractionField,
   type InteractionOption,
@@ -8,6 +10,7 @@ import {
   type JsonValue,
   type MessageEntry,
   normalizeProjectResourcePath,
+  parseOcodeAskUserQuestionEditorEnvelope,
 } from "@anvil/protocol";
 
 export type UnsequencedAnvilEvent = {
@@ -298,6 +301,34 @@ function interactionFromRecord(
     timeoutMs: numberOf(record.timeout),
     raw: json(record),
   };
+  if (method === "editor" && record.title === OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL) {
+    const envelope = parseOcodeAskUserQuestionEditorEnvelope(record.prefill);
+    if (envelope) {
+      const askCommon = {
+        ...common,
+        title: envelope.question,
+        message: envelope.context,
+        presentation: {
+          type: "ask_user_question" as const,
+          schemaVersion: OCODE_ASK_USER_QUESTION_SCHEMA_VERSION,
+          ...(envelope.mode === "text" ? {} : {
+            otherLabel: envelope.options.some((option) => option.label.toLowerCase() === "other")
+              ? "Other (custom)"
+              : "Other",
+          }),
+        },
+      };
+      if (envelope.mode === "text") return { ...askCommon, method: "input" };
+      const options = envelope.options.map((option, index) => ({
+        id: `ask-option-${index}`,
+        label: option.label,
+        value: option.value,
+        description: option.description,
+      }));
+      if (envelope.mode === "single-select") return { ...askCommon, method: "select", options };
+      return { ...askCommon, method: "multiSelect", options, minSelections: 1 };
+    }
+  }
   if (method === "select") return { ...common, method, options: optionsOf(record.options) };
   if (method === "multiSelect") {
     return {

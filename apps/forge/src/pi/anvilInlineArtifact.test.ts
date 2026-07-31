@@ -3,6 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import {
+  createOcodeAskUserQuestionResponse,
+  OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL,
+  parseOcodeAskUserQuestionEditorEnvelope,
+} from "@anvil/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 
 import anvilInlineArtifact from "./anvilInlineArtifact.ts";
@@ -10,10 +15,23 @@ import anvilInlineArtifact from "./anvilInlineArtifact.ts";
 type Tool = Parameters<Parameters<typeof anvilInlineArtifact>[0]["registerTool"]>[0];
 let directory: string | undefined;
 
-function tools(): Map<string, Tool> {
+function toolHarness() {
   const registered = new Map<string, Tool>();
-  anvilInlineArtifact({ registerTool: (definition) => registered.set(definition.name, definition) });
-  return registered;
+  const sessionStartHandlers: Array<() => void> = [];
+  anvilInlineArtifact({
+    registerTool: (definition) => registered.set(definition.name, definition),
+    on: (_event, handler) => sessionStartHandlers.push(handler),
+  });
+  return {
+    registered,
+    startSession: () => sessionStartHandlers.forEach((handler) => handler()),
+  };
+}
+
+function tools(): Map<string, Tool> {
+  const harness = toolHarness();
+  harness.startSession();
+  return harness.registered;
 }
 
 afterEach(() => {
@@ -22,8 +40,127 @@ afterEach(() => {
 });
 
 describe("bundled ocode Pi extension", () => {
-  it("registers inline HTML and project-file tools", () => {
-    expect([...tools().keys()]).toEqual(["ocode_render_html_file", "ocode_open_file"]);
+  it("defers the ask_user_question override until session start", () => {
+    const harness = toolHarness();
+    expect([...harness.registered.keys()]).toEqual(["ocode_render_html_file", "ocode_open_file"]);
+
+    harness.startSession();
+    expect([...harness.registered.keys()]).toEqual([
+      "ocode_render_html_file",
+      "ocode_open_file",
+      "ask_user_question",
+    ]);
+  });
+
+  it("tunnels rich questions through the versioned editor envelope and maps option responses", async () => {
+    let editorTitle: string | undefined;
+    let editorPrefill: string | undefined;
+    const tool = tools().get("ask_user_question")!;
+    const result = await tool.execute(
+      "call-ask",
+      {
+        question: "Which approach?",
+        details: "Choose based on maintainability.",
+        options: [
+          { label: "Direct", value: "direct", description: "Smallest implementation" },
+          { label: "Layered", value: "layered" },
+        ],
+      },
+      undefined,
+      undefined,
+      {
+        cwd: "/workspace",
+        isProjectTrusted: () => true,
+        hasUI: true,
+        ui: {
+          editor: async (title, prefill) => {
+            editorTitle = title;
+            editorPrefill = prefill;
+            return createOcodeAskUserQuestionResponse([{ type: "option", optionIndex: 1 }]);
+          },
+        },
+      },
+    );
+
+    expect(editorTitle).toBe(OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL);
+    expect(parseOcodeAskUserQuestionEditorEnvelope(editorPrefill)).toEqual({
+      kind: "ocode.ask-user-question",
+      schemaVersion: 1,
+      question: "Which approach?",
+      context: "Choose based on maintainability.",
+      mode: "single-select",
+      options: [
+        { label: "Direct", value: "direct", description: "Smallest implementation" },
+        { label: "Layered", value: "layered" },
+      ],
+    });
+    expect(result).toMatchObject({
+      content: [{ type: "text", text: "User selected: 2. Layered" }],
+      details: {
+        status: "answered",
+        question: "Which approach?",
+        mode: "single-select",
+        answers: [{ type: "option", label: "Layered", value: "layered", index: 2 }],
+      },
+    });
+    expect(result.details).not.toHaveProperty("cancelled");
+  });
+
+  it("fails closed for malformed responses and an already-aborted signal", async () => {
+    let editorCalls = 0;
+    const tool = tools().get("ask_user_question")!;
+    const context = {
+      cwd: "/workspace",
+      isProjectTrusted: () => true,
+      hasUI: true,
+      ui: { editor: async () => {
+        editorCalls++;
+        return editorCalls === 1 ? { answers: [] } : undefined;
+      } },
+    };
+    const malformed = await tool.execute("call-bad", { question: "Explain?" }, undefined, undefined, context);
+    const explicitlyCancelled = await tool.execute(
+      "call-cancel",
+      { question: "Explain?" },
+      undefined,
+      undefined,
+      context,
+    );
+    const controller = new AbortController();
+    controller.abort();
+    const aborted = await tool.execute("call-abort", { question: "Explain?" }, controller.signal, undefined, context);
+
+    expect(malformed).toMatchObject({
+      details: { status: "cancelled", cancelled: true, message: "User cancelled the question" },
+    });
+    expect(explicitlyCancelled).toMatchObject({
+      details: { status: "cancelled", cancelled: true, mode: "text", answers: [] },
+    });
+    expect(aborted).toMatchObject({
+      details: { status: "cancelled", cancelled: true, mode: "text", answers: [] },
+    });
+    expect(editorCalls).toBe(2);
+  });
+
+  it("reports unavailable interactive UI without treating it as user cancellation", async () => {
+    const result = await tools().get("ask_user_question")!.execute(
+      "call-unavailable",
+      { question: "Explain?" },
+      undefined,
+      undefined,
+      { cwd: "/workspace", isProjectTrusted: () => true, hasUI: false },
+    );
+
+    expect(result).toMatchObject({
+      content: [{ type: "text", text: "ask_user_question requires interactive mode UI" }],
+      details: {
+        status: "unavailable",
+        message: "ask_user_question requires interactive mode UI",
+        mode: "text",
+        answers: [],
+      },
+    });
+    expect(result.details).not.toHaveProperty("cancelled");
   });
 
   it("snapshots a bounded workspace HTML file into structured tool details", async () => {

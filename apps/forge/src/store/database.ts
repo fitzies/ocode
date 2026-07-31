@@ -22,7 +22,7 @@ import {
 const sqliteModuleName = "node:sqlite";
 const { DatabaseSync } = await import(sqliteModuleName) as typeof import("node:sqlite");
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 const RETAINED_EVENT_COUNT = 100_000;
 const MAX_COMPACTION_ROWS_PER_CHECKPOINT = 1_000;
 
@@ -92,6 +92,17 @@ export interface StoredTerminalRecord {
   metadata: ShellTerminalMetadata;
   historyFile: string;
   historyVersion: number;
+}
+
+export interface SpeechUsage {
+  date: string;
+  requests: number;
+  characters: number;
+}
+
+export interface SpeechUsageReservationLimits {
+  requests: number;
+  characters: number;
 }
 
 export interface ArtifactRecord {
@@ -357,6 +368,57 @@ export class ForgeDatabase {
       context.tokens, context.contextWindow, context.percent,
     );
     return Number(result.changes) === 1;
+  }
+
+  speechUsage(date: string): SpeechUsage {
+    const row = this.database.prepare(`
+      SELECT requests, characters FROM speech_daily_usage WHERE date = ?
+    `).get(date) as Record<string, unknown> | undefined;
+    return {
+      date,
+      requests: Number(row?.requests ?? 0),
+      characters: Number(row?.characters ?? 0),
+    };
+  }
+
+  reserveSpeechUsage(
+    date: string,
+    characters: number,
+    limits: SpeechUsageReservationLimits,
+  ):
+    | { accepted: true; usage: SpeechUsage }
+    | { accepted: false; usage: SpeechUsage; limit: "characters" | "requests" } {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Invalid speech usage date");
+    if (!Number.isSafeInteger(characters) || characters < 1) throw new Error("Invalid speech character count");
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.speechUsage(date);
+      if (current.requests + 1 > limits.requests) {
+        this.database.exec("COMMIT");
+        return { accepted: false, usage: current, limit: "requests" };
+      }
+      if (current.characters + characters > limits.characters) {
+        this.database.exec("COMMIT");
+        return { accepted: false, usage: current, limit: "characters" };
+      }
+      const usage = {
+        date,
+        requests: current.requests + 1,
+        characters: current.characters + characters,
+      };
+      this.database.prepare(`
+        INSERT INTO speech_daily_usage (date, requests, characters)
+        VALUES (?, ?, ?)
+        ON CONFLICT(date) DO UPDATE SET
+          requests = excluded.requests,
+          characters = excluded.characters
+      `).run(usage.date, usage.requests, usage.characters);
+      this.database.exec("COMMIT");
+      return { accepted: true, usage };
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   listTerminalRecords(projectId?: string): StoredTerminalRecord[] {
@@ -1048,6 +1110,19 @@ export class ForgeDatabase {
         ALTER TABLE sessions ADD COLUMN context_window INTEGER;
         ALTER TABLE sessions ADD COLUMN context_percent REAL;
         PRAGMA user_version = 11;
+        COMMIT;
+      `);
+    }
+
+    if (version < 12) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE speech_daily_usage (
+          date TEXT PRIMARY KEY,
+          requests INTEGER NOT NULL CHECK(requests >= 0),
+          characters INTEGER NOT NULL CHECK(characters >= 0)
+        );
+        PRAGMA user_version = 12;
         COMMIT;
       `);
     }

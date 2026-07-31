@@ -48,6 +48,35 @@ describe("ForgeDatabase event journal", () => {
     }
   });
 
+  it("persists only aggregate daily speech usage and enforces reservations transactionally", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ocode-speech-usage-"));
+    const path = join(directory, "forge.sqlite");
+    try {
+      const database = new ForgeDatabase(path);
+      expect(database.speechUsage("2026-07-23")).toEqual({ date: "2026-07-23", requests: 0, characters: 0 });
+      expect(database.reserveSpeechUsage("2026-07-23", 4, { requests: 2, characters: 5 })).toEqual({
+        accepted: true,
+        usage: { date: "2026-07-23", requests: 1, characters: 4 },
+      });
+      expect(database.reserveSpeechUsage("2026-07-23", 2, { requests: 2, characters: 5 })).toMatchObject({
+        accepted: false,
+        limit: "characters",
+      });
+      expect(database.speechUsage("2026-07-23")).toMatchObject({ requests: 1, characters: 4 });
+      database.close();
+
+      const raw = new DatabaseSync(path);
+      const columns = raw.prepare("PRAGMA table_info(speech_daily_usage)").all() as Array<{ name: string }>;
+      expect(columns.map(({ name }) => name)).toEqual(["date", "requests", "characters"]);
+      raw.close();
+      const reopened = new ForgeDatabase(path);
+      expect(reopened.speechUsage("2026-07-23")).toMatchObject({ requests: 1, characters: 4 });
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("persists a session rename with its configuration event", () => {
     const database = new ForgeDatabase(":memory:");
     database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);

@@ -1,3 +1,5 @@
+import { matchesShortcut } from "./shortcuts";
+
 export function isTerminalInputTarget(target: EventTarget | null): boolean {
   return typeof Element !== "undefined" && target instanceof Element && Boolean(target.closest("[data-terminal-input='true']"));
 }
@@ -12,33 +14,20 @@ export function threadNumberShortcutIndex(
   event: ShortcutEvent,
   platform?: string,
 ): number | undefined {
-  const match = /^Digit([1-9])$/.exec(event.code);
-  if (!match || event.altKey || event.shiftKey) return undefined;
-
-  const primaryModifierOnly = isMacPlatform(platform)
-    ? event.metaKey && !event.ctrlKey
-    : event.ctrlKey && !event.metaKey;
-  return primaryModifierOnly ? Number(match[1]) - 1 : undefined;
+  for (let index = 1; index <= 9; index += 1) {
+    if (matchesShortcut(event, `thread${index}` as Parameters<typeof matchesShortcut>[1], platform)) return index - 1;
+  }
+  return undefined;
 }
 
 export function threadCycleShortcut(event: ShortcutEvent): "next" | "previous" | undefined {
-  if (
-    event.ctrlKey &&
-    !event.metaKey &&
-    !event.altKey &&
-    (event.code === "Tab" || event.key === "Tab")
-  ) {
-    return event.shiftKey ? "previous" : "next";
-  }
+  if (matchesShortcut(event, "previousThread")) return "previous";
+  if (matchesShortcut(event, "nextThread")) return "next";
   return undefined;
 }
 
 export function isTerminalToggleShortcut(
   event: ShortcutEvent,
 ): boolean {
-  return event.ctrlKey &&
-    !event.metaKey &&
-    !event.altKey &&
-    !event.shiftKey &&
-    (event.code === "Backquote" || event.key === "`");
+  return matchesShortcut(event, "terminal");
 }

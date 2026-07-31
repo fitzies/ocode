@@ -1,3 +1,4 @@
+import { OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL } from "@anvil/protocol";
 import { describe, expect, it } from "vitest";
 
 import { createPiRpcAdapterState, normalizePiRpcRecord } from "./index";
@@ -41,6 +42,84 @@ describe("Pi RPC normalization", () => {
 
     expect(multi).toMatchObject({ type: "interaction.requested", payload: { request: { method: "multiSelect", minSelections: 1 } } });
     expect(future).toMatchObject({ type: "interaction.requested", payload: { request: { method: "unknown", originalMethod: "futureWizard", fields: [{ id: "name", type: "text" }] } } });
+  });
+
+  it("normalizes the exact ocode ask editor envelope into a marked rich interaction", () => {
+    const rawRequest = {
+      type: "extension_ui_request",
+      id: "ask-1",
+      method: "editor",
+      title: OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL,
+      prefill: JSON.stringify({
+        kind: "ocode.ask-user-question",
+        schemaVersion: 1,
+        question: "Which checks?",
+        context: "Choose all that apply.",
+        mode: "multi-select",
+        options: [
+          { label: "Types", value: "types", description: "Run TypeScript" },
+          { label: "Tests", value: "tests" },
+        ],
+      }),
+    };
+    const [event] = normalizePiRpcRecord(state(), rawRequest);
+
+    expect(event).toMatchObject({
+      type: "interaction.requested",
+      payload: {
+        request: {
+          id: "ask-1",
+          method: "multiSelect",
+          title: "Which checks?",
+          message: "Choose all that apply.",
+          minSelections: 1,
+          options: [
+            { id: "ask-option-0", label: "Types", value: "types", description: "Run TypeScript" },
+            { id: "ask-option-1", label: "Tests", value: "tests" },
+          ],
+          presentation: { type: "ask_user_question", schemaVersion: 1, otherLabel: "Other" },
+          raw: rawRequest,
+        },
+      },
+    });
+  });
+
+  it("keeps malformed or inexact ask editor envelopes as ordinary editor interactions", () => {
+    for (const request of [
+      {
+        type: "extension_ui_request",
+        id: "bad-version",
+        method: "editor",
+        title: OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL,
+        prefill: JSON.stringify({
+          kind: "ocode.ask-user-question",
+          schemaVersion: 2,
+          question: "Question?",
+          mode: "text",
+          options: [],
+        }),
+      },
+      {
+        type: "extension_ui_request",
+        id: "bad-sentinel",
+        method: "editor",
+        title: `${OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL} `,
+        prefill: JSON.stringify({
+          kind: "ocode.ask-user-question",
+          schemaVersion: 1,
+          question: "Question?",
+          mode: "text",
+          options: [],
+        }),
+      },
+    ]) {
+      const [event] = normalizePiRpcRecord(state(), request);
+      expect(event).toMatchObject({
+        type: "interaction.requested",
+        payload: { request: { method: "editor", title: request.title, value: request.prefill } },
+      });
+      if (event.type === "interaction.requested") expect(event.payload.request).not.toHaveProperty("presentation");
+    }
   });
 
   it("drops transport-only records that have no client-visible state", () => {
@@ -207,6 +286,38 @@ describe("Pi RPC normalization", () => {
     expect(messageEnd).toMatchObject({
       type: "tool.completed",
       payload: { toolCallId: "call-restored-aborted", status: "cancelled" },
+    });
+  });
+
+  it("classifies canonical ask_user_question cancellation details while leaving answers completed", () => {
+    const [cancelled] = normalizePiRpcRecord(state(), {
+      type: "tool_execution_end",
+      toolCallId: "call-ask-cancelled",
+      toolName: "ask_user_question",
+      result: {
+        content: [{ type: "text", text: "User cancelled the question" }],
+        details: { status: "cancelled", cancelled: true, answers: [] },
+      },
+      isError: false,
+    });
+    const [answered] = normalizePiRpcRecord(state(), {
+      type: "tool_execution_end",
+      toolCallId: "call-ask-answered",
+      toolName: "ask_user_question",
+      result: {
+        content: [{ type: "text", text: "User answered: Yes" }],
+        details: { status: "answered", answers: [{ type: "text", value: "Yes" }] },
+      },
+      isError: false,
+    });
+
+    expect(cancelled).toMatchObject({
+      type: "tool.completed",
+      payload: { toolCallId: "call-ask-cancelled", status: "cancelled" },
+    });
+    expect(answered).toMatchObject({
+      type: "tool.completed",
+      payload: { toolCallId: "call-ask-answered", status: "completed" },
     });
   });
 

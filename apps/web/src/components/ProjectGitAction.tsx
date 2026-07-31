@@ -134,6 +134,8 @@ export function ProjectGitAction({
       : phase === "pushing"
         ? "Pushing…"
         : presentation.actionLabel;
+  const [primaryStatusLabel, ...secondaryStatusParts] = presentation.label.split(" · ");
+  const secondaryStatusLabel = secondaryStatusParts.join(" · ");
 
   const trigger = (
     <Button
@@ -141,20 +143,22 @@ export function ProjectGitAction({
       variant="ghost"
       size="sm"
       className={cn(
-        "repository-status-trigger max-w-[230px] border-0 bg-transparent font-normal tabular-nums shadow-none",
+        "repository-status-trigger border-0 bg-transparent font-normal tabular-nums shadow-none",
         hasInlineAction && "repository-status-trigger--joined",
       )}
       aria-label={`Repository status: ${presentation.label}`}
     >
-      <HugeiconsIcon
-        icon={pullRequest ? GitPullRequestIcon : status.repositoryState === "not-a-repository" ? LinkSquare02Icon : GitBranchIcon}
-        strokeWidth={2}
-        data-icon="inline-start"
-      />
-      <span className="repository-status-trigger-label truncate">{presentation.label}</span>
-      {checkSummary && checkSummary.total > 0 && <span className="repository-status-count font-mono text-[0.5625rem] text-muted-foreground">{checkSummary.passed}/{checkSummary.total}</span>}
+      <span className="repository-status-trigger-primary">
+        <HugeiconsIcon
+          icon={pullRequest ? GitPullRequestIcon : status.repositoryState === "not-a-repository" ? LinkSquare02Icon : GitBranchIcon}
+          strokeWidth={2}
+        />
+        <span className="truncate">{primaryStatusLabel}</span>
+      </span>
+      {secondaryStatusLabel && <span className="repository-status-trigger-label truncate">{secondaryStatusLabel}</span>}
+      {checkSummary && checkSummary.total > 0 && <span className="repository-status-count text-muted-foreground">{checkSummary.passed}/{checkSummary.total}</span>}
       {!pullRequest && (status.additions > 0 || status.deletions > 0) && (
-        <span className="repository-status-trigger-diff font-mono text-[0.5625rem]"><span className="text-[var(--green)]">+{status.additions}</span>&nbsp;<span className="text-[var(--red)]">−{status.deletions}</span></span>
+        <span className="repository-status-trigger-diff"><span className="text-[var(--green)]">+{status.additions}</span><span className="text-[var(--red)]">−{status.deletions}</span></span>
       )}
     </Button>
   );

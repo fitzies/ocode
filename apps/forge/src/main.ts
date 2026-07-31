@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { ArtifactStore } from "./artifacts/artifactStore.ts";
-import { loadForgeConfig } from "./config.ts";
+import { loadForgeConfig, speechApiKey } from "./config.ts";
 import { ForgeEventService } from "./events/eventService.ts";
 import { ForgeHttpServer } from "./http/server.ts";
 import { PiCommitMessageGenerator } from "./pi/commitMessageGenerator.ts";
@@ -13,6 +13,7 @@ import { ProjectGitService } from "./projects/projectGitService.ts";
 import { EventProjectResolver } from "./projects/projectResolver.ts";
 import { LiveIndicatorsService } from "./runtime/indicators.ts";
 import { SessionManager } from "./runtime/sessionManager.ts";
+import { SpeechRuntime } from "./speech/speechRuntime.ts";
 import { ForgeDatabase } from "./store/database.ts";
 import { acquireForgeInstanceLock, ForgeInstanceLockedError } from "./store/instanceLock.ts";
 import { TerminalHistoryStore } from "./terminal/historyStore.ts";
@@ -26,6 +27,12 @@ async function main(): Promise<void> {
   try {
     mkdirSync(config.sessionDir, { recursive: true, mode: 0o700 });
     const database = new ForgeDatabase(config.databasePath);
+    const speech = new SpeechRuntime({
+      secretsDirectory: join(dirname(config.databasePath), "secrets"),
+      database,
+      config: config.speech,
+      environmentApiKey: speechApiKey(),
+    });
     const artifacts = new ArtifactStore(config.artifactDir);
     const events = new ForgeEventService(database, config.projects, artifacts);
     const projects = new EventProjectResolver(events);
@@ -49,6 +56,7 @@ async function main(): Promise<void> {
           server.close(),
           sessions.stopAll(),
           terminals.stopAll(),
+          speech.close(),
         ]);
         events.checkpoint();
         database.close();
@@ -76,6 +84,7 @@ async function main(): Promise<void> {
         });
       },
       ownerLogin: config.ownerLogin,
+      speech,
       webRoot: config.webRoot,
     });
 

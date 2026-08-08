@@ -134,6 +134,91 @@ describe("ProjectGitService", () => {
     }
   });
 
+  it("loads commit checks, statuses, and deployments without a pull request", async () => {
+    const bin = join(directory, "bin");
+    const gh = join(bin, "gh");
+    mkdirSync(bin);
+    writeFileSync(gh, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+const endpoint = args.at(-1) ?? "";
+if (args[0] === "pr") {
+  process.stdout.write("[]");
+} else if (endpoint.includes("/deployments/18/statuses")) {
+  process.stdout.write("[]");
+} else if (endpoint.includes("/deployments/17/statuses")) {
+  process.stdout.write(JSON.stringify([{
+    state: "in_progress",
+    description: "Creating containers",
+    environment_url: "https://railway.example/deployment/17",
+    created_at: "2026-01-01T00:00:03Z",
+    updated_at: "2026-01-01T00:00:04Z",
+    creator: { login: "railway[bot]" }
+  }]));
+} else if (endpoint.includes("/check-runs")) {
+  process.stdout.write(JSON.stringify({
+    total_count: 2,
+    check_runs: [{
+      name: "Build & typecheck",
+      status: "completed",
+      conclusion: "success",
+      details_url: "https://github.com/owner/repository/actions/runs/1",
+      started_at: "2026-01-01T00:00:00Z",
+      completed_at: "2026-01-01T00:00:01Z",
+      app: { name: "GitHub Actions" }
+    }, {
+      name: "Vercel",
+      status: "completed",
+      conclusion: "success",
+      details_url: "https://vercel.example/deployment/18",
+      started_at: "2026-01-01T00:00:04Z",
+      completed_at: "2026-01-01T00:00:05Z",
+      app: { name: "Vercel" }
+    }]
+  }));
+} else if (endpoint.includes("/commits/") && endpoint.includes("/statuses")) {
+  process.stdout.write(JSON.stringify([
+    { context: "codecov/patch", state: "success", target_url: "https://codecov.example/1", created_at: "2026-01-01T00:00:02Z" }
+  ]));
+} else if (endpoint.includes("/deployments?")) {
+  process.stdout.write(JSON.stringify([
+    { id: 17, environment: "Production", description: "Deploy forge-api", created_at: "2026-01-01T00:00:03Z", creator: { login: "railway[bot]" } },
+    { id: 18, environment: "Preview", description: "Waiting for Vercel", created_at: "2026-01-01T00:00:05Z", creator: { login: "vercel[bot]" } }
+  ]));
+} else {
+  process.stderr.write("Unexpected gh invocation: " + args.join(" "));
+  process.exit(1);
+}
+`);
+    chmodSync(gh, 0o755);
+    git(repository, ["remote", "set-url", "origin", "https://github.com/owner/repository.git"]);
+    const expectedHash = git(repository, ["rev-parse", "origin/main"]);
+    const expectedShortHash = git(repository, ["rev-parse", "--short", "origin/main"]);
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${bin}:${originalPath ?? ""}`;
+    try {
+      const status = await service().service.status("project-1");
+      expect(status.remoteStatusError).toBeUndefined();
+      expect(status.github).toMatchObject({
+        pullRequest: null,
+        commit: {
+          hash: expectedHash,
+          shortHash: expectedShortHash,
+          subject: "Initial commit",
+          url: `https://github.com/owner/repository/commit/${expectedHash}`,
+          complete: true,
+          checks: [
+            { name: "Build & typecheck", kind: "check", state: "passed", workflow: "GitHub Actions" },
+            { name: "codecov/patch", kind: "check", state: "passed" },
+            { name: "Railway · Production", kind: "deployment", state: "running", workflow: "Creating containers" },
+            { name: "Vercel · Preview", kind: "deployment", state: "passed", workflow: "Waiting for Vercel", signalCount: 2 },
+          ],
+        },
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   it("initializes Git and connects an existing bare remote", async () => {
     rmSync(join(repository, ".git"), { recursive: true, force: true });
     const subject = service();

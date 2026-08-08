@@ -32,6 +32,8 @@ fn configured_forge_url() -> Option<tauri::Url> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let url = configured_forge_url()
                 .map(WebviewUrl::External)
@@ -40,7 +42,8 @@ pub fn run() {
             let window = WebviewWindowBuilder::new(app, "main", url)
                 .title("ocode")
                 .inner_size(1280.0, 800.0)
-                .min_inner_size(800.0, 600.0);
+                .min_inner_size(800.0, 600.0)
+                .disable_drag_drop_handler();
 
             #[cfg(target_os = "macos")]
             let window = window

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    color-scheme: light dark;
+    --ink: light-dark(#25241f, #f1efe7);
+    --muted: light-dark(#716f66, #96938a);
+    --line: light-dark(#dedbd0, #3b3a35);
+    --surface: light-dark(#f8f6ef, #23231f);
+    --surface-2: light-dark(#eeece4, #2d2c27);
+    --accent: #d7653b;
+    --green: #2f8f65;
+  }
+  html, body { margin: 0; background: transparent; }
+  body {
+    padding: 8px;
+    color: var(--ink);
+    font: 14px/1.35 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .artifact {
+    width: min(100%, 620px);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    overflow: hidden;
+    background: var(--surface);
+    box-shadow: 0 10px 30px light-dark(rgb(45 39 25 / 8%), rgb(0 0 0 / 22%));
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  .title { display: flex; align-items: center; gap: 9px; font-weight: 700; }
+  .mark { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 16%, transparent); }
+  .meta { color: var(--muted); font-size: 12px; }
+  .flow {
+    display: grid;
+    grid-template-columns: 1fr 26px 1fr 26px 1fr;
+    align-items: center;
+    padding: 22px 14px;
+  }
+  .node {
+    min-height: 84px;
+    padding: 13px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface-2);
+  }
+  .node strong { display: block; margin-bottom: 5px; font-size: 13px; }
+  .node span { color: var(--muted); font-size: 11px; }
+  .arrow { color: var(--muted); text-align: center; }
+  footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .status { display: flex; align-items: center; gap: 7px; color: var(--green); }
+  .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .action { color: var(--ink); font-weight: 700; }
+  @media (max-width: 520px) {
+    .flow { grid-template-columns: 1fr; gap: 8px; }
+    .arrow { transform: rotate(90deg); }
+    .node { min-height: auto; }
+  }
+</style>
+</head>
+<body>
+  <article class="artifact" aria-label="Session handoff flow">
+    <header>
+      <div class="title"><span class="mark"></span>Session handoff</div>
+      <div class="meta">live artifact</div>
+    </header>
+    <div class="flow">
+      <div class="node"><strong>MacBook</strong><span>Prompt sent<br>10:42:08</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><strong>Forge</strong><span>Pi keeps running<br>session #184</span></div>
+      <div class="arrow">→</div>
+      <div class="node"><strong>Phone</strong><span>Reconnected<br>from event 927</span></div>
+    </div>
+    <footer>
+      <span class="status">No interruption</span>
+      <span class="action">Export SVG ↗</span>
+    </footer>
+  </article>
+</body>
+</html>

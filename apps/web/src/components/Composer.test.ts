@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { SubagentActivity } from "../lib/subagentActivity";
-import { Composer, activeFileMention, nextThinkingLevel, selectAnvilModels, updateComposerDraft } from "./Composer";
+import { Composer, activeFileMention, isFileDrag, nextThinkingLevel, selectAnvilModels, updateComposerDraft } from "./Composer";
 
 const model = (id: string, name: string): ModelDescriptor => ({
   id,
@@ -67,6 +67,10 @@ describe("Composer workspace status", () => {
     expect(renderComposer(true, { workspaceKind: undefined })).toContain(">main workspace<");
   });
 
+  it("labels the built-in General project as the home workspace", () => {
+    expect(renderComposer(true, { workspaceKind: "general" })).toContain(">home workspace<");
+  });
+
   it("hides inactive subagents and shows only the finished tick", () => {
     const html = renderComposer(true);
 
@@ -121,6 +125,14 @@ describe("activeFileMention", () => {
     expect(activeFileMention("Review @src/cmp", 15)).toEqual({ start: 7, query: "src/cmp" });
     expect(activeFileMention('Review @"docs/my f', 18)).toEqual({ start: 7, query: "docs/my f" });
     expect(activeFileMention("email@example.com", 17)).toBeUndefined();
+  });
+});
+
+describe("isFileDrag", () => {
+  it("accepts file drags without intercepting dragged text or links", () => {
+    expect(isFileDrag({ types: ["Files"] })).toBe(true);
+    expect(isFileDrag({ types: ["text/plain", "text/uri-list"] })).toBe(false);
+    expect(isFileDrag(null)).toBe(false);
   });
 });
 

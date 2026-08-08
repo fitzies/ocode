@@ -29,9 +29,11 @@ describe("loadForgeConfig", () => {
         ANVIL_DATA_DIR: legacyData,
         OCODE_PORT: "4321",
         ANVIL_PORT: "1234",
+        OCODE_DESKTOP_UPDATE_DIR: join(directory, "published-updates"),
       });
       expect(config.port).toBe(4321);
       expect(config.databasePath).toBe(join(canonicalData, "forge.sqlite"));
+      expect(config.desktopUpdateDir).toBe(join(directory, "published-updates"));
 
       const legacy = loadForgeConfig({ ANVIL_CONFIG: configPath, ANVIL_DATA_DIR: legacyData });
       expect(legacy.databasePath).toBe(join(legacyData, "forge.sqlite"));
@@ -94,6 +96,7 @@ describe("loadForgeConfig", () => {
         ownerLogin: "owner@example.com",
         host: "127.0.0.1",
         artifactDir: join(directory, "artifacts"),
+        desktopUpdateDir: join(directory, "desktop-updates"),
       });
       expect(config.projects[0]?.path).toBe(directory);
       expect(config.projectsRoot).toBe(tmpdir());
@@ -102,70 +105,6 @@ describe("loadForgeConfig", () => {
         ANVIL_DATA_DIR: directory,
         ANVIL_HOST: "0.0.0.0",
       })).toThrow("loopback");
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("allows speech setup without config or an environment API key", () => {
-    const { directory, configPath } = fixture("owner@example.com");
-    try {
-      expect(loadForgeConfig({ OCODE_CONFIG: configPath, OCODE_DATA_DIR: directory }).speech).toBeUndefined();
-      writeFileSync(configPath, JSON.stringify({
-        ownerLogin: "owner@example.com",
-        projects: [{ id: "project", name: "Project", path: directory }],
-        speech: { provider: "openai" },
-      }));
-      const enabled = loadForgeConfig({ OCODE_CONFIG: configPath, OCODE_DATA_DIR: directory });
-      expect(enabled.speech).toEqual({
-        provider: "openai",
-        dailyCharacterLimit: 100_000,
-        dailyRequestLimit: 250,
-      });
-      expect(enabled).not.toHaveProperty("openAiApiKey");
-      expect(JSON.stringify(enabled)).not.toContain("test-secret");
-    } finally {
-      rmSync(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("validates speech configuration shape and leaves provider option validation to startup", () => {
-    const { directory, configPath } = fixture("owner@example.com");
-    const environment = {
-      OCODE_CONFIG: configPath,
-      OCODE_DATA_DIR: directory,
-    };
-    const writeSpeech = (speech: Record<string, unknown>) => writeFileSync(configPath, JSON.stringify({
-      ownerLogin: "owner@example.com",
-      projects: [{ id: "project", name: "Project", path: directory }],
-      speech,
-    }));
-    try {
-      writeSpeech({ provider: "openai", voice: "cedar", style: "gentle", dailyCharacterLimit: 4_000, dailyRequestLimit: 12 });
-      expect(loadForgeConfig(environment).speech).toEqual({
-        provider: "openai",
-        voice: "cedar",
-        style: "gentle",
-        dailyCharacterLimit: 4_000,
-        dailyRequestLimit: 12,
-      });
-      writeSpeech({ provider: "openai", voice: "adapter-owned-voice", style: "adapter-owned-style" });
-      expect(loadForgeConfig(environment).speech).toMatchObject({
-        voice: "adapter-owned-voice",
-        style: "adapter-owned-style",
-      });
-      for (const speech of [
-        { provider: "other" },
-        { provider: "openai", voice: "" },
-        { provider: "openai", style: 2 },
-        { provider: "openai", dailyCharacterLimit: 0 },
-        { provider: "openai", dailyRequestLimit: 1.5 },
-        { provider: "openai", model: "tts-1" },
-        { provider: "openai", apiKey: "must-not-be-in-json" },
-      ]) {
-        writeSpeech(speech);
-        expect(() => loadForgeConfig(environment)).toThrow(/speech/);
-      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

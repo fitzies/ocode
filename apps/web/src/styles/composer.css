@@ -45,7 +45,7 @@
   border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
   border-radius: 10px;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3), inset 0 1px color-mix(in oklab, var(--foreground) 2.5%, transparent);
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
 }
 
 .composer:focus-within {
@@ -53,10 +53,64 @@
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3), inset 0 1px color-mix(in oklab, var(--foreground) 2.5%, transparent);
 }
 
+.composer--file-drop-active {
+  background: color-mix(in oklab, var(--card) 92%, var(--primary));
+  border-color: color-mix(in oklab, var(--primary) 68%, var(--foreground));
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.3), 0 0 0 2px color-mix(in oklab, var(--primary) 18%, transparent);
+}
+
+.composer-file-dropzone {
+  position: absolute;
+  inset: 6px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: var(--legacy-text-high);
+  text-align: left;
+  background: color-mix(in oklab, var(--card) 94%, transparent);
+  border: 1px dashed color-mix(in oklab, var(--primary) 72%, var(--foreground));
+  border-radius: 7px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.985);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+
+.composer-file-dropzone > svg {
+  width: 19px;
+  height: 19px;
+  color: var(--primary);
+}
+
+.composer-file-dropzone > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.composer-file-dropzone strong {
+  font-size: 11px;
+  font-weight: 620;
+}
+
+.composer-file-dropzone small {
+  color: var(--legacy-text-low);
+  font: 8px/1.3 "Geist Mono Variable", "Geist Mono", monospace;
+}
+
+.composer--file-drop-active .composer-file-dropzone {
+  opacity: 1;
+  visibility: visible;
+  transform: scale(1);
+}
+
 .composer textarea {
   display: block;
   width: 100%;
-  min-height: 33px;
+  min-height: 42px;
   max-height: 180px;
   padding: 1px 3px 8px;
   resize: none;
@@ -203,12 +257,12 @@
   display: none;
 }
 
-.model-select:hover:not(:disabled),
-.model-select[aria-expanded="true"]:not(:disabled),
-.thinking-level:hover,
-.thinking-level[aria-expanded="true"] {
+.composer-tools .model-select:hover:not(:disabled),
+.composer-tools .model-select[aria-expanded="true"]:not(:disabled),
+.composer-tools .thinking-level:hover:not(:disabled),
+.composer-tools .thinking-level[aria-expanded="true"]:not(:disabled) {
   color: var(--legacy-text);
-  background: color-mix(in oklab, var(--foreground) 4.5%, transparent);
+  background: color-mix(in oklab, var(--primary) 9%, transparent);
 }
 
 .model-select svg,
@@ -361,13 +415,13 @@
 }
 
 .send-button {
-  color: var(--background);
-  background: var(--legacy-text-high);
-  box-shadow: inset 0 1px color-mix(in oklab, var(--foreground) 23%, transparent);
+  color: var(--primary-foreground);
+  background: var(--primary);
+  box-shadow: inset 0 1px color-mix(in oklab, var(--primary-foreground) 16%, transparent);
 }
 
 .send-button:hover:not(:disabled) {
-  background: var(--legacy-text-high);
+  background: color-mix(in oklab, var(--primary) 88%, black);
 }
 
 .send-button:disabled {

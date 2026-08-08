@@ -1,3 +1,4 @@
+import { isGeneralProject } from "@anvil/protocol";
 import { sortSessionsByActivity } from "@anvil/state";
 import {
   Archive01Icon,
@@ -23,6 +24,8 @@ import {
   CommandInput,
   CommandItem,
   CommandList,
+  CommandSeparator,
+  CommandShortcut,
 } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -45,7 +48,8 @@ import {
 import { ProjectFavicon } from "@/components/ProjectFavicon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-function projectRepositoryName(project: { name: string; path: string }): string {
+function projectRepositoryName(project: { id: string; name: string; path: string }): string {
+  if (isGeneralProject(project)) return project.name;
   return project.path.split(/[\\/]/).filter(Boolean).at(-1) || project.name;
 }
 import {
@@ -281,6 +285,8 @@ export const Sidebar = memo(function Sidebar({
   };
 
   const sortedSessions = sortSessionsByActivity(snapshot.sessions);
+  const generalProject = snapshot.projects.find(isGeneralProject);
+  const regularProjects = snapshot.projects.filter((project) => !isGeneralProject(project));
   const selectedProject = snapshot.projects.find((project) => project.id === projectFilter);
   const visibleSessions = sortedSessions.filter((session) => !projectFilter || session.projectId === projectFilter);
   const unsettledSessions = visibleSessions.filter((session) => !session.settled);
@@ -311,6 +317,7 @@ export const Sidebar = memo(function Sidebar({
     const displayTitle = capitalizeTitle(session.title);
     const projectName = project ? projectRepositoryName(project) : "unknown";
     const branch = session.branch ?? "unknown";
+    const projectContext = isGeneralProject(project) ? "General · ~/" : `${projectName}/${branch}`;
 
     return (
       <ContextMenu key={session.id}>
@@ -319,16 +326,17 @@ export const Sidebar = memo(function Sidebar({
             <button
               className={`session-row ${active ? "session-row--active" : ""}`}
               data-session-id={session.id}
+              aria-current={active ? "page" : undefined}
               onClick={() => {
                 onSelectSession(session.id);
                 closeMobile();
               }}
             >
-              {project && <ProjectFavicon projectId={project.id} projectName={project.name} className="session-settled-project-icon" />}
+              {project && <ProjectFavicon projectId={project.id} projectName={project.name} workspaceKind={project.workspaceKind} className="session-settled-project-icon" />}
               <span className="session-copy">
                 <span className="session-project-line">
                   <span className="session-project-identity">
-                    {project && <ProjectFavicon projectId={project.id} projectName={project.name} />}
+                    {project && <ProjectFavicon projectId={project.id} projectName={project.name} workspaceKind={project.workspaceKind} />}
                     <span className="session-project">{projectName}</span>
                   </span>
                   {session.status === "running" && <span className="session-spinner" role="status" aria-label="Working" />}
@@ -337,7 +345,7 @@ export const Sidebar = memo(function Sidebar({
                 </span>
                 <span className={`session-title ${unread ? "session-title--unread" : ""}`} title={displayTitle}>{displayTitle}</span>
                 <span className="session-meta">
-                  <span className="session-context-copy" title={`${projectName}/${branch}`}>{projectName}/{branch}</span>
+                  <span className="session-context-copy" title={projectContext}>{projectContext}</span>
                   <span className={`session-recency ${completedUnviewed ? "session-recency--completed" : ""}`}>
                     {session.status === "running"
                       ? session.lastUserMessageAt
@@ -436,11 +444,11 @@ export const Sidebar = memo(function Sidebar({
             value={projectFilter ?? "__all_projects__"}
             onValueChange={(value) => setProjectFilter(value === "__all_projects__" ? null : value)}
           >
-            <SelectTrigger className="w-full min-w-0 border-input bg-muted/20 px-2.5 text-[0.6875rem] shadow-none data-[size=default]:h-7 dark:bg-muted/30" aria-label="Select project">
+            <SelectTrigger className="w-full min-w-0 border-input bg-muted/20 px-2.5 text-[0.6875rem] shadow-none data-[size=default]:h-7 dark:bg-muted/30 [&>svg:last-child]:hidden" aria-label="Select project">
               <SelectValue>
                 {selectedProject ? (
                   <>
-                    <ProjectFavicon projectId={selectedProject.id} projectName={selectedProject.name} />
+                    <ProjectFavicon projectId={selectedProject.id} projectName={selectedProject.name} workspaceKind={selectedProject.workspaceKind} />
                     <span className="truncate">{projectRepositoryName(selectedProject)}</span>
                   </>
                 ) : (
@@ -458,10 +466,10 @@ export const Sidebar = memo(function Sidebar({
                   <HugeiconsIcon icon={FoldersIcon} strokeWidth={2} className="size-3.5 text-muted-foreground" />
                   All projects
                 </SelectItem>
-                {snapshot.projects.length > 0 && <SelectSeparator />}
-                {snapshot.projects.map((project) => (
+                {regularProjects.length > 0 && <SelectSeparator />}
+                {regularProjects.map((project) => (
                   <SelectItem value={project.id} key={project.id} title={project.path}>
-                    <ProjectFavicon projectId={project.id} projectName={project.name} />
+                    <ProjectFavicon projectId={project.id} projectName={project.name} workspaceKind={project.workspaceKind} />
                     <span className="truncate">{projectRepositoryName(project)}</span>
                   </SelectItem>
                 ))}
@@ -519,7 +527,7 @@ export const Sidebar = memo(function Sidebar({
           if (!open) setProjectQuery("");
         }}
         title="New thread"
-        description="Choose a project for the new thread"
+        description="Choose where the new thread should run"
         className="sm:max-w-sm"
       >
         <Command shouldFilter>
@@ -527,28 +535,47 @@ export const Sidebar = memo(function Sidebar({
             autoFocus
             value={projectQuery}
             onValueChange={setProjectQuery}
-            placeholder="Choose a project…"
-            aria-label="Choose a project"
+            placeholder="Choose a workspace…"
+            aria-label="Choose a workspace"
           />
           <CommandList>
             <CommandEmpty>{snapshot.projects.length === 0 ? "Create a project first." : "No projects found."}</CommandEmpty>
-            <CommandGroup>
-              {snapshot.projects.map((project) => (
+            {generalProject && (
+              <CommandGroup heading="No project">
                 <CommandItem
-                  key={project.id}
-                  value={`${projectRepositoryName(project)} ${project.name} ${project.path}`}
+                  value={`No project home ${generalProject.path} ~/ questions`}
                   onSelect={() => {
-                    onCreateSession(project.id);
+                    onCreateSession(generalProject.id);
                     setNewThreadOpen(false);
                     setProjectQuery("");
                     closeMobile();
                   }}
                 >
-                  <ProjectFavicon projectId={project.id} projectName={project.name} />
-                  <span className="min-w-0 flex-1 truncate">{projectRepositoryName(project)}</span>
+                  <ProjectFavicon projectId={generalProject.id} projectName={generalProject.name} workspaceKind={generalProject.workspaceKind} />
+                  <span className="font-medium">No project</span>
                 </CommandItem>
-              ))}
-            </CommandGroup>
+              </CommandGroup>
+            )}
+            {generalProject && regularProjects.length > 0 && <CommandSeparator />}
+            {regularProjects.length > 0 && (
+              <CommandGroup heading="Projects">
+                {regularProjects.map((project) => (
+                  <CommandItem
+                    key={project.id}
+                    value={`${projectRepositoryName(project)} ${project.name} ${project.path}`}
+                    onSelect={() => {
+                      onCreateSession(project.id);
+                      setNewThreadOpen(false);
+                      setProjectQuery("");
+                      closeMobile();
+                    }}
+                  >
+                    <ProjectFavicon projectId={project.id} projectName={project.name} workspaceKind={project.workspaceKind} />
+                    <span className="min-w-0 flex-1 truncate">{projectRepositoryName(project)}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
           </CommandList>
         </Command>
       </CommandDialog>

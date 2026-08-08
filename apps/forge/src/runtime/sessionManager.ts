@@ -12,10 +12,13 @@ import {
 } from "@anvil/pi-rpc";
 import {
   ANVIL_PROTOCOL_VERSION,
+  DEFAULT_SESSION_TITLE,
+  isGeneralProject,
   normalizeProjectSlug,
   normalizeSessionTitle,
   parseOcodeAskUserQuestionEditorEnvelope,
   parseOcodeAskUserQuestionResponse,
+  provisionalSessionTitleFromPrompt,
   SESSION_TITLE_MAX_LENGTH,
   type AnvilClientCommand,
   type AnvilCommandResponse,
@@ -28,10 +31,13 @@ import {
 
 import type { ForgeConfig } from "../config.ts";
 import { ForgeEventService } from "../events/eventService.ts";
+import { normalizeGitHubRepository } from "../projects/githubRepository.ts";
+import { GhProjectCloner, ProjectCloneError, type ProjectCloner } from "../projects/projectCloneService.ts";
 import { EventProjectResolver, type ProjectResolver } from "../projects/projectResolver.ts";
-import { canonicalizeProjectsRoot } from "../projects/projectsRoot.ts";
+import { canonicalizeProjectsRoot, ProjectsRootValidationError } from "../projects/projectsRoot.ts";
 import { detectProjectWorkspaceKind } from "../projects/workspaceKind.ts";
 import { ForgeDatabase, type RuntimeSessionRecord } from "../store/database.ts";
+import type { PreparedProjectTerminalRemoval, ProjectTerminalCleanup } from "../terminal/terminalManager.ts";
 import { createPiRpcProcess, type RpcRecord, type RpcSubprocess } from "../rpc/subprocess.ts";
 import { WorkspaceFileIndex } from "./workspaceFiles.ts";
 
@@ -40,6 +46,8 @@ interface SessionManagerOptions {
   defaultBashTimeoutMs?: number;
   idleRuntimeTimeoutMs?: number;
   projectResolver?: ProjectResolver;
+  terminalCleanup?: ProjectTerminalCleanup;
+  projectCloner?: ProjectCloner;
 }
 
 type StreamDeltaEvent = Extract<UnsequencedAnvilEvent, { type: "message.delta" | "reasoning.delta" }>;
@@ -154,13 +162,19 @@ function detectedImageMediaType(bytes: Buffer): string | undefined {
 
 export class SessionManager {
   private readonly projectResolver: ProjectResolver;
+  private readonly projectCloner: ProjectCloner;
   private readonly runtimes = new Map<string, ManagedSession>();
   private readonly starting = new Map<string, Promise<ManagedSession>>();
   private readonly inFlightCommands = new Map<string, Promise<AnvilCommandResponse>>();
+  private readonly inFlightCommandProjects = new Map<string, string>();
   private readonly lifecycleTails = new Map<string, Promise<void>>();
+  private readonly projectLifecycleTails = new Map<string, Promise<void>>();
   private readonly activeCommandCounts = new Map<string, number>();
+  private readonly provisionalTitleOwners = new Map<string, symbol>();
   private readonly interactionTimers = new Map<string, NodeJS.Timeout>();
   private readonly deleting = new Set<string>();
+  private readonly deletingProjects = new Set<string>();
+  private readonly cloneReservations = new Set<string>();
   private readonly workspaceFiles = new WorkspaceFileIndex();
   private projectsRoot: string;
   private shuttingDown = false;
@@ -172,8 +186,10 @@ export class SessionManager {
     private readonly options: SessionManagerOptions = {},
   ) {
     this.projectResolver = options.projectResolver ?? new EventProjectResolver(events);
+    this.projectCloner = options.projectCloner ?? new GhProjectCloner();
     const persistedProjectsRoot = database.runtimeMetadata("projects_root");
     this.projectsRoot = canonicalizeProjectsRoot(persistedProjectsRoot ?? config.projectsRoot);
+    this.projectCloner.cleanupStale?.(this.projectsRoot);
     if (persistedProjectsRoot === undefined) {
       database.setRuntimeMetadata("projects_root", this.projectsRoot);
     }
@@ -226,7 +242,9 @@ export class SessionManager {
       });
     }
 
-    const execution = this.dispatch(command)
+    const projectId = this.projectIdForCommand(command);
+    const execution = Promise.resolve()
+      .then(() => this.dispatch(command))
       .catch((error) => commandResponse(command, false, {
         error: error instanceof Error ? error.message : String(error),
       }))
@@ -234,8 +252,12 @@ export class SessionManager {
         this.database.completeCommand(response);
         return response;
       })
-      .finally(() => this.inFlightCommands.delete(command.id));
+      .finally(() => {
+        this.inFlightCommands.delete(command.id);
+        this.inFlightCommandProjects.delete(command.id);
+      });
     this.inFlightCommands.set(command.id, execution);
+    if (projectId) this.inFlightCommandProjects.set(command.id, projectId);
     return execution;
   };
 
@@ -250,7 +272,11 @@ export class SessionManager {
   getProjectsRoot = (): string => this.projectsRoot;
 
   setProjectsRoot = (requestedPath: string): string => {
+    if (this.cloneReservations.size > 0) {
+      throw new ProjectsRootValidationError("Projects root cannot be changed while a repository is being cloned");
+    }
     const path = canonicalizeProjectsRoot(requestedPath);
+    this.projectCloner.cleanupStale?.(path);
     this.database.setRuntimeMetadata("projects_root", path);
     this.projectsRoot = path;
     return path;
@@ -258,6 +284,7 @@ export class SessionManager {
 
   async stopAll(): Promise<void> {
     this.shuttingDown = true;
+    await this.projectCloner.shutdown?.();
     const runtimes = [...this.runtimes.values()];
     for (const runtime of runtimes) {
       runtime.stopping = true;
@@ -288,7 +315,22 @@ export class SessionManager {
   }
 
   private async dispatch(command: AnvilClientCommand): Promise<AnvilCommandResponse> {
+    if (command.type === "project.delete") {
+      return this.withProjectLifecycle(command.payload.projectId, () => this.deleteProject(command));
+    }
+    const sessionId = command.type === "session.delete" ? command.payload.sessionId : command.sessionId;
+    const projectId = command.type === "session.create"
+      ? command.payload.projectId
+      : sessionId ? this.database.getSession(sessionId)?.session.projectId : undefined;
+    if (projectId && this.deletingProjects.has(projectId)) {
+      return commandResponse(command, false, { error: "Project removal is in progress" });
+    }
+    return this.dispatchForProject(command);
+  }
+
+  private async dispatchForProject(command: AnvilClientCommand): Promise<AnvilCommandResponse> {
     if (command.type === "project.create") return this.createProject(command);
+    if (command.type === "project.clone") return this.cloneProject(command);
     if (command.type === "project.addExisting") return this.addExistingProject(command);
     if (command.type === "session.select") return commandResponse(command, true);
     if (command.type === "session.create") return this.createSession(command);
@@ -484,14 +526,55 @@ export class SessionManager {
         const type = command.payload.delivery === "followUp"
           ? "follow_up"
           : command.payload.delivery === "steer" ? "steer" : "prompt";
-        const response = await this.sendRpc(command, runtime, {
-          type,
-          message,
-          ...(images.length ? { images } : {}),
-        });
+        const isFirstPrompt = type === "prompt" && !stored.session.lastUserMessageAt;
+        const provisionalTitle = isFirstPrompt && this.events.sessionSummary(sessionId)?.title === DEFAULT_SESSION_TITLE
+          ? provisionalSessionTitleFromPrompt(command.payload.content)
+          : undefined;
+        const provisionalTitleOwner = provisionalTitle ? Symbol(sessionId) : undefined;
+        if (provisionalTitle && provisionalTitleOwner) {
+          this.provisionalTitleOwners.set(sessionId, provisionalTitleOwner);
+          this.events.renameSession(
+            sessionId,
+            provisionalTitle,
+            domainEvent("session.configured", {
+              title: provisionalTitle,
+              titleSource: "provisional",
+            }, sessionId),
+          );
+        }
+        const restoreDefaultTitle = () => {
+          if (
+            provisionalTitle &&
+            provisionalTitleOwner &&
+            this.provisionalTitleOwners.get(sessionId) === provisionalTitleOwner
+          ) {
+            this.provisionalTitleOwners.delete(sessionId);
+            this.events.renameSession(
+              sessionId,
+              DEFAULT_SESSION_TITLE,
+              domainEvent("session.configured", { title: DEFAULT_SESSION_TITLE }, sessionId),
+            );
+          }
+        };
+        let response: AnvilCommandResponse;
+        try {
+          response = await this.sendRpc(command, runtime, {
+            type,
+            message,
+            ...(images.length ? { images } : {}),
+          });
+        } catch (error) {
+          restoreDefaultTitle();
+          throw error;
+        }
         if (response.success) {
+          if (provisionalTitleOwner && this.provisionalTitleOwners.get(sessionId) === provisionalTitleOwner) {
+            this.provisionalTitleOwners.delete(sessionId);
+          }
           this.events.append([domainEvent("session.prompted", {}, sessionId)]);
           this.syncSession(sessionId);
+        } else {
+          restoreDefaultTitle();
         }
         if (response.success && command.payload.attachments?.length) {
           this.events.consumeAttachments(
@@ -621,6 +704,9 @@ export class SessionManager {
     if (projects.some((project) => project.path === path)) {
       return commandResponse(command, false, { error: "That project path is already configured" });
     }
+    if (this.cloneReservations.has(`name:${name.toLowerCase()}`) || this.cloneReservations.has(`path:${path}`)) {
+      return commandResponse(command, false, { error: "That project is currently being cloned" });
+    }
     let createdDirectory = false;
     try {
       mkdirSync(path);
@@ -642,19 +728,9 @@ export class SessionManager {
       const code = error && typeof error === "object" && "code" in error
         ? String((error as { code?: unknown }).code)
         : undefined;
-      if (code === "EEXIST") {
-        try {
-          const existingPath = realpathSync(path);
-          if (existingPath === path && dirname(existingPath) === currentRoot && statSync(existingPath).isDirectory()) {
-            return commandResponse(command, true, { data: { status: "existing", path: existingPath } });
-          }
-        } catch {
-          // Fall through to the generic collision error for inaccessible entries.
-        }
-      }
       return commandResponse(command, false, {
         error: code === "EEXIST"
-          ? `A filesystem entry already exists at ${path}, but it is not a safe project directory`
+          ? `A filesystem entry already exists at ${path}. Choose “Use a Forge directory” to register an existing workspace.`
           : `Forge could not create the project directory at ${path}`,
       });
     }
@@ -696,6 +772,118 @@ export class SessionManager {
     return commandResponse(command, true, { data: { status: "created", projectId: project.id } });
   }
 
+  private async cloneProject(
+    command: Extract<AnvilClientCommand, { type: "project.clone" }>,
+  ): Promise<AnvilCommandResponse> {
+    const name = command.payload.name.trim();
+    if (!name || name.length > 80) {
+      return commandResponse(command, false, { error: "Project name must be between 1 and 80 characters" });
+    }
+    const slug = normalizeProjectSlug(name);
+    if (!slug) {
+      return commandResponse(command, false, { error: "Project name must contain letters or numbers that can form a directory name" });
+    }
+
+    let repository: string;
+    try {
+      repository = normalizeGitHubRepository(command.payload.repository);
+    } catch (error) {
+      return commandResponse(command, false, {
+        error: error instanceof Error ? error.message : "GitHub repository is malformed",
+      });
+    }
+
+    let currentRoot: string;
+    try {
+      currentRoot = canonicalizeProjectsRoot(this.projectsRoot);
+    } catch (error) {
+      return commandResponse(command, false, {
+        error: error instanceof Error ? error.message : "Projects root is unavailable",
+      });
+    }
+    if (currentRoot !== this.projectsRoot) {
+      return commandResponse(command, false, {
+        error: "Projects root changed on disk; review and save it again in Forge settings",
+      });
+    }
+
+    const path = join(currentRoot, slug);
+    const nameReservation = `name:${name.toLowerCase()}`;
+    const pathReservation = `path:${path}`;
+    const projects = this.events.projectSummaries();
+    if (projects.some((project) => project.name.trim().toLowerCase() === name.toLowerCase())) {
+      return commandResponse(command, false, { error: "A project with that name already exists" });
+    }
+    if (projects.some((project) => project.path === path)) {
+      return commandResponse(command, false, { error: "That project path is already configured" });
+    }
+    if (this.cloneReservations.has(nameReservation) || this.cloneReservations.has(pathReservation)) {
+      return commandResponse(command, false, { error: "That project is already being cloned" });
+    }
+
+    this.cloneReservations.add(nameReservation);
+    this.cloneReservations.add(pathReservation);
+    try {
+      // Recheck after taking the reservation so two clone commands cannot both
+      // pass validation before either publishes project.upserted.
+      const currentProjects = this.events.projectSummaries();
+      if (currentProjects.some((project) => project.name.trim().toLowerCase() === name.toLowerCase())) {
+        return commandResponse(command, false, { error: "A project with that name already exists" });
+      }
+      if (currentProjects.some((project) => project.path === path)) {
+        return commandResponse(command, false, { error: "That project path is already configured" });
+      }
+
+      let clonedPath: string;
+      try {
+        clonedPath = await this.projectCloner.clone(currentRoot, slug, repository);
+      } catch (error) {
+        return commandResponse(command, false, {
+          error: error instanceof ProjectCloneError
+            ? error.message
+            : "Forge could not clone the GitHub repository. Check the repository and try again.",
+        });
+      }
+      if (clonedPath !== path) {
+        return commandResponse(command, false, {
+          error: `The repository was cloned to ${clonedPath}, but Forge refused to register an unexpected destination. Use “Use a Forge directory” to register it.`,
+        });
+      }
+      try {
+        if (realpathSync(path) !== path || dirname(path) !== currentRoot || !statSync(path).isDirectory()) {
+          throw new Error("cloned workspace is not a direct project directory");
+        }
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "cloned workspace validation failed";
+        return commandResponse(command, false, {
+          error: `Repository cloned to ${path}, but Forge could not safely register it: ${detail}. The workspace was preserved.`,
+        });
+      }
+
+      const project: ProjectSummary = {
+        id: `${slug.slice(0, 40)}-${randomUUID().slice(0, 8)}`,
+        name,
+        path,
+        workspaceKind: detectProjectWorkspaceKind(path),
+      };
+      try {
+        this.events.createProject(
+          project,
+          domainEvent("project.upserted", { project }, null),
+        );
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "project persistence failed";
+        return commandResponse(command, false, {
+          error: `Repository cloned successfully to ${path}, but Forge could not register it: ${detail}. The workspace was preserved; use “Use a Forge directory” to register it later.`,
+        });
+      }
+      return commandResponse(command, true, { data: { status: "cloned", projectId: project.id } });
+    } finally {
+      this.cloneReservations.delete(nameReservation);
+      this.cloneReservations.delete(pathReservation);
+    }
+  }
+
   private addExistingProject(
     command: Extract<AnvilClientCommand, { type: "project.addExisting" }>,
   ): AnvilCommandResponse {
@@ -734,6 +922,9 @@ export class SessionManager {
     if (projects.some((project) => project.path === requestedPath)) {
       return commandResponse(command, false, { error: "That project path is already configured" });
     }
+    if (this.cloneReservations.has(`name:${name.toLowerCase()}`) || this.cloneReservations.has(`path:${requestedPath}`)) {
+      return commandResponse(command, false, { error: "That project is currently being cloned" });
+    }
 
     let path: string;
     try {
@@ -769,6 +960,9 @@ export class SessionManager {
   private createSession(
     command: Extract<AnvilClientCommand, { type: "session.create" }>,
   ): AnvilCommandResponse {
+    if (this.deletingProjects.has(command.payload.projectId)) {
+      return commandResponse(command, false, { error: "Project removal is in progress" });
+    }
     const project = this.projectResolver.resolveProject(command.payload.projectId);
     if (!project) return commandResponse(command, false, { error: "Project is not configured on Forge" });
     const sessionId = command.payload.sessionId;
@@ -782,7 +976,7 @@ export class SessionManager {
     const session: SessionSummary = {
       id: sessionId,
       projectId: project.id,
-      title: "New session",
+      title: DEFAULT_SESSION_TITLE,
       updatedAt: timestamp,
       status: "idle",
       modelId: "unknown",
@@ -869,6 +1063,72 @@ export class SessionManager {
     );
     if (command.payload.settled) await this.stopSessionRuntime(sessionId);
     return commandResponse(command, true);
+  }
+
+  private async deleteProject(
+    command: Extract<AnvilClientCommand, { type: "project.delete" }>,
+  ): Promise<AnvilCommandResponse> {
+    const projectId = command.payload.projectId;
+    const project = this.events.projectSummary(projectId);
+    if (isGeneralProject(project)) {
+      return commandResponse(command, false, { error: "The General home workspace cannot be removed" });
+    }
+    if (!project) {
+      return commandResponse(command, false, { error: "Project not found" });
+    }
+    if (!this.options.terminalCleanup && this.database.listTerminalRecords(projectId).length > 0) {
+      return commandResponse(command, false, { error: "Project terminals cannot be stopped right now" });
+    }
+
+    let sessionIds = this.events.sessionSummariesForProject(projectId).map((session) => session.id);
+    this.deletingProjects.add(projectId);
+    for (const sessionId of sessionIds) this.deleting.add(sessionId);
+    let terminalRemoval: PreparedProjectTerminalRemoval | undefined;
+    try {
+      await Promise.all(sessionIds.map((sessionId) =>
+        this.withSessionLifecycle(sessionId, () => this.stopSessionRuntime(sessionId)),
+      ));
+      await this.waitForProjectCommands(projectId, command.id);
+
+      // A session creation that began immediately before the removal barrier may
+      // have committed while runtimes were stopping. Include it before deleting.
+      const refreshedSessionIds = this.events.sessionSummariesForProject(projectId).map((session) => session.id);
+      const addedSessionIds = refreshedSessionIds.filter((sessionId) => !sessionIds.includes(sessionId));
+      for (const sessionId of addedSessionIds) this.deleting.add(sessionId);
+      await Promise.all(addedSessionIds.map((sessionId) =>
+        this.withSessionLifecycle(sessionId, () => this.stopSessionRuntime(sessionId)),
+      ));
+      sessionIds = refreshedSessionIds;
+      for (const sessionId of sessionIds) {
+        for (const request of this.events.pendingInteractionsForSession(sessionId)) {
+          const timer = this.interactionTimers.get(request.id);
+          if (timer) clearTimeout(timer);
+          this.interactionTimers.delete(request.id);
+        }
+      }
+
+      terminalRemoval = await this.options.terminalCleanup?.prepareProjectRemoval(projectId);
+      const deleted = this.events.deleteProject(
+        projectId,
+        domainEvent("project.deleted", { projectId }, null),
+      );
+      terminalRemoval?.finalize();
+      terminalRemoval = undefined;
+      for (const sessionId of deleted.sessionIds) {
+        try {
+          rmSync(join(this.config.sessionDir, sessionId), { recursive: true, force: true });
+        } catch (error) {
+          process.stderr.write(
+            `[pi:${sessionId}] Project removed; session file cleanup will retry after restart: ${error instanceof Error ? error.message : String(error)}\n`,
+          );
+        }
+      }
+      return commandResponse(command, true);
+    } finally {
+      terminalRemoval?.cancel();
+      for (const sessionId of sessionIds) this.deleting.delete(sessionId);
+      this.deletingProjects.delete(projectId);
+    }
   }
 
   private async deleteSession(
@@ -1094,6 +1354,9 @@ export class SessionManager {
     try {
       const at = Math.max(0, Date.now() - runtime.baseTimestamp);
       const normalized = normalizePiRpcRecord(runtime.adapter, record, at);
+      if (normalized.some((event) => event.type === "session.configured" && event.payload.title !== undefined)) {
+        this.provisionalTitleOwners.delete(sessionId);
+      }
       this.appendNormalizedEvents(sessionId, runtime, normalized);
       if (record.type === "agent_start") this.clearIdleTimer(runtime);
       if (record.type === "tool_execution_start") this.armToolTimer(sessionId, runtime, record);
@@ -1383,9 +1646,35 @@ export class SessionManager {
     }
   }
 
+  private projectIdForCommand(command: AnvilClientCommand): string | undefined {
+    if (command.type === "session.create") return command.payload.projectId;
+    // Project deletions are already serialized by withProjectLifecycle. Tracking
+    // them here would make one deletion wait on another queued behind itself.
+    if (command.type === "project.delete") return undefined;
+    const sessionId = command.type === "session.delete" ? command.payload.sessionId : command.sessionId;
+    return sessionId ? this.database.getSession(sessionId)?.session.projectId : undefined;
+  }
+
+  private async waitForProjectCommands(projectId: string, excludedCommandId: string): Promise<void> {
+    const commands = [...this.inFlightCommands.entries()]
+      .filter(([commandId]) => commandId !== excludedCommandId && this.inFlightCommandProjects.get(commandId) === projectId)
+      .map(([, execution]) => execution);
+    await Promise.allSettled(commands);
+  }
+
   private afterSessionLifecycle<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {
     const barrier = this.lifecycleTails.get(sessionId);
     return barrier ? barrier.then(operation, operation) : operation();
+  }
+
+  private withProjectLifecycle<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.projectLifecycleTails.get(projectId) ?? Promise.resolve();
+    const result = previous.then(operation, operation);
+    const tail = result.then(() => undefined, () => undefined);
+    this.projectLifecycleTails.set(projectId, tail);
+    return result.finally(() => {
+      if (this.projectLifecycleTails.get(projectId) === tail) this.projectLifecycleTails.delete(projectId);
+    });
   }
 
   private withSessionLifecycle<T>(sessionId: string, operation: () => Promise<T>): Promise<T> {

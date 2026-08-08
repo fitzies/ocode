@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Delivery completion notification proposal</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #10100f;
+    --sidebar: #151513;
+    --panel: #1a1a18;
+    --raised: #1f1f1c;
+    --line: #30302c;
+    --soft: #282824;
+    --text: #f1f0eb;
+    --muted: #a3a198;
+    --faint: #737169;
+    --green: #6dd28e;
+    --green-bg: #17251b;
+    --blue: #76b9ed;
+    --amber: #e2b45f;
+    --amber-bg: #282116;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: transparent; }
+  body {
+    display: grid;
+    place-items: center;
+    padding: clamp(8px, 2.5vw, 26px);
+    color: var(--text);
+    font: 13px/1.4 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  button { color: inherit; font: inherit; }
+  .app {
+    width: min(1100px, 100%);
+    min-height: 720px;
+    display: grid;
+    grid-template-columns: 258px minmax(0,1fr);
+    overflow: hidden;
+    border: 1px solid #353530;
+    border-radius: 14px;
+    background: var(--bg);
+    box-shadow: 0 28px 85px rgba(0,0,0,.38);
+  }
+  .sidebar {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    border-right: 1px solid var(--soft);
+    background: var(--sidebar);
+  }
+  .brand { display: flex; align-items: center; gap: 9px; height: 54px; padding: 0 14px; border-bottom: 1px solid var(--soft); }
+  .brand-mark { display: grid; width: 25px; height: 25px; place-items: center; border: 1px solid #3b3b36; border-radius: 7px; background: var(--raised); font: 700 9px ui-monospace, monospace; }
+  .brand strong { font-size: 12px; letter-spacing: -.01em; }
+  .side-main { padding: 11px 9px; }
+  .project-select {
+    display: grid;
+    grid-template-columns: 22px minmax(0,1fr) auto;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    min-height: 34px;
+    padding: 0 8px;
+    border: 1px solid #373732;
+    border-radius: 7px;
+    background: #1b1b18;
+    text-align: left;
+  }
+  .project-icon { display: grid; width: 18px; height: 18px; place-items: center; border-radius: 5px; background: #292925; color: #d3d1ca; font: 700 8px ui-monospace, monospace; }
+  .project-select strong { overflow: hidden; font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+  .live-badge { display: inline-flex; align-items: center; gap: 5px; color: var(--green); font-size: 9px; }
+  .status-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
+  .deployment-note {
+    display: grid;
+    grid-template-columns: 18px minmax(0,1fr) auto;
+    align-items: center;
+    gap: 7px;
+    margin-top: 7px;
+    padding: 8px;
+    border: 1px solid #2d4b34;
+    border-radius: 7px;
+    background: var(--green-bg);
+    animation: note-in .45s .18s both;
+  }
+  .check-ring { display: grid; width: 17px; height: 17px; place-items: center; border: 1.5px solid var(--green); border-radius: 50%; color: var(--green); font-size: 10px; font-weight: 800; }
+  .deployment-note strong { display: block; overflow: hidden; color: #dfede3; font-size: 10px; white-space: nowrap; text-overflow: ellipsis; }
+  .deployment-note span { display: block; color: #86a68f; font-size: 8px; }
+  .deployment-note time { color: #86a68f; font-size: 8px; white-space: nowrap; }
+  .new-thread { width: 100%; height: 32px; margin-top: 10px; border: 1px solid #393934; border-radius: 7px; background: transparent; color: var(--muted); font-size: 10px; text-align: left; padding: 0 9px; }
+  .section-label { margin: 18px 7px 6px; color: var(--faint); font: 650 8px ui-monospace, monospace; letter-spacing: .14em; }
+  .thread { display: grid; gap: 3px; padding: 8px 9px; border-radius: 7px; color: var(--muted); }
+  .thread.active { background: #22221f; color: var(--text); }
+  .thread strong { overflow: hidden; font-size: 10px; font-weight: 570; white-space: nowrap; text-overflow: ellipsis; }
+  .thread span { color: var(--faint); font: 8px ui-monospace, monospace; }
+  .sidebar-foot { margin-top: auto; padding: 12px; border-top: 1px solid var(--soft); color: var(--faint); font-size: 9px; }
+
+  .main { position: relative; min-width: 0; overflow: hidden; background: #111110; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; height: 54px; padding: 0 16px; border-bottom: 1px solid var(--soft); }
+  .topbar strong { font-size: 12px; }
+  .repo-button { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 9px; border: 1px solid #315039; border-radius: 7px; background: var(--green-bg); font-size: 10px; }
+  .repo-button .status-dot { color: var(--green); }
+  .conversation { width: min(620px, 82%); margin: 52px auto; opacity: .36; }
+  .message { margin-bottom: 28px; }
+  .message b { display: block; margin-bottom: 7px; font-size: 11px; }
+  .line { height: 7px; margin: 7px 0; border-radius: 3px; background: #34342f; }
+  .line.short { width: 62%; }
+  .tool { margin-top: 16px; padding: 12px; border: 1px solid #33332e; border-radius: 8px; background: #181816; }
+
+  .toast {
+    position: absolute;
+    z-index: 3;
+    top: 68px;
+    right: 16px;
+    width: min(355px, calc(100% - 32px));
+    display: grid;
+    grid-template-columns: 24px minmax(0,1fr) auto;
+    gap: 10px;
+    align-items: start;
+    padding: 12px;
+    border: 1px solid #3b5a42;
+    border-radius: 10px;
+    background: #1b211c;
+    box-shadow: 0 15px 40px rgba(0,0,0,.4);
+    animation: toast-in .5s cubic-bezier(.2,.8,.2,1) both;
+  }
+  .toast-icon { display: grid; width: 23px; height: 23px; place-items: center; border-radius: 50%; background: #24412b; color: var(--green); font-size: 13px; font-weight: 800; }
+  .toast strong { display: block; font-size: 11px; }
+  .toast p { margin: 3px 0 0; color: var(--muted); font-size: 9px; }
+  .toast button { border: 0; background: transparent; color: var(--green); font-size: 9px; }
+
+  .popup {
+    position: absolute;
+    z-index: 2;
+    top: 111px;
+    right: 16px;
+    width: min(430px, calc(100% - 32px));
+    overflow: hidden;
+    border: 1px solid #41413b;
+    border-radius: 11px;
+    background: var(--panel);
+    box-shadow: 0 22px 60px rgba(0,0,0,.46);
+    animation: popup-in .48s .05s cubic-bezier(.2,.8,.2,1) both;
+  }
+  .popup-head { padding: 15px 16px 13px; }
+  .repo-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .repo-name { display: flex; align-items: center; gap: 8px; font-weight: 650; }
+  .gh { display: grid; width: 18px; height: 18px; place-items: center; border: 1px solid #484842; border-radius: 50%; color: var(--muted); font: 700 8px ui-monospace, monospace; }
+  .remote { color: var(--muted); font-size: 10px; }
+  .branch { margin: 5px 0 0 26px; color: var(--muted); font: 9px ui-monospace, monospace; }
+  .commit {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    gap: 4px 10px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--soft);
+    border-bottom: 1px solid var(--soft);
+    background: #1d1d1a;
+  }
+  .commit strong { overflow: hidden; font-size: 11px; white-space: nowrap; text-overflow: ellipsis; }
+  .sha { color: var(--blue); font: 10px ui-monospace, monospace; }
+  .commit p { grid-column: 1 / -1; margin: 0; color: var(--faint); font-size: 9px; }
+  .local {
+    display: grid;
+    grid-template-columns: minmax(0,1fr) auto;
+    gap: 4px 12px;
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--soft);
+  }
+  .kicker { font-size: 9px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .local p { margin: 0; color: var(--muted); font-size: 10px; }
+  .diff { grid-row: 1 / span 2; grid-column: 2; align-self: center; font: 10px ui-monospace, monospace; }
+  .add { color: var(--green); } .del { color: #ed7f79; }
+  .not-deployed { color: var(--amber); }
+  .delivery { padding: 13px 16px 11px; }
+  .delivery-title { display: flex; align-items: center; gap: 9px; }
+  .delivery-title strong { font-size: 13px; }
+  .delivery p { margin: 4px 0 0 26px; color: var(--muted); font-size: 9px; }
+  .group { padding: 0 16px 12px; }
+  .group + .group { padding-top: 11px; border-top: 1px solid var(--soft); }
+  .group-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+  .group-head strong { font-size: 9px; letter-spacing: .12em; text-transform: uppercase; }
+  .group-head span { color: var(--faint); font: 9px ui-monospace, monospace; }
+  .empty { padding: 9px 0; border-top: 1px solid var(--soft); color: var(--faint); font-size: 9px; }
+  .deploy-row {
+    display: grid;
+    grid-template-columns: 20px minmax(0,1fr) auto;
+    gap: 9px;
+    align-items: center;
+    min-height: 49px;
+    border-top: 1px solid var(--soft);
+  }
+  .vercel { display: grid; width: 19px; height: 19px; place-items: center; border: 1px solid #3c3c37; border-radius: 5px; background: var(--raised); font-size: 9px; }
+  .deploy-row strong { display: block; font-size: 11px; }
+  .deploy-row small { display: block; margin-top: 1px; color: var(--faint); font-size: 8px; }
+  .live { display: inline-flex; align-items: center; gap: 5px; color: var(--green); font-size: 9px; }
+  .popup-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 44px; padding: 0 16px; border-top: 1px solid var(--soft); color: var(--faint); font-size: 9px; }
+  .actions { display: flex; align-items: center; gap: 12px; color: var(--muted); }
+  .primary-action { color: var(--text); }
+  .recommendation {
+    grid-column: 1 / -1;
+    padding: 13px 16px;
+    border-top: 1px solid var(--soft);
+    background: #131311;
+    color: var(--muted);
+    font-size: 10px;
+  }
+  .recommendation b { color: var(--text); }
+  @keyframes toast-in { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
+  @keyframes popup-in { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
+  @keyframes note-in { from { opacity: 0; transform: translateX(-5px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+  @media (max-width: 760px) {
+    body { padding: 7px; }
+    .app { grid-template-columns: 1fr; min-height: 760px; }
+    .sidebar { display: none; }
+    .recommendation { grid-column: 1; }
+  }
+</style>
+</head>
+<body>
+<main class="app">
+  <aside class="sidebar" aria-label="Sidebar notification proposal">
+    <div class="brand"><span class="brand-mark">OC</span><strong>ocode</strong></div>
+    <div class="side-main">
+      <button class="project-select">
+        <span class="project-icon">LT</span>
+        <strong>localtap</strong>
+        <span class="live-badge"><i class="status-dot"></i>Live</span>
+      </button>
+
+      <div class="deployment-note" role="status">
+        <span class="check-ring">✓</span>
+        <div><strong>Production deployed</strong><span>b7d8c25 · Vercel</span></div>
+        <time>now</time>
+      </div>
+
+      <button class="new-thread">＋ New thread</button>
+      <div class="section-label">TODAY</div>
+      <div class="thread active"><strong>Standardize physical products on NFC cards</strong><span>localtap/main · now</span></div>
+      <div class="thread"><strong>Fix mobile product editor spacing</strong><span>localtap/main · 2h</span></div>
+      <div class="thread"><strong>Review checkout analytics events</strong><span>localtap/main · 1d</span></div>
+    </div>
+    <div class="sidebar-foot">Connected to Forge</div>
+  </aside>
+
+  <section class="main">
+    <header class="topbar">
+      <strong>Standardize physical products on NFC cards</strong>
+      <button class="repo-button"><i class="status-dot"></i>main · Live</button>
+    </header>
+
+    <div class="conversation" aria-hidden="true">
+      <div class="message"><b>You</b><div class="line"></div><div class="line short"></div></div>
+      <div class="message"><b>Pi</b><div class="line"></div><div class="line"></div><div class="line short"></div><div class="tool"><div class="line"></div><div class="line short"></div></div></div>
+    </div>
+
+    <div class="toast" role="status" aria-live="polite">
+      <span class="toast-icon">✓</span>
+      <div><strong>Production is live</strong><p>Local Tap · Vercel · commit b7d8c25</p></div>
+      <button>View</button>
+    </div>
+
+    <article class="popup" aria-label="Refined repository delivery popup">
+      <div class="popup-head">
+        <div class="repo-line"><span class="repo-name"><i class="gh">GH</i>Local Tap</span><span class="remote">fitzies/localtap ↗</span></div>
+        <div class="branch">main → origin/main</div>
+      </div>
+
+      <div class="commit">
+        <strong>Standardize physical products on NFC cards</strong>
+        <span class="sha">b7d8c25</span>
+        <p>Current pushed commit · branch up to date</p>
+      </div>
+
+      <div class="local">
+        <div><strong class="kicker">Local</strong><p>11 changed files · <span class="not-deployed">not included in this deployment</span></p></div>
+        <div class="diff"><span class="add">+347</span>&nbsp; <span class="del">−141</span></div>
+      </div>
+
+      <div class="delivery">
+        <div class="delivery-title"><span class="check-ring">✓</span><strong>Delivery complete</strong></div>
+        <p>1 production deployment succeeded · 0 active</p>
+      </div>
+
+      <section class="group">
+        <div class="group-head"><strong>CI checks</strong><span>0 reported</span></div>
+        <div class="empty">No CI checks were reported for this commit.</div>
+      </section>
+
+      <section class="group">
+        <div class="group-head"><strong>Deployments</strong><span>1 environment</span></div>
+        <div class="deploy-row">
+          <span class="vercel">▲</span>
+          <div><strong>Vercel · Production</strong><small>2 GitHub signals combined · localtap.vercel.app</small></div>
+          <span class="live"><i class="status-dot"></i>Live</span>
+        </div>
+      </section>
+
+      <footer class="popup-foot">
+        <span>Status for b7d8c25 · just now</span>
+        <span class="actions"><b class="primary-action">Commit &amp; push</b><span>Commit ↗</span><span>↻</span></span>
+      </footer>
+    </article>
+  </section>
+
+  <footer class="recommendation"><b>Recommended notification behavior:</b> show the toast once when a deployment changes from active to successful, retain the green sidebar item until it is seen, and optionally send a browser/OS notification only when ocode is in the background.</footer>
+</main>
+</body>
+</html>

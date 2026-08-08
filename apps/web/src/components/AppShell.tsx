@@ -1,4 +1,5 @@
 import {
+  isGeneralProject,
   resolveProjectResourceReference,
   type ArtifactReference,
   type CapabilityCatalog,
@@ -16,14 +17,13 @@ import {
   RefreshIcon,
   ServerStack01Icon,
   Settings01Icon,
-  Speaker01Icon,
   Sun03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { useTheme } from "@/components/theme-provider";
+import { type Accent, useTheme } from "@/components/theme-provider";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -63,19 +63,18 @@ import { subagentActivityForSession } from "../lib/subagentActivity";
 import { matchesShortcut } from "../lib/shortcuts";
 import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
-import { HeaderAudioPlayer } from "./HeaderAudioPlayer";
+import { DesktopUpdateDialog, isOcodeDesktop } from "./DesktopUpdateDialog";
 import { InteractionPanel } from "./InteractionDialog";
+import { NewProjectDialog } from "./NewProjectDialog";
 import { ProjectGitAction } from "./ProjectGitAction";
 import { Sidebar } from "./Sidebar";
 import { ShortcutsDialog } from "./ShortcutsDialog";
-import { SpeechProvider } from "./SpeechProvider";
 import { Timeline } from "./Timeline";
-import { VoiceSettingsDialog } from "./VoiceSettingsDialog";
 import { ProjectResourceSurface } from "./resource/ProjectResourceSurface";
 import { ProjectTerminalSurface } from "./terminal/ProjectTerminalSurface";
 import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
 import { WorkspaceSurfaceProvider, useWorkspaceSurfaces } from "./workspace/WorkspaceSurfaceState";
-import { DeleteThreadDialog, NewProjectDialog, ProjectsRootDialog, RenameThreadDialog } from "./WorkspaceDialogs";
+import { DeleteThreadDialog, ManageProjectsDialog, ProjectsRootDialog, RenameThreadDialog } from "./WorkspaceDialogs";
 
 const EMPTY_CATALOG: CapabilityCatalog = { models: [], commands: [], skills: [] };
 const DISPLAY_PREFERENCES_KEY = "ocode.display-preferences";
@@ -90,6 +89,16 @@ type DisplayPreferences = {
 };
 
 const DEFAULT_DISPLAY_PREFERENCES: DisplayPreferences = { fontSize: "default", width: "narrow" };
+const ACCENT_OPTIONS: Array<{ value: Accent; label: string; swatch: string }> = [
+  { value: "neutral", label: "Neutral", swatch: "bg-neutral-300 dark:bg-neutral-200" },
+  { value: "blue", label: "Blue", swatch: "bg-blue-400" },
+  { value: "cyan", label: "Cyan", swatch: "bg-cyan-400" },
+  { value: "emerald", label: "Emerald", swatch: "bg-emerald-400" },
+  { value: "amber", label: "Amber", swatch: "bg-amber-400" },
+  { value: "rose", label: "Rose", swatch: "bg-rose-400" },
+  { value: "pink", label: "Pink", swatch: "bg-pink-400" },
+  { value: "purple", label: "Purple", swatch: "bg-purple-400" },
+];
 
 function loadDisplayPreferences(): DisplayPreferences {
   try {
@@ -230,9 +239,7 @@ export function AppShell() {
       className="h-full min-h-0 overflow-hidden"
       style={{ "--sidebar-width": "17.625rem" } as CSSProperties}
     >
-      <SpeechProvider>
-        <AppShellContent />
-      </SpeechProvider>
+      <AppShellContent />
     </SidebarProvider>
   );
 }
@@ -245,17 +252,19 @@ function AppShellContent() {
     equalAppShellSnapshots,
   );
   const { isMobile, setOpenMobile } = useSidebar();
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, accent, setAccent } = useTheme();
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [newProjectOpen, setNewProjectOpen] = useState(false);
+  const [manageProjectsDialogOpen, setManageProjectsDialogOpen] = useState(false);
   const [projectsRootDialogOpen, setProjectsRootDialogOpen] = useState(false);
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
-  const [voiceSettingsDialogOpen, setVoiceSettingsDialogOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
   const [indicators, setIndicators] = useState<LiveIndicators>({});
   const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
+  const [desktopUpdateDialogOpen, setDesktopUpdateDialogOpen] = useState(false);
   const [rebuildState, setRebuildState] = useState<"idle" | "rebuilding">("idle");
   const [rebuildError, setRebuildError] = useState<string>();
   const [displayPreferences, setDisplayPreferences] = useState(loadDisplayPreferences);
@@ -267,6 +276,8 @@ function AppShellContent() {
   const activeProject = snapshot.projects.find(
     (project) => project.id === snapshot.workspaceLocation?.projectId,
   );
+  const activeProjectIsGeneral = isGeneralProject(activeProject);
+  const desktopClient = isOcodeDesktop();
   const activeSessionPending = activeSession
     ? anvilClient.isSessionPending(activeSession.id)
     : false;
@@ -540,6 +551,11 @@ function AppShellContent() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (matchesShortcut(event, "settings")) {
+        event.preventDefault();
+        setSettingsOpen(true);
+        return;
+      }
       if (isTerminalInputTarget(event.target)) return;
       if (matchesShortcut(event, "newThread")) {
         event.preventDefault();
@@ -624,15 +640,14 @@ function AppShellContent() {
             <div className="session-heading">
               <h1>
                 {activeSession ? (
-                  <><span className="session-heading-repo">{activeProject?.name.toLowerCase() ?? "unknown"}</span> / {activeSession.title}</>
-                ) : activeProject ? activeProject.name : "No project selected"}
+                  <><span className="session-heading-repo">{activeProjectIsGeneral ? "General · ~/" : activeProject?.name.toLowerCase() ?? "unknown"}</span> / {activeSession.title}</>
+                ) : activeProject ? activeProjectIsGeneral ? "General · ~/" : activeProject.name : "No project selected"}
               </h1>
             </div>
           </div>
 
           <div className="header-actions">
-            <HeaderAudioPlayer />
-            {activeProject && (
+            {activeProject && !activeProjectIsGeneral && (
               <ProjectGitAction
                 key={activeProject.id}
                 projectId={activeProject.id}
@@ -642,7 +657,13 @@ function AppShellContent() {
               />
             )}
             {activeProject && <TerminalSurfaceToggle isMobile={isMobile} />}
-            <DropdownMenu onOpenChange={(open) => open && setRebuildError(undefined)}>
+            <DropdownMenu
+              open={settingsOpen}
+              onOpenChange={(open) => {
+                setSettingsOpen(open);
+                if (open) setRebuildError(undefined);
+              }}
+            >
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon-sm" className="header-outline-control" aria-label="Forge settings">
                   <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
@@ -656,11 +677,22 @@ function AppShellContent() {
                     {theme === "dark" ? <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} /> : theme === "light" ? <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} /> : <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />}
                     Appearance
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
+                  <DropdownMenuSubContent className="w-44">
+                    <DropdownMenuLabel className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Theme</DropdownMenuLabel>
                     <DropdownMenuRadioGroup value={theme} onValueChange={(value) => setTheme(value as "system" | "light" | "dark")}>
                       <DropdownMenuRadioItem value="system"><HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />System</DropdownMenuRadioItem>
                       <DropdownMenuRadioItem value="light"><HugeiconsIcon icon={Sun03Icon} strokeWidth={2} />Light</DropdownMenuRadioItem>
                       <DropdownMenuRadioItem value="dark"><HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />Dark</DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Accent</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup value={accent} onValueChange={(value) => setAccent(value as Accent)}>
+                      {ACCENT_OPTIONS.map((option) => (
+                        <DropdownMenuRadioItem key={option.value} value={option.value}>
+                          <span className={`size-2.5 rounded-full ring-1 ring-black/10 ${option.swatch}`} aria-hidden="true" />
+                          {option.label}
+                        </DropdownMenuRadioItem>
+                      ))}
                     </DropdownMenuRadioGroup>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
@@ -696,25 +728,31 @@ function AppShellContent() {
                     </DropdownMenuRadioGroup>
                   </DropdownMenuSubContent>
                 </DropdownMenuSub>
-                <DropdownMenuItem onSelect={() => setVoiceSettingsDialogOpen(true)}>
-                  <HugeiconsIcon icon={Speaker01Icon} strokeWidth={2} />
-                  Voice settings
-                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={() => setShortcutsDialogOpen(true)}>
                   <span className="text-base leading-none" aria-hidden="true">⌨</span>
                   Keyboard shortcuts
                 </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setManageProjectsDialogOpen(true)}>
+                  <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
+                  Manage projects
+                </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => setProjectsRootDialogOpen(true)}>
                   <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
                   Projects root
                 </DropdownMenuItem>
+                {desktopClient && (
+                  <DropdownMenuItem onSelect={() => setDesktopUpdateDialogOpen(true)}>
+                    <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />
+                    Desktop updates
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   disabled={rebuildState === "rebuilding"}
                   onSelect={() => setRebuildDialogOpen(true)}
                 >
                   <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-                  Rebuild
+                  Rebuild web app
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -810,13 +848,28 @@ function AppShellContent() {
       </SidebarInset>
 
       <ShortcutsDialog open={shortcutsDialogOpen} onOpenChange={setShortcutsDialogOpen} />
-      <VoiceSettingsDialog open={voiceSettingsDialogOpen} onOpenChange={setVoiceSettingsDialogOpen} />
       {newProjectOpen && (
         <NewProjectDialog
           onClose={() => setNewProjectOpen(false)}
           onCreate={anvilClient.createProject}
+          onClone={anvilClient.cloneProject}
           onAddExisting={anvilClient.addExistingProject}
+          listGitHubRepositories={anvilClient.listGitHubRepositories}
           getProjectsRoot={anvilClient.getProjectsRoot}
+        />
+      )}
+      {manageProjectsDialogOpen && (
+        <ManageProjectsDialog
+          projects={snapshot.projects}
+          sessions={snapshot.sessions}
+          onClose={() => setManageProjectsDialogOpen(false)}
+          onRemove={async (projectId) => {
+            const project = anvilClient.getSnapshot().projects.find((candidate) => candidate.id === projectId);
+            await anvilClient.deleteProject(projectId);
+            toast.success("Project removed from ocode", {
+              description: project ? `${project.name} · Workspace files remain on disk.` : "Workspace files remain on disk.",
+            });
+          }}
         />
       )}
       {projectsRootDialogOpen && (
@@ -843,6 +896,9 @@ function AppShellContent() {
           onClose={closeDeleteDialog}
           onDelete={() => anvilClient.deleteSession(sessionPendingDeletion.id)}
         />
+      )}
+      {desktopClient && (
+        <DesktopUpdateDialog open={desktopUpdateDialogOpen} onOpenChange={setDesktopUpdateDialogOpen} />
       )}
       <AlertDialog open={rebuildDialogOpen} onOpenChange={(open) => !open && rebuildState !== "rebuilding" && setRebuildDialogOpen(false)}>
         <AlertDialogContent onEscapeKeyDown={(event) => rebuildState === "rebuilding" && event.preventDefault()}>

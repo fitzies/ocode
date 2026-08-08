@@ -140,7 +140,7 @@ function GeneralSettings({ theme }: Pick<SettingsPageProps, "theme">) {
         <SettingRow title="Resume last thread" description="Open the most recently viewed thread when ocode starts.">
           <PreviewSwitch checked label="Resume last thread" />
         </SettingRow>
-        <SettingRow title="Confirm destructive actions" description="Ask before deleting threads, workspaces, or cached data.">
+        <SettingRow title="Confirm destructive actions" description="Ask before deleting threads, removing projects, or clearing cached data.">
           <PreviewSwitch checked label="Confirm destructive actions" />
         </SettingRow>
       </SettingsGroup>

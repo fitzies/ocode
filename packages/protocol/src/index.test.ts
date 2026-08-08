@@ -3,21 +3,85 @@ import { describe, expect, it } from "vitest";
 import {
   ANVIL_PROTOCOL_VERSION,
   decodeAnvilEvent,
+  GENERAL_PROJECT_ID,
   isAnvilBootstrap,
   isAnvilClientCommand,
   isAnvilEvent,
   isAnvilSessionDetailSync,
   isAnvilSummaryBootstrap,
+  isGeneralProject,
+  isGitHubRepositoryPage,
+  isGitHubRepositorySummary,
   isJsonValue,
   normalizeProjectSlug,
+  provisionalSessionTitleFromPrompt,
 } from "./index";
 
 describe("protocol runtime guards", () => {
+  it("builds a compact provisional title from the first prompt", () => {
+    expect(provisionalSessionTitleFromPrompt("  Fix   the sidebar\nwhile Pi names this thread  "))
+      .toBe("Fix the sidebar while Pi names this…");
+    expect(provisionalSessionTitleFromPrompt("Ship it")).toBe("Ship it");
+    expect(provisionalSessionTitleFromPrompt("😀".repeat(37))).toBe(`${"😀".repeat(35)}…`);
+  });
+
+  it("identifies reserved and adopted General workspaces", () => {
+    expect(isGeneralProject({ id: GENERAL_PROJECT_ID })).toBe(true);
+    expect(isGeneralProject({ id: "existing-home", workspaceKind: "general" })).toBe(true);
+    expect(isGeneralProject({ id: "project", workspaceKind: "folder" })).toBe(false);
+  });
+
   it("accepts JSON-compatible arbitrary extension details", () => {
     expect(isJsonValue({ nested: ["value", 3, true, null] })).toBe(true);
     expect(isJsonValue({ invalid: undefined })).toBe(false);
     expect(isJsonValue(Number.NaN)).toBe(false);
     expect(isJsonValue(Number.POSITIVE_INFINITY)).toBe(false);
+  });
+
+  it("validates shared GitHub repository summaries", () => {
+    const repository = {
+      nameWithOwner: "organization/private-tools",
+      name: "private-tools",
+      owner: "organization",
+      private: true,
+      updatedAt: "2026-07-23T01:00:00Z",
+    };
+    expect(isGitHubRepositorySummary(repository)).toBe(true);
+    expect(isGitHubRepositorySummary({ ...repository, extra: true })).toBe(true);
+    expect(isGitHubRepositorySummary({ ...repository, private: "yes" })).toBe(false);
+    expect(isGitHubRepositorySummary({ ...repository, updatedAt: undefined })).toBe(false);
+    expect(isGitHubRepositorySummary({ ...repository, updatedAt: "not-a-date" })).toBe(false);
+    expect(isGitHubRepositorySummary({ ...repository, owner: "" })).toBe(false);
+    expect(isGitHubRepositorySummary({ ...repository, name: "private tools" })).toBe(false);
+    for (const name of ["-private-tools", ".git", "..git", "...git"]) {
+      expect(isGitHubRepositorySummary({
+        ...repository,
+        name,
+        nameWithOwner: `organization/${name}`,
+      })).toBe(false);
+    }
+    expect(isGitHubRepositorySummary({ ...repository, nameWithOwner: "other/private-tools" })).toBe(false);
+    expect(isGitHubRepositorySummary({ ...repository, nameWithOwner: "organization/private-tools/extra" })).toBe(false);
+  });
+
+  it("validates paginated GitHub repository responses", () => {
+    const page = {
+      repositories: [{
+        nameWithOwner: "organization/private-tools",
+        name: "private-tools",
+        owner: "organization",
+        private: true,
+        updatedAt: "2026-07-23T01:00:00Z",
+      }],
+      page: 2,
+      hasMore: true,
+    };
+    expect(isGitHubRepositoryPage(page)).toBe(true);
+    expect(isGitHubRepositoryPage({ ...page, extra: true })).toBe(true);
+    expect(isGitHubRepositoryPage({ ...page, repositories: [{}] })).toBe(false);
+    expect(isGitHubRepositoryPage({ ...page, page: 0 })).toBe(false);
+    expect(isGitHubRepositoryPage({ ...page, page: 1.5 })).toBe(false);
+    expect(isGitHubRepositoryPage({ ...page, hasMore: "yes" })).toBe(false);
   });
 
   it("requires future event names to use the explicit unknown fallback", () => {
@@ -43,6 +107,21 @@ describe("protocol runtime guards", () => {
         payload: { eventType: "future.extension.event", payload: { arbitrary: true } },
       }),
     ).toBe(true);
+  });
+
+  it("accepts durable project removal only at project scope", () => {
+    const event = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-project-deleted",
+      sequence: 1,
+      sessionId: null,
+      timestamp: "2026-07-21T08:00:00.000Z",
+      type: "project.deleted",
+      payload: { projectId: "anvil" },
+    };
+    expect(isAnvilEvent(event)).toBe(true);
+    expect(isAnvilEvent({ ...event, sessionId: "session-1" })).toBe(false);
+    expect(isAnvilEvent({ ...event, payload: {} })).toBe(false);
   });
 
   it("validates client commands at the wire boundary", () => {
@@ -90,10 +169,46 @@ describe("protocol runtime guards", () => {
     })).toBe(true);
     expect(isAnvilClientCommand({
       ...command,
+      type: "project.clone",
+      sessionId: null,
+      payload: { name: "Ocode", repository: "owner/ocode" },
+    })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "project.clone",
+      sessionId: null,
+      payload: { name: "Ocode" },
+    })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "project.clone",
+      sessionId: "session-1",
+      payload: { name: "Ocode", repository: "owner/ocode" },
+    })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "project.clone",
+      sessionId: null,
+      payload: { name: "Ocode", repository: "owner/ocode", path: "/tmp/ocode" },
+    })).toBe(false);
+    expect(isAnvilClientCommand({
+      ...command,
       type: "project.addExisting",
       sessionId: null,
       payload: { name: "Existing Project", path: "/code/existing-project" },
     })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "project.delete",
+      sessionId: null,
+      payload: { projectId: "anvil" },
+    })).toBe(true);
+    expect(isAnvilClientCommand({
+      ...command,
+      type: "project.delete",
+      sessionId: "session-1",
+      payload: { projectId: "anvil" },
+    })).toBe(false);
     expect(isAnvilClientCommand({
       ...command,
       type: "session.create",

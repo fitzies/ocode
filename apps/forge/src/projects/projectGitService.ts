@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import type {
   ProjectGitCheck,
   ProjectGitCheckState,
+  ProjectGitCommitStatus,
   ProjectGitConnectRequest,
   ProjectGitConnectResult,
   ProjectGitGeneratedMessage,
@@ -186,19 +187,36 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
 
+function safeWebUrl(value: unknown): string | undefined {
+  const raw = stringValue(value);
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function checkState(item: Record<string, unknown>): ProjectGitCheckState {
   const status = stringValue(item.status)?.toUpperCase();
   const conclusion = stringValue(item.conclusion)?.toUpperCase();
   const state = stringValue(item.state)?.toUpperCase();
-  if (status === "QUEUED" || state === "EXPECTED") return "queued";
-  if (status === "IN_PROGRESS" || status === "PENDING" || state === "PENDING") return "running";
+  if (["QUEUED", "WAITING", "REQUESTED"].includes(status ?? "") || ["EXPECTED", "QUEUED", "WAITING", "REQUESTED"].includes(state ?? "")) return "queued";
+  if (status === "IN_PROGRESS" || status === "PENDING" || state === "PENDING" || state === "IN_PROGRESS") return "running";
   const result = conclusion ?? state;
   if (result === "SUCCESS") return "passed";
   if (["FAILURE", "ERROR", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(result ?? "")) return "failed";
   if (result === "CANCELLED") return "cancelled";
   if (result === "SKIPPED") return "skipped";
-  if (result === "NEUTRAL" || result === "STALE") return "neutral";
+  if (["NEUTRAL", "STALE", "INACTIVE"].includes(result ?? "")) return "neutral";
   return "unknown";
+}
+
+function checkKind(category: string): ProjectGitCheck["kind"] {
+  if (/agent|copilot|review bot/i.test(category)) return "agent";
+  if (/deploy|deployment|preview|vercel|netlify|pages|railway|convex|render|cloudflare|fly\.io/i.test(category)) return "deployment";
+  return "check";
 }
 
 function normalizedCheck(value: unknown): ProjectGitCheck | undefined {
@@ -206,21 +224,109 @@ function normalizedCheck(value: unknown): ProjectGitCheck | undefined {
   const item = value as Record<string, unknown>;
   const name = stringValue(item.name) ?? stringValue(item.context);
   if (!name) return undefined;
-  const workflow = stringValue(item.workflowName);
+  const app = item.app && typeof item.app === "object" && !Array.isArray(item.app)
+    ? item.app as Record<string, unknown>
+    : undefined;
+  const workflow = stringValue(item.workflowName) ?? stringValue(app?.name);
   const category = `${workflow ?? ""} ${name}`;
-  const kind = /agent|copilot|review bot/i.test(category)
-    ? "agent"
-    : /deploy|deployment|preview|vercel|netlify|pages/i.test(category) ? "deployment" : "check";
-  const url = stringValue(item.detailsUrl) ?? stringValue(item.targetUrl);
+  const url = safeWebUrl(item.detailsUrl) ?? safeWebUrl(item.details_url) ?? safeWebUrl(item.targetUrl) ?? safeWebUrl(item.target_url);
+  const startedAt = stringValue(item.startedAt) ?? stringValue(item.started_at) ?? stringValue(item.created_at);
+  const completedAt = stringValue(item.completedAt) ?? stringValue(item.completed_at);
   return {
     name,
-    kind,
+    kind: checkKind(category),
     state: checkState(item),
     ...(url ? { url } : {}),
     ...(workflow ? { workflow } : {}),
-    ...(stringValue(item.startedAt) ? { startedAt: stringValue(item.startedAt)! } : {}),
-    ...(stringValue(item.completedAt) ? { completedAt: stringValue(item.completedAt)! } : {}),
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { completedAt } : {}),
   };
+}
+
+function parseArray(output: string, label: string): unknown[] {
+  const parsed = JSON.parse(output) as unknown;
+  if (!Array.isArray(parsed)) throw new Error(`GitHub returned an invalid ${label} response`);
+  return parsed;
+}
+
+function deploymentProvider(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const login = stringValue((value as Record<string, unknown>).login)?.replace(/\[bot\]$/i, "").replace(/[-_]bot$/i, "");
+  if (!login) return undefined;
+  const known = /^(vercel|railway|netlify|render|convex)$/i.exec(login)?.[1];
+  return known ? `${known[0]!.toUpperCase()}${known.slice(1).toLowerCase()}` : login;
+}
+
+function normalizedDeployment(deploymentValue: unknown, statusValue: unknown): ProjectGitCheck | undefined {
+  if (!deploymentValue || typeof deploymentValue !== "object" || Array.isArray(deploymentValue)) return undefined;
+  const deployment = deploymentValue as Record<string, unknown>;
+  const hasStatus = Boolean(statusValue && typeof statusValue === "object" && !Array.isArray(statusValue));
+  const status = hasStatus ? statusValue as Record<string, unknown> : {};
+  const environment = stringValue(deployment.environment) ?? "Deployment";
+  const provider = deploymentProvider(status.creator) ?? deploymentProvider(deployment.creator);
+  const name = provider ? `${provider} · ${environment}` : environment;
+  const workflow = stringValue(status.description) ?? stringValue(deployment.description) ?? stringValue(deployment.task);
+  const url = safeWebUrl(status.environment_url) ?? safeWebUrl(status.target_url);
+  const startedAt = stringValue(deployment.created_at);
+  const state = hasStatus ? checkState(status) : "queued";
+  const completedAt = ["passed", "failed", "cancelled", "skipped", "neutral"].includes(state)
+    ? stringValue(status.updated_at) ?? stringValue(status.created_at)
+    : undefined;
+  return {
+    name,
+    kind: "deployment",
+    state,
+    ...(url ? { url } : {}),
+    ...(workflow && workflow !== name ? { workflow } : {}),
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { completedAt } : {}),
+    ...(!hasStatus ? { awaitingStatus: true } : {}),
+  };
+}
+
+function consolidateChecks(checks: ProjectGitCheck[]): ProjectGitCheck[] {
+  const seen = new Set<string>();
+  const unique = checks.filter((check) => {
+    const key = `${check.kind}:${check.workflow?.toLowerCase() ?? ""}:${check.name.toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const consumed = new Set<number>();
+  const merged = new Map<number, ProjectGitCheck>();
+  const priority: Record<ProjectGitCheckState, number> = {
+    failed: 7,
+    running: 6,
+    queued: 5,
+    cancelled: 4,
+    unknown: 4,
+    passed: 3,
+    neutral: 2,
+    skipped: 1,
+  };
+  for (const [index, check] of unique.entries()) {
+    if (check.kind !== "deployment" || !check.name.includes(" · ")) continue;
+    const provider = check.name.split(" · ", 1)[0]!.trim().toLowerCase();
+    const matches = unique
+      .map((candidate, candidateIndex) => ({ candidate, candidateIndex }))
+      .filter(({ candidate, candidateIndex }) => candidateIndex !== index &&
+        candidate.kind === "deployment" &&
+        !candidate.name.includes(" · ") &&
+        [candidate.name, candidate.workflow].some((value) => value?.trim().toLowerCase() === provider));
+    if (matches.length === 0) continue;
+    for (const match of matches) consumed.add(match.candidateIndex);
+    const signals = [check, ...matches.map(({ candidate }) => candidate)];
+    const authoritativeSignals = signals.filter((signal) => !signal.awaitingStatus);
+    const stateSignals = authoritativeSignals.length > 0 ? authoritativeSignals : signals;
+    const state = stateSignals.reduce((result, signal) => priority[signal.state] > priority[result] ? signal.state : result, stateSignals[0]!.state);
+    merged.set(index, {
+      ...check,
+      state,
+      signalCount: signals.reduce((count, signal) => count + (signal.signalCount ?? 1), 0),
+      ...(authoritativeSignals.length === 0 ? { awaitingStatus: true } : { awaitingStatus: undefined }),
+    });
+  }
+  return unique.flatMap((check, index) => consumed.has(index) ? [] : [merged.get(index) ?? check]);
 }
 
 function normalizedPullRequest(value: unknown): ProjectGitPullRequest | undefined {
@@ -272,6 +378,7 @@ function safeRemoteError(error: unknown): string {
 
 export class ProjectGitService {
   private readonly activeOperations = new Set<string>();
+  private readonly githubCommitCache = new Map<string, { expiresAt: number; result: { commit: ProjectGitCommitStatus; errors: unknown[] } }>();
 
   constructor(
     private readonly projects: ProjectResolver,
@@ -665,9 +772,14 @@ export class ProjectGitService {
     else state = { ...base, action: "up-to-date" };
 
     if (includeRemoteStatus && remote?.provider === "github" && remote.owner && remote.repository) {
-      try {
-        const repository = `${remote.owner}/${remote.repository}`;
-        const output = await this.gh(project.path, [
+      const repository = `${remote.owner}/${remote.repository}`;
+      const pushedCommit = upstream
+        ? lastCommit(await this.tryGit(project.path, ["show", "-s", "--format=%H%x00%h%x00%s%x00%aI", upstream]))
+        : null;
+      const errors: unknown[] = [];
+      let pullRequest: ProjectGitPullRequest | null = null;
+      const pullRequestResult = await Promise.allSettled([
+        this.gh(project.path, [
           "pr",
           "list",
           "--repo",
@@ -680,15 +792,137 @@ export class ProjectGitService {
           "1",
           "--json",
           "number,title,url,state,isDraft,mergeable,reviewDecision,baseRefName,updatedAt,statusCheckRollup",
-        ]);
-        const parsed = JSON.parse(output) as unknown;
-        if (!Array.isArray(parsed)) throw new Error("GitHub returned an invalid pull request response");
-        state.github = { pullRequest: normalizedPullRequest(parsed[0]) ?? null };
-      } catch (error) {
-        state.remoteStatusError = safeRemoteError(error);
-      }
+        ]),
+        pushedCommit
+          ? this.githubCommitStatus(project.path, remote.owner, remote.repository, pushedCommit)
+          : Promise.resolve({ commit: null, errors: [] }),
+      ]);
+      const prResponse = pullRequestResult[0];
+      if (prResponse.status === "fulfilled") {
+        try {
+          const parsed = JSON.parse(prResponse.value) as unknown;
+          if (!Array.isArray(parsed)) throw new Error("GitHub returned an invalid pull request response");
+          pullRequest = normalizedPullRequest(parsed[0]) ?? null;
+        } catch (error) {
+          errors.push(error);
+        }
+      } else errors.push(prResponse.reason);
+      const commitResponse = pullRequestResult[1];
+      let commit: ProjectGitCommitStatus | null = null;
+      if (commitResponse.status === "fulfilled") {
+        commit = commitResponse.value.commit;
+        errors.push(...commitResponse.value.errors);
+      } else errors.push(commitResponse.reason);
+      state.github = { pullRequest, commit };
+      if (errors.length > 0) state.remoteStatusError = safeRemoteError(errors[0]);
     }
     return state;
+  }
+
+  private async githubCommitStatus(
+    cwd: string,
+    owner: string,
+    repository: string,
+    commit: ProjectGitLastCommit,
+  ): Promise<{ commit: ProjectGitCommitStatus; errors: unknown[] }> {
+    const cacheKey = `${owner.toLowerCase()}/${repository.toLowerCase()}:${commit.hash}`;
+    const cached = this.githubCommitCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+    if (cached) this.githubCommitCache.delete(cacheKey);
+    const errors: unknown[] = [];
+    const apiRepository = `repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}`;
+    const [checkRunsResult, statusesResult, deploymentsResult] = await Promise.allSettled([
+      this.githubApiItems(cwd, `${apiRepository}/commits/${commit.hash}/check-runs?per_page=100`, "check_runs", "check runs"),
+      this.githubApiItems(cwd, `${apiRepository}/commits/${commit.hash}/statuses?per_page=100`, undefined, "commit statuses"),
+      this.githubApiItems(cwd, `${apiRepository}/deployments?sha=${commit.hash}&per_page=100`, undefined, "deployments"),
+    ]);
+    const checks: ProjectGitCheck[] = [];
+    if (checkRunsResult.status === "fulfilled") {
+      checks.push(...checkRunsResult.value
+        .map(normalizedCheck)
+        .filter((check): check is ProjectGitCheck => Boolean(check)));
+    } else errors.push(checkRunsResult.reason);
+    if (statusesResult.status === "fulfilled") {
+      checks.push(...statusesResult.value
+        .map(normalizedCheck)
+        .filter((check): check is ProjectGitCheck => Boolean(check)));
+    } else errors.push(statusesResult.reason);
+
+    const deployments = deploymentsResult.status === "fulfilled" ? deploymentsResult.value : [];
+    if (deploymentsResult.status === "rejected") errors.push(deploymentsResult.reason);
+    const latestDeployments = deployments.filter((deployment, index, values) => {
+      if (!deployment || typeof deployment !== "object" || Array.isArray(deployment)) return true;
+      const item = deployment as Record<string, unknown>;
+      const environment = stringValue(item.environment) ?? "";
+      const creator = item.creator && typeof item.creator === "object" && !Array.isArray(item.creator)
+        ? stringValue((item.creator as Record<string, unknown>).login) ?? ""
+        : "";
+      const key = `${creator.toLowerCase()}:${environment.toLowerCase()}`;
+      return values.findIndex((candidate) => {
+        if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return false;
+        const candidateItem = candidate as Record<string, unknown>;
+        const candidateEnvironment = stringValue(candidateItem.environment) ?? "";
+        const candidateCreator = candidateItem.creator && typeof candidateItem.creator === "object" && !Array.isArray(candidateItem.creator)
+          ? stringValue((candidateItem.creator as Record<string, unknown>).login) ?? ""
+          : "";
+        return `${candidateCreator.toLowerCase()}:${candidateEnvironment.toLowerCase()}` === key;
+      }) === index;
+    });
+    const deploymentResults: PromiseSettledResult<ProjectGitCheck | undefined>[] = [];
+    for (let index = 0; index < latestDeployments.length; index += 4) {
+      const batch = latestDeployments.slice(index, index + 4);
+      deploymentResults.push(...await Promise.allSettled(batch.map(async (deployment) => {
+        if (!deployment || typeof deployment !== "object" || Array.isArray(deployment)) {
+          throw new Error("GitHub returned an invalid deployment response");
+        }
+        const id = (deployment as Record<string, unknown>).id;
+        if (typeof id !== "number" || !Number.isSafeInteger(id)) throw new Error("GitHub returned an invalid deployment response");
+        const output = await this.gh(cwd, ["api", `${apiRepository}/deployments/${id}/statuses?per_page=1`]);
+        return normalizedDeployment(deployment, parseArray(output, "deployment status")[0]);
+      })));
+    }
+    for (const result of deploymentResults) {
+      if (result.status === "fulfilled") {
+        if (result.value) checks.push(result.value);
+      } else errors.push(result.reason);
+    }
+
+    const normalizedChecks = consolidateChecks(checks);
+    const result = {
+      commit: {
+        hash: commit.hash,
+        shortHash: commit.shortHash,
+        subject: commit.subject,
+        url: `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/commit/${commit.hash}`,
+        checks: normalizedChecks,
+        complete: errors.length === 0,
+      },
+      errors,
+    };
+    const active = normalizedChecks.length === 0 || normalizedChecks.some((check) => check.state === "queued" || check.state === "running");
+    if (this.githubCommitCache.size >= 100) this.githubCommitCache.delete(this.githubCommitCache.keys().next().value!);
+    this.githubCommitCache.set(cacheKey, { expiresAt: Date.now() + (active || errors.length > 0 ? 5_000 : 45_000), result });
+    return result;
+  }
+
+  private async githubApiItems(
+    cwd: string,
+    endpoint: string,
+    collection: string | undefined,
+    label: string,
+  ): Promise<unknown[]> {
+    const items: unknown[] = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const output = await this.gh(cwd, ["api", `${endpoint}&page=${page}`]);
+      const parsed = JSON.parse(output) as unknown;
+      const values = collection && parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)[collection]
+        : parsed;
+      if (!Array.isArray(values)) throw new Error(`GitHub returned an invalid ${label} response`);
+      items.push(...values);
+      if (values.length < 100) return items;
+    }
+    throw new Error(`GitHub returned too many ${label} pages`);
   }
 
   private assertCommitable(state: GitState): void {

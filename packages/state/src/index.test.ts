@@ -295,6 +295,48 @@ describe("Anvil event reducer", () => {
     expect(snapshot.composerDrafts[session.id]).toBeUndefined();
   });
 
+  it("cascades project removal through every session-scoped collection", () => {
+    const removedSession = session;
+    const keptSession = { ...session, id: "session-2", projectId: "project-2", title: "Keep" };
+    let snapshot = createEmptySnapshot({
+      projects: [
+        { id: "project-1", name: "Remove", path: "/repo/remove" },
+        { id: "project-2", name: "Keep", path: "/repo/keep" },
+      ],
+      sessions: [removedSession, keptSession],
+      activeSessionId: removedSession.id,
+    });
+    snapshot = {
+      ...snapshot,
+      timelines: { ...snapshot.timelines, [removedSession.id]: [{
+        id: "message-1", kind: "message", role: "user", content: [], status: "complete", createdAt: session.updatedAt,
+      }] },
+      pendingInteractions: [{
+        id: "request-1", sessionId: removedSession.id, method: "confirm", title: "Continue?", requestedAt: session.updatedAt,
+      }],
+      extensionStatuses: [{ sessionId: removedSession.id, key: "status", text: "Busy", updatedAt: session.updatedAt }],
+      widgets: [{ sessionId: removedSession.id, key: "widget", lines: ["Busy"], placement: "aboveEditor", updatedAt: session.updatedAt }],
+      composerDrafts: { [removedSession.id]: "remove", [keptSession.id]: "keep" },
+    };
+
+    snapshot = applyAnvilEvent(snapshot, {
+      ...event(1, "project.deleted", { projectId: "project-1" }),
+      sessionId: null,
+    });
+
+    expect(snapshot.projects.map((project) => project.id)).toEqual(["project-2"]);
+    expect(snapshot.sessions.map((candidate) => candidate.id)).toEqual([keptSession.id]);
+    expect(snapshot.activeSessionId).toBe(keptSession.id);
+    expect(snapshot.timelines[removedSession.id]).toBeUndefined();
+    expect(snapshot.catalogs[removedSession.id]).toBeUndefined();
+    expect(snapshot.queues[removedSession.id]).toBeUndefined();
+    expect(snapshot.runStates[removedSession.id]).toBeUndefined();
+    expect(snapshot.composerDrafts).toEqual({ [keptSession.id]: "keep" });
+    expect(snapshot.pendingInteractions).toEqual([]);
+    expect(snapshot.extensionStatuses).toEqual([]);
+    expect(snapshot.widgets).toEqual([]);
+  });
+
   it("correlates parallel tool updates by tool call id", () => {
     let snapshot = createEmptySnapshot({ sessions: [session] });
     for (const [sequence, toolCallId] of [[1, "a"], [2, "b"]] as const) {

@@ -22,6 +22,7 @@ import { ForgeDatabase } from "../store/database.ts";
 export class ForgeEventService extends EventEmitter {
   private snapshot: AnvilSnapshot;
   private eventsSinceSnapshot = 0;
+  private generalProjectId?: string;
 
   constructor(
     private readonly database: ForgeDatabase,
@@ -30,7 +31,7 @@ export class ForgeEventService extends EventEmitter {
     private readonly snapshotInterval = 250,
   ) {
     super();
-    database.syncProjects(projects);
+    database.seedConfigProjectsOnce(projects);
     const persistedProjects = database.listProjects().map((project) => ({
       ...project,
       workspaceKind: detectProjectWorkspaceKind(project.path),
@@ -69,6 +70,19 @@ export class ForgeEventService extends EventEmitter {
         );
       }
     }
+  }
+
+  markGeneralProject(projectId: string): void {
+    if (!this.snapshot.projects.some((project) => project.id === projectId)) {
+      throw new Error("General project not found");
+    }
+    this.generalProjectId = projectId;
+    this.snapshot = {
+      ...this.snapshot,
+      projects: this.snapshot.projects.map((project) => project.id === projectId
+        ? { ...project, workspaceKind: "general" }
+        : project),
+    };
   }
 
   currentSnapshot(): AnvilSnapshot {
@@ -201,6 +215,15 @@ export class ForgeEventService extends EventEmitter {
     const committed = this.database.createProjectWithEvent(project, event);
     this.acceptCommitted([committed]);
     return committed;
+  }
+
+  deleteProject(projectId: string, event: UnsequencedAnvilEvent): { sessionIds: string[] } {
+    if (projectId === this.generalProjectId) throw new Error("The General home workspace cannot be removed");
+    const deleted = this.database.deleteProjectWithEvent(projectId, event);
+    this.acceptCommitted([deleted.event]);
+    this.artifacts?.remove(deleted.artifactIds);
+    this.checkpoint(true);
+    return { sessionIds: deleted.sessionIds };
   }
 
   createSession(session: SessionSummary, event: UnsequencedAnvilEvent): AnvilEvent {

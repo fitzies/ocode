@@ -32,7 +32,6 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { assistantMarkdown } from "../lib/speechText";
 import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
 import { MarkdownText } from "./MarkdownText";
 import { MessageActions } from "./MessageActions";
@@ -349,7 +348,12 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
       : entry.content.filter((block) => block.type !== "toolCall");
     if (!visibleContent.length && !entry.error && entry.status !== "streaming") return null;
     const messageClass = entry.role === "user" ? "user-message" : entry.role === "assistant" ? "assistant-message" : "system-message";
-    const responseMarkdown = entry.role === "assistant" && entry.status === "complete" ? assistantMarkdown(entry.content) : "";
+    const responseMarkdown = entry.role === "assistant" && entry.status === "complete"
+      ? entry.content
+        .filter((block): block is Extract<ContentBlock, { type: "text" }> => block.type === "text")
+        .map((block) => block.text)
+        .join("\n\n")
+      : "";
     const showResponseActions = responseMarkdown.trim().length > 0;
     return (
       <article className={`${messageClass} message-status--${entry.status}${entranceClass}`}>
@@ -359,7 +363,7 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
               {entry.raw && typeof entry.raw === "object" && !Array.isArray(entry.raw) && entry.raw.delivery === "steer" ? "Queueing…" : "Sending…"}
             </span>
           : entry.status === "streaming" && hasVisibleContent(visibleContent) && <span className="stream-caret" aria-label="Streaming" />}
-        {showResponseActions && <MessageActions messageId={entry.id} markdown={responseMarkdown} />}
+        {showResponseActions && <MessageActions markdown={responseMarkdown} />}
         {entry.error && <div className="message-error">{entry.error}</div>}
         {(entry.role === "extension" || entry.status === "failed") && <JsonDetails label="Raw message" value={entry.raw} />}
       </article>

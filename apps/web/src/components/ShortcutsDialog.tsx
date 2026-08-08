@@ -15,6 +15,7 @@ const groups: { title: string; items: [ShortcutId, string, string][] }[] = [
   ] },
   { title: "Navigation", items: [
     ["search", "Search threads", "Open thread search."],
+    ["settings", "Open settings", "Open the Forge settings menu."],
     ["toggleSidebar", "Toggle sidebar", "Open or collapse the app sidebar."],
     ["terminal", "Toggle terminal", "Show or hide the project terminal."],
     ...Array.from({ length: 9 }, (_, index) => [`thread${index + 1}` as ShortcutId, `Open thread ${index + 1}`, `Jump to thread ${index + 1} in the list.`] as [ShortcutId, string, string]),

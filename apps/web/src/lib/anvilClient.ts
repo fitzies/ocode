@@ -1,11 +1,14 @@
 import {
   ANVIL_PROTOCOL_VERSION,
   decodeAnvilEvent,
+  DEFAULT_SESSION_TITLE,
   isAnvilBootstrap,
   isAnvilSessionDetailSync,
   isAnvilSummaryBootstrap,
+  isGitHubRepositoryPage,
   normalizeProjectSlug,
   normalizeSessionTitle,
+  provisionalSessionTitleFromPrompt,
   SESSION_TITLE_MAX_LENGTH,
   type AnvilClientCommand,
   type AnvilCommandResponse,
@@ -13,6 +16,8 @@ import {
   type AnvilSessionDetail,
   type AnvilSnapshot,
   type ArtifactReference,
+  type GitHubRepositoryPage,
+  type GitHubRepositorySummary,
   type InteractionResponse,
   type JsonValue,
   type ProjectResourceContentBlock,
@@ -95,7 +100,10 @@ export interface AnvilClient {
   selectProject(projectId: string): void;
   selectSession(sessionId: string): void;
   createProject(name: string): Promise<ProjectCreateResult>;
+  cloneProject(name: string, repository: string): Promise<void>;
   addExistingProject(name: string, path: string): Promise<void>;
+  deleteProject(projectId: string): Promise<void>;
+  listGitHubRepositories(page?: number): Promise<GitHubRepositoryPage>;
   getProjectsRoot(): Promise<string>;
   setProjectsRoot(path: string): Promise<string>;
   createSession(projectId: string): void;
@@ -130,6 +138,29 @@ const uniqueById = <T extends { id: string }>(items: T[]) =>
 
 const initialProjects = uniqueById(fixtures.map((fixture) => fixture.project));
 const initialSessions = fixtures.map((fixture) => fixture.session);
+const fixtureGitHubRepositories: GitHubRepositorySummary[] = [
+  {
+    nameWithOwner: "ocode-labs/forge-console",
+    name: "forge-console",
+    owner: "ocode-labs",
+    private: true,
+    updatedAt: "2026-07-22T18:30:00Z",
+  },
+  {
+    nameWithOwner: "collaborator/design-system",
+    name: "design-system",
+    owner: "collaborator",
+    private: false,
+    updatedAt: "2026-07-20T09:15:00Z",
+  },
+  {
+    nameWithOwner: "octocat/Hello-World",
+    name: "Hello-World",
+    owner: "octocat",
+    private: false,
+    updatedAt: "2026-07-12T12:00:00Z",
+  },
+];
 
 function reconcileClientWorkspace(snapshot: AnvilClientSnapshot): AnvilClientSnapshot {
   const workspaceLocation = reconcileWorkspaceLocation(
@@ -198,6 +229,28 @@ function withoutSessionKey<T>(record: Record<string, T>, sessionId: string): Rec
 
 const optimisticMessageId = (commandId: string) => `optimistic-${commandId}`;
 
+function withProvisionalSessionTitle(
+  snapshot: AnvilClientSnapshot,
+  sessionId: string,
+  content: string,
+  delivery: DeliveryMode,
+): AnvilClientSnapshot {
+  const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+  const alreadyPrompted = Boolean(session?.lastUserMessageAt || session?.lastUserMessageSequence) ||
+    (snapshot.timelines[sessionId] ?? []).some(
+      (entry) => entry.kind === "message" && entry.role === "user" && entry.status !== "failed",
+    );
+  if (delivery !== "prompt" || session?.title !== DEFAULT_SESSION_TITLE || alreadyPrompted) return snapshot;
+  const title = provisionalSessionTitleFromPrompt(content);
+  if (!title) return snapshot;
+  return {
+    ...snapshot,
+    sessions: snapshot.sessions.map((candidate) => (
+      candidate.id === sessionId ? { ...candidate, title } : candidate
+    )),
+  };
+}
+
 function addOptimisticPrompt(
   snapshot: AnvilClientSnapshot,
   sessionId: string,
@@ -208,12 +261,13 @@ function addOptimisticPrompt(
 ): AnvilClientSnapshot {
   const id = optimisticMessageId(commandId);
   if ((snapshot.timelines[sessionId] ?? []).some((entry) => entry.id === id)) return snapshot;
+  const next = withProvisionalSessionTitle(snapshot, sessionId, content, delivery);
   return {
-    ...snapshot,
+    ...next,
     timelines: {
-      ...snapshot.timelines,
+      ...next.timelines,
       [sessionId]: [
-        ...(snapshot.timelines[sessionId] ?? []),
+        ...(next.timelines[sessionId] ?? []),
         {
           id,
           kind: "message",
@@ -443,8 +497,14 @@ export class FixtureAnvilClient implements AnvilClient {
       case "project.create":
         this.createProject(command.payload.name);
         break;
+      case "project.clone":
+        this.cloneProject(command.payload.name, command.payload.repository);
+        break;
       case "project.addExisting":
         this.addExistingProject(command.payload.name, command.payload.path);
+        break;
+      case "project.delete":
+        this.deleteProject(command.payload.projectId);
         break;
       case "session.select":
         this.selectSession(command.payload.sessionId);
@@ -530,8 +590,35 @@ export class FixtureAnvilClient implements AnvilClient {
     return { status: "created" };
   };
 
+  cloneProject = async (name: string, _repository: string): Promise<void> => {
+    await this.createProject(name);
+  };
+
   addExistingProject = async (name: string, _path: string): Promise<void> => {
     await this.createProject(name);
+  };
+
+  deleteProject = async (projectId: string): Promise<void> => {
+    if (!this.snapshot.projects.some((project) => project.id === projectId)) return;
+    const sessionIds = this.snapshot.sessions
+      .filter((session) => session.projectId === projectId)
+      .map((session) => session.id);
+    for (const sessionId of sessionIds) {
+      for (const timer of this.simulationTimers.get(sessionId) ?? []) clearTimeout(timer);
+      this.simulationTimers.delete(sessionId);
+    }
+    this.applyLocal("project.deleted", { projectId }, null);
+  };
+
+  listGitHubRepositories = async (page = 1): Promise<GitHubRepositoryPage> => {
+    if (!Number.isSafeInteger(page) || page < 1) throw new Error("GitHub repository page must be a positive integer");
+    const pageSize = 2;
+    const start = (page - 1) * pageSize;
+    return {
+      repositories: fixtureGitHubRepositories.slice(start, start + pageSize).map((repository) => ({ ...repository })),
+      page,
+      hasMore: start + pageSize < fixtureGitHubRepositories.length,
+    };
   };
 
   getProjectsRoot = async (): Promise<string> => this.projectsRoot;
@@ -596,6 +683,7 @@ export class FixtureAnvilClient implements AnvilClient {
     const session = this.activeSession();
     if (!prompt || !session) return Promise.resolve(false);
 
+    this.snapshot = withProvisionalSessionTitle(this.snapshot, session.id, prompt, mode);
     this.snapshot = promoteSession(this.snapshot, session.id);
     this.emit();
 
@@ -1169,6 +1257,8 @@ export class ForgeAnvilClient implements AnvilClient {
   private retryDelay = 1_000;
   private bootstrapPromise?: Promise<void>;
   private readonly pendingCreates = new Map<string, PendingSessionCreate>();
+  private readonly provisionalSessionTitles = new Map<string, string>();
+  private readonly rejectedProvisionalSessionTitles = new Map<string, string>();
   private readonly pendingThinkingChanges = new Map<string, {
     confirmedLevel: ThinkingLevel;
     desiredLevel: ThinkingLevel;
@@ -1185,6 +1275,19 @@ export class ForgeAnvilClient implements AnvilClient {
         sessionId,
         response.error ?? "Message could not be sent",
       );
+      const provisionalTitle = this.provisionalSessionTitles.get(sessionId);
+      if (provisionalTitle) {
+        this.snapshot = {
+          ...this.snapshot,
+          sessions: this.snapshot.sessions.map((session) => (
+            session.id === sessionId && session.title === provisionalTitle
+              ? { ...session, title: DEFAULT_SESSION_TITLE }
+              : session
+          )),
+        };
+        this.provisionalSessionTitles.delete(sessionId);
+        this.rejectedProvisionalSessionTitles.set(sessionId, provisionalTitle);
+      }
       this.snapshot = {
         ...this.snapshot,
         composerDrafts: {
@@ -1276,6 +1379,17 @@ export class ForgeAnvilClient implements AnvilClient {
       : { status: "created" };
   };
 
+  cloneProject = async (name: string, repository: string): Promise<void> => {
+    const cleanName = name.trim();
+    const cleanRepository = repository.trim();
+    if (!cleanName) throw new Error("Project name is required");
+    if (!cleanRepository) throw new Error("GitHub repository is required");
+    await this.sendCommand(
+      this.command("project.clone", null, { name: cleanName, repository: cleanRepository }),
+      true,
+    );
+  };
+
   addExistingProject = async (name: string, path: string): Promise<void> => {
     const cleanName = name.trim();
     if (!cleanName) throw new Error("Project name is required");
@@ -1283,6 +1397,33 @@ export class ForgeAnvilClient implements AnvilClient {
       this.command("project.addExisting", null, { name: cleanName, path }),
       true,
     );
+  };
+
+  deleteProject = async (projectId: string): Promise<void> => {
+    if (!this.snapshot.projects.some((project) => project.id === projectId)) return;
+    await this.sendCommand(this.command("project.delete", null, { projectId }), true);
+  };
+
+  listGitHubRepositories = async (page = 1): Promise<GitHubRepositoryPage> => {
+    if (!Number.isSafeInteger(page) || page < 1) throw new Error("GitHub repository page must be a positive integer");
+    const response = await this.fetcher(`/api/v1/github/repositories?page=${page}`, {
+      headers: { accept: "application/json" },
+    });
+    const result = await response.json().catch(() => undefined) as unknown;
+    if (!response.ok) {
+      const message = result && typeof result === "object" && !Array.isArray(result)
+        ? (result as Record<string, unknown>).message
+        : undefined;
+      throw new Error(
+        typeof message === "string"
+          ? message
+          : `GitHub repository request failed with HTTP ${response.status}`,
+      );
+    }
+    if (!isGitHubRepositoryPage(result) || result.page !== page) {
+      throw new Error("Forge returned an invalid GitHub repository page");
+    }
+    return result;
   };
 
   getProjectsRoot = async (): Promise<string> => {
@@ -1401,6 +1542,7 @@ export class ForgeAnvilClient implements AnvilClient {
       delivery,
       ...(attachments.length ? { attachments } : {}),
     }) as Extract<AnvilClientCommand, { type: "prompt.send" }>;
+    const previousTitle = this.snapshot.sessions.find((session) => session.id === sessionId)?.title;
     this.snapshot = addOptimisticPrompt(
       this.snapshot,
       sessionId,
@@ -1409,6 +1551,10 @@ export class ForgeAnvilClient implements AnvilClient {
       command.timestamp,
       delivery,
     );
+    const optimisticTitle = this.snapshot.sessions.find((session) => session.id === sessionId)?.title;
+    if (previousTitle === DEFAULT_SESSION_TITLE && optimisticTitle && optimisticTitle !== previousTitle) {
+      this.provisionalSessionTitles.set(sessionId, optimisticTitle);
+    }
     this.emit();
 
     const accepted = this.promptOutbox.enqueue({ command, content: prompt });
@@ -1671,6 +1817,8 @@ export class ForgeAnvilClient implements AnvilClient {
       }
 
       let restored = this.snapshot;
+      this.provisionalSessionTitles.clear();
+      this.rejectedProvisionalSessionTitles.clear();
       for (const [sessionId, pending] of this.pendingCreates) {
         if (restored.sessions.some((session) => session.id === sessionId)) {
           pending.state = "acknowledged";
@@ -1685,14 +1833,20 @@ export class ForgeAnvilClient implements AnvilClient {
       }
       for (const prompt of this.promptOutbox.queued()) {
         if (prompt.command.sessionId) {
+          const sessionId = prompt.command.sessionId;
+          const previousTitle = restored.sessions.find((session) => session.id === sessionId)?.title;
           restored = addOptimisticPrompt(
             restored,
-            prompt.command.sessionId,
+            sessionId,
             prompt.command.id,
             prompt.content,
             prompt.command.timestamp,
             prompt.command.payload.delivery,
           );
+          const optimisticTitle = restored.sessions.find((session) => session.id === sessionId)?.title;
+          if (previousTitle === DEFAULT_SESSION_TITLE && optimisticTitle && optimisticTitle !== previousTitle) {
+            this.provisionalSessionTitles.set(sessionId, optimisticTitle);
+          }
         }
       }
       const preferredSessionId = [previousActiveSessionId, restored.activeSessionId]
@@ -1920,6 +2074,11 @@ export class ForgeAnvilClient implements AnvilClient {
         if (!event) throw new Error("Forge streamed an invalid event");
         const replay = this.snapshot.replay;
         const previousSnapshot = this.snapshot;
+        const projectDeletedSessionIds = event.type === "project.deleted"
+          ? previousSnapshot.sessions
+            .filter((session) => session.projectId === event.payload.projectId)
+            .map((session) => session.id)
+          : [];
         if (event.sessionId && this.hydrationBuffers.has(event.sessionId)) {
           this.hydrationBuffers.get(event.sessionId)!.push(event);
         }
@@ -1930,6 +2089,37 @@ export class ForgeAnvilClient implements AnvilClient {
           ? settleOptimisticPrompt(this.snapshot, event.sessionId, undefined, confirmedPrompt)
           : this.snapshot;
         let next = applyAnvilEvent(snapshotForEvent, event);
+        const provisionalTitle = event.sessionId
+          ? this.provisionalSessionTitles.get(event.sessionId)
+          : undefined;
+        if (
+          provisionalTitle &&
+          event.type === "session.upserted" &&
+          event.payload.session.title === DEFAULT_SESSION_TITLE
+        ) {
+          next = {
+            ...next,
+            sessions: next.sessions.map((session) => (
+              session.id === event.sessionId ? { ...session, title: provisionalTitle } : session
+            )),
+          };
+        }
+        const rejectedProvisionalTitle = event.sessionId
+          ? this.rejectedProvisionalSessionTitles.get(event.sessionId)
+          : undefined;
+        if (
+          rejectedProvisionalTitle &&
+          event.type === "session.configured" &&
+          event.payload.titleSource === "provisional" &&
+          event.payload.title === rejectedProvisionalTitle
+        ) {
+          next = {
+            ...next,
+            sessions: next.sessions.map((session) => (
+              session.id === event.sessionId ? { ...session, title: DEFAULT_SESSION_TITLE } : session
+            )),
+          };
+        }
         const detailWatermark = event.sessionId ? this.hydratedThrough.get(event.sessionId) : undefined;
         if (
           event.sessionId &&
@@ -1979,9 +2169,54 @@ export class ForgeAnvilClient implements AnvilClient {
           }
           if (event.type === "session.deleted") {
             this.hydratedThrough.delete(event.payload.sessionId);
+            this.provisionalSessionTitles.delete(event.payload.sessionId);
+            this.rejectedProvisionalSessionTitles.delete(event.payload.sessionId);
             void this.cache.deleteSession(event.payload.sessionId);
           }
-          if (["session.upserted", "session.deleted", "session.settled", "session.prompted", "session.configured", "run.status", "message.started", "interaction.requested"].includes(event.type)) {
+          if (event.type === "session.prompted" && event.sessionId) {
+            this.provisionalSessionTitles.delete(event.sessionId);
+          }
+          if (
+            event.type === "session.configured" &&
+            event.sessionId &&
+            event.payload.title !== undefined &&
+            event.payload.titleSource !== "provisional"
+          ) {
+            this.provisionalSessionTitles.delete(event.sessionId);
+            this.rejectedProvisionalSessionTitles.delete(event.sessionId);
+          }
+          if (
+            event.type === "session.upserted" &&
+            event.payload.session.title === DEFAULT_SESSION_TITLE &&
+            this.rejectedProvisionalSessionTitles.has(event.payload.session.id)
+          ) {
+            this.rejectedProvisionalSessionTitles.delete(event.payload.session.id);
+          }
+          if (event.type === "project.deleted") {
+            for (const sessionId of projectDeletedSessionIds) {
+              this.hydratedThrough.delete(sessionId);
+              this.hydrationBuffers.delete(sessionId);
+              this.hydrationTokens.delete(sessionId);
+              this.pendingThinkingChanges.delete(sessionId);
+              this.provisionalSessionTitles.delete(sessionId);
+              this.rejectedProvisionalSessionTitles.delete(sessionId);
+              this.detailAccess.delete(sessionId);
+              this.promptOutbox.rejectSession(sessionId);
+              const timer = this.persistTimers.get(sessionId);
+              if (timer) clearTimeout(timer);
+              this.persistTimers.delete(sessionId);
+              const pending = this.pendingCreates.get(sessionId);
+              pending?.resolveSettled(false);
+              this.pendingCreates.delete(sessionId);
+              void this.cache.deleteSession(sessionId);
+            }
+            const removedIds = new Set(projectDeletedSessionIds);
+            this.snapshot = {
+              ...this.snapshot,
+              hydratingSessionIds: this.snapshot.hydratingSessionIds.filter((id) => !removedIds.has(id)),
+            };
+          }
+          if (["project.deleted", "session.upserted", "session.deleted", "session.settled", "session.prompted", "session.configured", "run.status", "message.started", "interaction.requested"].includes(event.type)) {
             void this.persistShell();
           }
         }

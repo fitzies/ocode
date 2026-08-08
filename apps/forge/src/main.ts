@@ -4,18 +4,21 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 import { ArtifactStore } from "./artifacts/artifactStore.ts";
-import { loadForgeConfig, speechApiKey } from "./config.ts";
+import { loadForgeConfig } from "./config.ts";
+import { DesktopUpdateStore } from "./desktop/desktopUpdateStore.ts";
 import { ForgeEventService } from "./events/eventService.ts";
 import { ForgeHttpServer } from "./http/server.ts";
 import { PiCommitMessageGenerator } from "./pi/commitMessageGenerator.ts";
+import { prepareGeneralProject } from "./projects/generalProject.ts";
+import { GitHubRepositoryCatalog } from "./projects/githubRepositoryCatalog.ts";
 import { ProjectFileService } from "./projects/projectFileService.ts";
 import { ProjectGitService } from "./projects/projectGitService.ts";
 import { EventProjectResolver } from "./projects/projectResolver.ts";
 import { LiveIndicatorsService } from "./runtime/indicators.ts";
 import { SessionManager } from "./runtime/sessionManager.ts";
-import { SpeechRuntime } from "./speech/speechRuntime.ts";
 import { ForgeDatabase } from "./store/database.ts";
 import { acquireForgeInstanceLock, ForgeInstanceLockedError } from "./store/instanceLock.ts";
+import { removeRetiredSpeechCredential } from "./store/retiredFeatureCleanup.ts";
 import { TerminalHistoryStore } from "./terminal/historyStore.ts";
 import { TerminalManager } from "./terminal/terminalManager.ts";
 
@@ -25,24 +28,27 @@ async function main(): Promise<void> {
   const config = loadForgeConfig();
   const instanceLock = acquireForgeInstanceLock(config.databasePath);
   try {
+    removeRetiredSpeechCredential(dirname(config.databasePath));
     mkdirSync(config.sessionDir, { recursive: true, mode: 0o700 });
+    mkdirSync(config.desktopUpdateDir, { recursive: true, mode: 0o700 });
     const database = new ForgeDatabase(config.databasePath);
-    const speech = new SpeechRuntime({
-      secretsDirectory: join(dirname(config.databasePath), "secrets"),
-      database,
-      config: config.speech,
-      environmentApiKey: speechApiKey(),
-    });
+    const generalProject = prepareGeneralProject(database, config.projects);
     const artifacts = new ArtifactStore(config.artifactDir);
+    const desktopUpdates = new DesktopUpdateStore(config.desktopUpdateDir);
     const events = new ForgeEventService(database, config.projects, artifacts);
+    events.markGeneralProject(generalProject.id);
     const projects = new EventProjectResolver(events);
     const projectFiles = new ProjectFileService(projects);
     const projectGit = new ProjectGitService(projects, new PiCommitMessageGenerator(config.piExecutable));
-    const sessions = new SessionManager(config, database, events, { projectResolver: projects });
+    const githubRepositories = new GitHubRepositoryCatalog();
     const terminalHistory = new TerminalHistoryStore(
       config.terminalHistoryDir ?? join(dirname(config.databasePath), "terminal-history"),
     );
     const terminals = new TerminalManager(database, projects, terminalHistory);
+    const sessions = new SessionManager(config, database, events, {
+      projectResolver: projects,
+      terminalCleanup: terminals,
+    });
     const indicators = new LiveIndicatorsService(sessions);
     let shutdownPromise: Promise<void> | undefined;
     let server: ForgeHttpServer;
@@ -56,7 +62,6 @@ async function main(): Promise<void> {
           server.close(),
           sessions.stopAll(),
           terminals.stopAll(),
-          speech.close(),
         ]);
         events.checkpoint();
         database.close();
@@ -75,6 +80,7 @@ async function main(): Promise<void> {
       projectGit,
       terminals,
       searchFiles: sessions.searchFiles,
+      listGitHubRepositories: githubRepositories.list,
       getProjectsRoot: sessions.getProjectsRoot,
       setProjectsRoot: sessions.setProjectsRoot,
       requestRebuild: async () => {
@@ -83,8 +89,8 @@ async function main(): Promise<void> {
           maxBuffer: 10 * 1024 * 1024,
         });
       },
+      desktopUpdates,
       ownerLogin: config.ownerLogin,
-      speech,
       webRoot: config.webRoot,
     });
 

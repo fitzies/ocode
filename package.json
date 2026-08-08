@@ -9,6 +9,7 @@
     "dev:desktop": "corepack pnpm --filter @anvil/desktop dev",
     "build": "corepack pnpm --filter @anvil/forge build && corepack pnpm --filter @anvil/web build",
     "build:desktop": "corepack pnpm --filter @anvil/desktop build",
+    "publish:desktop": "corepack pnpm --filter @anvil/forge publish:desktop",
     "check:desktop": "corepack pnpm --filter @anvil/desktop check",
     "start:forge": "corepack pnpm --filter @anvil/forge start",
     "test:desktop": "corepack pnpm --filter @anvil/desktop test:rust",

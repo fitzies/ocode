@@ -14,7 +14,7 @@ export * from "./askUserQuestion.js";
 export * from "@anvil/protocol/resources";
 export * from "@anvil/protocol/terminal";
 
-export const ANVIL_PROTOCOL_VERSION = 9 as const;
+export const ANVIL_PROTOCOL_VERSION = 10 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
 
 export type ConnectionState = "connected" | "reconnecting" | "offline";
@@ -23,7 +23,7 @@ export type RunOutcome = "completed" | "failed" | "cancelled";
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type EntryStatus = "streaming" | "complete" | "failed" | "cancelled";
 export type ToolStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
-export type ProjectWorkspaceKind = "main" | "worktree" | "folder";
+export type ProjectWorkspaceKind = "main" | "worktree" | "folder" | "general";
 
 export interface ProjectSummary {
   id: string;
@@ -31,6 +31,29 @@ export interface ProjectSummary {
   path: string;
   /** Derived by Forge from Git metadata; absent on older recordings. */
   workspaceKind?: ProjectWorkspaceKind;
+}
+
+export const GENERAL_PROJECT_ID = "ocode-general";
+export const GENERAL_PROJECT_NAME = "General";
+
+export function isGeneralProject(
+  project: Pick<ProjectSummary, "id" | "workspaceKind"> | null | undefined,
+): boolean {
+  return project?.id === GENERAL_PROJECT_ID || project?.workspaceKind === "general";
+}
+
+export interface GitHubRepositorySummary {
+  nameWithOwner: string;
+  name: string;
+  owner: string;
+  private: boolean;
+  updatedAt: string;
+}
+
+export interface GitHubRepositoryPage {
+  repositories: GitHubRepositorySummary[];
+  page: number;
+  hasMore: boolean;
 }
 
 export type ProjectGitAction = "commit-and-push" | "push" | "up-to-date" | "unavailable";
@@ -84,6 +107,10 @@ export interface ProjectGitCheck {
   workflow?: string;
   startedAt?: string;
   completedAt?: string;
+  /** Number of provider signals consolidated into this row. */
+  signalCount?: number;
+  /** True when GitHub created a deployment record but has not reported its first status yet. */
+  awaitingStatus?: boolean;
 }
 
 export interface ProjectGitPullRequest {
@@ -100,8 +127,19 @@ export interface ProjectGitPullRequest {
   checks: ProjectGitCheck[];
 }
 
+export interface ProjectGitCommitStatus {
+  hash: string;
+  shortHash: string;
+  subject: string;
+  url: string;
+  checks: ProjectGitCheck[];
+  /** False when one or more GitHub status sources could not be read. */
+  complete: boolean;
+}
+
 export interface ProjectGitHubStatus {
   pullRequest: ProjectGitPullRequest | null;
+  commit: ProjectGitCommitStatus | null;
 }
 
 export interface ProjectGitStatus {
@@ -523,6 +561,7 @@ export type AnvilEvent =
   | AnvilEventBase<"connection.changed", { connection: ConnectionState }>
   | AnvilEventBase<"catalog.updated", { catalog: CapabilityCatalog }>
   | AnvilEventBase<"project.upserted", { project: ProjectSummary }>
+  | AnvilEventBase<"project.deleted", { projectId: string }>
   | AnvilEventBase<"session.upserted", { session: SessionSummary }>
   | AnvilEventBase<"session.deleted", { sessionId: string }>
   | AnvilEventBase<"session.settled", { settled: boolean }>
@@ -531,7 +570,13 @@ export type AnvilEvent =
   | AnvilEventBase<"session.selected", { sessionId: string }>
   | AnvilEventBase<
       "session.configured",
-      { modelId?: string; thinkingLevel?: ThinkingLevel; title?: string; branch?: string | null }
+      {
+        modelId?: string;
+        thinkingLevel?: ThinkingLevel;
+        title?: string;
+        titleSource?: "provisional";
+        branch?: string | null;
+      }
     >
   | AnvilEventBase<"run.status", { status: DurableRunState; message?: string; outcome?: RunOutcome }>
   | AnvilEventBase<"message.started", { message: MessageEntry }>
@@ -599,11 +644,21 @@ export type AnvilEvent =
 
 export type PromptDelivery = "prompt" | "steer" | "followUp";
 
+export const DEFAULT_SESSION_TITLE = "New session";
 export const SESSION_TITLE_MAX_LENGTH = 120;
+export const PROVISIONAL_SESSION_TITLE_MAX_LENGTH = 36;
 
 export function normalizeSessionTitle(value: string): string | undefined {
   const title = value.trim();
   return title && title.length <= SESSION_TITLE_MAX_LENGTH ? title : undefined;
+}
+
+export function provisionalSessionTitleFromPrompt(value: string): string {
+  const title = value.replace(/\s+/gu, " ").trim();
+  const characters = [...title];
+  return characters.length > PROVISIONAL_SESSION_TITLE_MAX_LENGTH
+    ? `${characters.slice(0, PROVISIONAL_SESSION_TITLE_MAX_LENGTH - 1).join("")}…`
+    : title;
 }
 
 export function normalizeProjectSlug(value: string): string {
@@ -627,7 +682,9 @@ interface AnvilCommandBase<TType extends string, TPayload> {
 
 export type AnvilClientCommand =
   | AnvilCommandBase<"project.create", { name: string }>
+  | AnvilCommandBase<"project.clone", { name: string; repository: string }>
   | AnvilCommandBase<"project.addExisting", { name: string; path: string }>
+  | AnvilCommandBase<"project.delete", { projectId: string }>
   | AnvilCommandBase<"session.select", { sessionId: string }>
   | AnvilCommandBase<"session.create", { projectId: string; sessionId: string; parentSessionId?: string }>
   | AnvilCommandBase<"session.delete", { sessionId: string }>
@@ -664,6 +721,7 @@ const ANVIL_EVENT_TYPES = new Set<AnvilEvent["type"]>([
   "connection.changed",
   "catalog.updated",
   "project.upserted",
+  "project.deleted",
   "session.upserted",
   "session.deleted",
   "session.settled",
@@ -811,7 +869,39 @@ function isSessionQueue(value: unknown): boolean {
 function isProjectSummary(value: unknown): value is ProjectSummary {
   return isRecord(value) &&
     hasStrings(value, "id", "name", "path") &&
-    (value.workspaceKind === undefined || ["main", "worktree", "folder"].includes(String(value.workspaceKind)));
+    (value.workspaceKind === undefined || ["main", "worktree", "folder", "general"].includes(String(value.workspaceKind)));
+}
+
+const GITHUB_OWNER_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+const GITHUB_REPOSITORY_PATTERN = /^[A-Za-z0-9_.](?:[A-Za-z0-9_.-]{0,98})?$/;
+
+export function isGitHubRepositorySummary(value: unknown): value is GitHubRepositorySummary {
+  if (
+    !isRecord(value) ||
+    typeof value.nameWithOwner !== "string" ||
+    typeof value.name !== "string" ||
+    typeof value.owner !== "string" ||
+    typeof value.updatedAt !== "string"
+  ) return false;
+  const cloneNormalizedName = value.name.replace(/\.git$/i, "");
+  return GITHUB_OWNER_PATTERN.test(value.owner) &&
+    GITHUB_REPOSITORY_PATTERN.test(value.name) &&
+    GITHUB_REPOSITORY_PATTERN.test(cloneNormalizedName) &&
+    cloneNormalizedName !== "." &&
+    cloneNormalizedName !== ".." &&
+    !cloneNormalizedName.startsWith("-") &&
+    value.nameWithOwner === `${value.owner}/${value.name}` &&
+    Number.isFinite(Date.parse(value.updatedAt)) &&
+    typeof value.private === "boolean";
+}
+
+export function isGitHubRepositoryPage(value: unknown): value is GitHubRepositoryPage {
+  return isRecord(value) &&
+    Array.isArray(value.repositories) &&
+    value.repositories.every(isGitHubRepositorySummary) &&
+    Number.isSafeInteger(value.page) &&
+    Number(value.page) > 0 &&
+    typeof value.hasMore === "boolean";
 }
 
 function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
@@ -823,6 +913,8 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
       return isCapabilityCatalog(value.catalog);
     case "project.upserted":
       return isProjectSummary(value.project);
+    case "project.deleted":
+      return hasStrings(value, "projectId");
     case "session.upserted":
       return isSessionSummary(value.session);
     case "session.deleted":
@@ -839,6 +931,7 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
       return (value.modelId === undefined || typeof value.modelId === "string") &&
         (value.thinkingLevel === undefined || ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(String(value.thinkingLevel))) &&
         (value.title === undefined || typeof value.title === "string") &&
+        (value.titleSource === undefined || value.titleSource === "provisional") &&
         (value.branch === undefined || value.branch === null || typeof value.branch === "string");
     case "run.status":
       return ["idle", "running", "failed"].includes(String(value.status)) &&
@@ -916,6 +1009,7 @@ export function isAnvilEvent(value: unknown): value is AnvilEvent {
   if (!isJsonValue(value.payload)) return false;
   if (value.raw !== undefined && !isJsonValue(value.raw)) return false;
   if (value.type === "catalog.updated" && typeof value.sessionId !== "string") return false;
+  if ((value.type === "project.upserted" || value.type === "project.deleted") && value.sessionId !== null) return false;
   return isEventPayload(value.type as AnvilEvent["type"], value.payload);
 }
 
@@ -951,8 +1045,14 @@ export function isAnvilClientCommand(value: unknown): value is AnvilClientComman
       return value.sessionId === null &&
         typeof payload.name === "string" &&
         payload.path === undefined;
+    case "project.clone":
+      return value.sessionId === null &&
+        hasStrings(payload, "name", "repository") &&
+        Object.keys(payload).every((key) => key === "name" || key === "repository");
     case "project.addExisting":
       return value.sessionId === null && hasStrings(payload, "name", "path");
+    case "project.delete":
+      return value.sessionId === null && hasStrings(payload, "projectId");
     case "session.select":
       return hasStrings(payload, "sessionId");
     case "session.create":

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -163,6 +163,50 @@ describe("TerminalManager", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("stops every project terminal and removes records and private history during project removal", async () => {
+    const first = manager.open("project-a", "First");
+    const second = manager.open("project-a", "Second");
+    adapter.processes[0]!.emitData("private first history\n");
+    adapter.processes[1]!.emitData("private second history\n");
+    history.flushAll();
+    const records = database.listTerminalRecords("project-a");
+    const historyPaths = records.map((record) => join(history.root, record.historyFile));
+    expect(historyPaths.every(existsSync)).toBe(true);
+
+    const prepared = await manager.prepareProjectRemoval("project-a");
+    expect(adapter.processes.every((process) => process.kills.includes("SIGTERM"))).toBe(true);
+    expect(() => manager.open("project-a")).toThrow("removal is in progress");
+    expect(historyPaths.every(existsSync)).toBe(true);
+    // Destructive history cleanup waits until the database cascade commits.
+    expect(database.listTerminalRecords("project-a")).toHaveLength(2);
+
+    database.deleteProjectWithEvent("project-a", {
+      sessionId: null,
+      timestamp: "2026-07-23T01:00:00.000Z",
+      type: "project.deleted",
+      payload: { projectId: "project-a" },
+    });
+    prepared.finalize();
+
+    expect(database.listTerminalRecords("project-a")).toEqual([]);
+    expect(historyPaths.some(existsSync)).toBe(false);
+    expect([first.terminalId, second.terminalId]).toHaveLength(2);
+  });
+
+  it("preserves terminal records and history when prepared project removal is cancelled", async () => {
+    const terminal = manager.open("project-a", "Recoverable");
+    adapter.processes[0]!.emitData("keep this history\n");
+    history.flushAll();
+    const historyPath = join(history.root, database.listTerminalRecords("project-a")[0]!.historyFile);
+
+    const prepared = await manager.prepareProjectRemoval("project-a");
+    prepared.cancel();
+
+    expect(existsSync(historyPath)).toBe(true);
+    expect(database.listTerminalRecords("project-a")).toHaveLength(1);
+    expect(() => manager.restart("project-a", terminal.terminalId)).not.toThrow();
   });
 
   it("keeps PTYs alive without attachments and terminates them during shutdown", async () => {

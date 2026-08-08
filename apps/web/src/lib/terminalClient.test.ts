@@ -72,6 +72,21 @@ describe("TerminalClient", () => {
     expect(sentTypes.filter((type) => type === "terminal.attach")).toHaveLength(1);
   });
 
+  it("reference-counts project watchers without issuing duplicate lists", () => {
+    const socket = new FakeSocket();
+    const client = new TerminalClient(() => socket, "ws://test/api/v1/terminals/ws");
+    const unwatchFirst = client.watchProject("project-a");
+    const unwatchSecond = client.watchProject("project-a");
+    socket.open();
+    expect(socket.sent.map((item) => JSON.parse(item).type).filter((type) => type === "terminal.list")).toHaveLength(1);
+
+    unwatchFirst();
+    const unwatchThird = client.watchProject("project-a");
+    expect(socket.sent.map((item) => JSON.parse(item).type).filter((type) => type === "terminal.list")).toHaveLength(1);
+    unwatchSecond();
+    unwatchThird();
+  });
+
   it("rejects in-flight operations and drops stale input after disconnect", async () => {
     const socket = new FakeSocket();
     const client = new TerminalClient(() => socket, "ws://test/api/v1/terminals/ws");

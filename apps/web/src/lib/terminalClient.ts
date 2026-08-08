@@ -27,7 +27,7 @@ export class TerminalClient {
   private readonly listeners = new Set<() => void>();
   private readonly terminalListeners = new Map<string, Set<(event: TerminalStreamEvent) => void>>();
   private readonly pending = new Map<string, { resolve(message: TerminalServerMessage): void; reject(error: Error): void }>();
-  private readonly watchedProjects = new Set<string>();
+  private readonly watchedProjects = new Map<string, number>();
   private readonly listedProjects = new Set<string>();
   private readonly attached = new Set<string>();
   private reconnectTimer?: ReturnType<typeof setTimeout>;
@@ -50,13 +50,20 @@ export class TerminalClient {
   };
 
   watchProject(projectId: string): () => void {
-    this.watchedProjects.add(projectId);
-    if (this.listedProjects.delete(projectId)) this.emit();
-    this.connect();
-    if (this.socket?.readyState === OPEN) {
-      this.socket.send(JSON.stringify({ protocolVersion: ANVIL_TERMINAL_PROTOCOL_VERSION, type: "terminal.list", requestId: crypto.randomUUID(), projectId }));
+    const watcherCount = this.watchedProjects.get(projectId) ?? 0;
+    this.watchedProjects.set(projectId, watcherCount + 1);
+    if (watcherCount === 0) {
+      if (this.listedProjects.delete(projectId)) this.emit();
+      this.connect();
+      if (this.socket?.readyState === OPEN) {
+        this.socket.send(JSON.stringify({ protocolVersion: ANVIL_TERMINAL_PROTOCOL_VERSION, type: "terminal.list", requestId: crypto.randomUUID(), projectId }));
+      }
     }
-    return () => this.watchedProjects.delete(projectId);
+    return () => {
+      const remaining = (this.watchedProjects.get(projectId) ?? 1) - 1;
+      if (remaining > 0) this.watchedProjects.set(projectId, remaining);
+      else this.watchedProjects.delete(projectId);
+    };
   }
 
   subscribeTerminal(projectId: string, terminalId: string, listener: (event: TerminalStreamEvent) => void): () => void {
@@ -158,7 +165,7 @@ export class TerminalClient {
       this.setState("connected");
       const queued = this.queue.splice(0);
       for (const message of queued) socket.send(JSON.stringify(message));
-      for (const projectId of this.watchedProjects) {
+      for (const projectId of this.watchedProjects.keys()) {
         socket.send(JSON.stringify({ protocolVersion: ANVIL_TERMINAL_PROTOCOL_VERSION, type: "terminal.list", requestId: crypto.randomUUID(), projectId }));
       }
       for (const id of this.attached) {

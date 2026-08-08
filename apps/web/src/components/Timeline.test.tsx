@@ -1,7 +1,6 @@
 import type { MessageEntry, ReasoningEntry, SessionSummary, SystemEventEntry, ToolEntry } from "@anvil/protocol";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SpeechProvider } from "./SpeechProvider";
 import { Timeline } from "./Timeline";
 
 const session: SessionSummary = {
@@ -38,54 +37,26 @@ const reasoning: ReasoningEntry = {
 };
 
 describe("Timeline message actions", () => {
-  const speechStatus = {
-    enabled: true as const,
-    provider: "custom-speech-provider",
-    defaultVoice: "voice-default",
-    defaultStyle: "style-default",
-    maxChunkCharacters: 12_000,
-    voices: [{ id: "voice-default", label: "Default voice", description: "General purpose" }],
-    styles: [{ id: "style-default", label: "Default style", description: "General purpose" }],
-  };
-
-  it("shows copy only for complete assistant text and hides speech while disabled", () => {
+  it("shows copy only for complete assistant text", () => {
     const assistantHtml = renderToStaticMarkup(<Timeline session={session} entries={[message]} onSuggestion={() => undefined} />);
     const userHtml = renderToStaticMarkup(<Timeline session={session} entries={[{ ...message, role: "user" }]} onSuggestion={() => undefined} />);
-    expect(assistantHtml).toContain('aria-label="Copy response"');
-    expect(assistantHtml).not.toContain("Read response aloud");
-    expect(userHtml).not.toContain('aria-label="Copy response"');
-  });
-
-  it("enables accessible read aloud only for complete assistant text", () => {
-    const completeHtml = renderToStaticMarkup(
-      <SpeechProvider initialStatus={speechStatus}>
-        <Timeline session={session} entries={[message]} onSuggestion={() => undefined} />
-      </SpeechProvider>,
-    );
     const streamingHtml = renderToStaticMarkup(
-      <SpeechProvider initialStatus={speechStatus}>
-        <Timeline session={{ ...session, status: "running" }} entries={[{ ...message, status: "streaming" }]} onSuggestion={() => undefined} />
-      </SpeechProvider>,
+      <Timeline session={{ ...session, status: "running" }} entries={[{ ...message, status: "streaming" }]} onSuggestion={() => undefined} />,
     );
-    expect(completeHtml).toContain('aria-label="Read response aloud"');
-    expect(completeHtml).toContain("Read aloud uses an AI-generated voice.");
+    expect(assistantHtml).toContain('aria-label="Copy response"');
+    expect(userHtml).not.toContain('aria-label="Copy response"');
     expect(streamingHtml).not.toContain("message-actions");
-    expect(streamingHtml).not.toContain('aria-label="Copy response"');
-    expect(streamingHtml).not.toContain("Read response aloud");
   });
 
-  it("keeps copy but hides read aloud for code-only assistant text", () => {
+  it("keeps copy available for code-only assistant text", () => {
     const html = renderToStaticMarkup(
-      <SpeechProvider initialStatus={speechStatus}>
-        <Timeline
-          session={session}
-          entries={[{ ...message, content: [{ id: "code-only", type: "text", text: "```ts\nconst value = 1;\n```" }] }]}
-          onSuggestion={() => undefined}
-        />
-      </SpeechProvider>,
+      <Timeline
+        session={session}
+        entries={[{ ...message, content: [{ id: "code-only", type: "text", text: "```ts\nconst value = 1;\n```" }] }]}
+        onSuggestion={() => undefined}
+      />,
     );
     expect(html).toContain('aria-label="Copy response"');
-    expect(html).not.toContain('aria-label="Read response aloud"');
   });
 
   it("does not add response actions for failed or non-text assistant content", () => {

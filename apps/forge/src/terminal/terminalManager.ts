@@ -34,7 +34,17 @@ type RuntimeTerminal = {
   stopping: boolean;
   interrupted: boolean;
   finalized: boolean;
+  termination?: Promise<void>;
 };
+
+export interface PreparedProjectTerminalRemoval {
+  finalize(): void;
+  cancel(): void;
+}
+
+export interface ProjectTerminalCleanup {
+  prepareProjectRemoval(projectId: string): Promise<PreparedProjectTerminalRemoval>;
+}
 
 export interface TerminalAttachment {
   snapshot: Extract<TerminalServerMessage, { type: "terminal.snapshot" }>;
@@ -56,6 +66,7 @@ function environment(): Record<string, string> {
 
 export class TerminalManager extends EventEmitter {
   private readonly runtimes = new Map<string, RuntimeTerminal>();
+  private readonly deletingProjects = new Set<string>();
   private readonly adapter: PtyAdapter;
   private shuttingDown = false;
 
@@ -71,15 +82,18 @@ export class TerminalManager extends EventEmitter {
     for (const projectId of new Set(this.database.listTerminalRecords().map((record) => record.metadata.projectId))) {
       this.pruneInactive(projectId);
     }
+    this.history.reconcile(this.database.listTerminalRecords().map((record) => record.historyFile));
   }
 
   list(projectId: string): ShellTerminalMetadata[] {
+    this.assertProjectAvailable(projectId);
     if (!this.projects.resolveProject(projectId)) throw new Error("Project is not configured on Forge");
     return this.database.listTerminalRecords(projectId).map((record) => ({ ...record.metadata }));
   }
 
   open(projectId: string, label?: string): ShellTerminalMetadata {
     if (this.shuttingDown) throw new Error("Terminal service is shutting down");
+    this.assertProjectAvailable(projectId);
     const project = this.projects.resolveProject(projectId);
     if (!project) throw new Error("Project is not configured on Forge");
     const existing = this.database.listTerminalRecords(projectId);
@@ -107,6 +121,7 @@ export class TerminalManager extends EventEmitter {
   }
 
   restart(projectId: string, terminalId: string): ShellTerminalMetadata {
+    this.assertProjectAvailable(projectId);
     if (this.runtimes.has(key(projectId, terminalId))) throw new Error("Terminal is already running");
     const project = this.projects.resolveProject(projectId);
     if (!project) throw new Error("Project is not configured on Forge");
@@ -125,10 +140,12 @@ export class TerminalManager extends EventEmitter {
   }
 
   write(projectId: string, terminalId: string, data: string): void {
+    this.assertProjectAvailable(projectId);
     this.runtime(projectId, terminalId).process.write(data);
   }
 
   resize(projectId: string, terminalId: string, cols: number, rows: number): void {
+    this.assertProjectAvailable(projectId);
     const runtime = this.runtime(projectId, terminalId);
     runtime.process.resize(cols, rows);
     runtime.record.metadata = {
@@ -142,6 +159,7 @@ export class TerminalManager extends EventEmitter {
   }
 
   clear(projectId: string, terminalId: string): ShellTerminalMetadata {
+    this.assertProjectAvailable(projectId);
     const record = this.record(projectId, terminalId);
     record.metadata = {
       ...record.metadata,
@@ -164,6 +182,7 @@ export class TerminalManager extends EventEmitter {
   }
 
   async close(projectId: string, terminalId: string, deleteHistory = false): Promise<boolean> {
+    this.assertProjectAvailable(projectId);
     const runtime = this.runtimes.get(key(projectId, terminalId));
     if (runtime) {
       runtime.stopping = true;
@@ -193,6 +212,7 @@ export class TerminalManager extends EventEmitter {
     requestId: string,
     send: (event: LiveTerminalEvent) => void,
   ): TerminalAttachment {
+    this.assertProjectAvailable(projectId);
     const buffered: LiveTerminalEvent[] = [];
     let live = false;
     let disposed = false;
@@ -232,6 +252,52 @@ export class TerminalManager extends EventEmitter {
         disposed = true;
         this.off("terminal", listener);
       },
+    };
+  }
+
+  async prepareProjectRemoval(projectId: string): Promise<PreparedProjectTerminalRemoval> {
+    if (this.deletingProjects.has(projectId)) throw new Error("Project removal is already in progress");
+    this.deletingProjects.add(projectId);
+    const records = this.database.listTerminalRecords(projectId);
+    try {
+      const runtimes = [...this.runtimes.values()].filter(
+        (runtime) => runtime.record.metadata.projectId === projectId,
+      );
+      for (const runtime of runtimes) runtime.stopping = true;
+      await Promise.all(runtimes.map((runtime) => this.terminate(runtime, true)));
+    } catch (error) {
+      this.deletingProjects.delete(projectId);
+      throw error;
+    }
+
+    let completed = false;
+    const release = () => {
+      if (completed) return false;
+      completed = true;
+      this.deletingProjects.delete(projectId);
+      return true;
+    };
+    return {
+      finalize: () => {
+        if (!release()) return;
+        for (const record of records) {
+          try {
+            this.history.delete(record.historyFile);
+          } catch (error) {
+            process.stderr.write(
+              `[terminal:${record.metadata.terminalId}] Project removal could not clean history yet: ${error instanceof Error ? error.message : String(error)}\n`,
+            );
+          }
+          this.emit("metadata", {
+            protocolVersion: ANVIL_TERMINAL_PROTOCOL_VERSION,
+            type: "terminal.metadata",
+            projectId,
+            terminalId: record.metadata.terminalId,
+            deleted: true,
+          } satisfies Extract<TerminalServerMessage, { type: "terminal.metadata" }>);
+        }
+      },
+      cancel: () => { release(); },
     };
   }
 
@@ -317,12 +383,19 @@ export class TerminalManager extends EventEmitter {
     this.pruneInactive(metadata.projectId);
   }
 
-  private async terminate(runtime: RuntimeTerminal, interrupted: boolean): Promise<void> {
+  private terminate(runtime: RuntimeTerminal, interrupted: boolean): Promise<void> {
     runtime.interrupted ||= interrupted;
+    if (runtime.termination) return runtime.termination;
+    runtime.termination = this.performTermination(runtime);
+    return runtime.termination;
+  }
+
+  private async performTermination(runtime: RuntimeTerminal): Promise<void> {
     runtime.process.kill("SIGTERM");
     const exited = await this.waitForExit(runtime, TERMINATION_GRACE_MS);
+    if (exited) return;
     runtime.process.kill("SIGKILL");
-    if (exited || await this.waitForExit(runtime, TERMINATION_FORCE_MS)) return;
+    if (await this.waitForExit(runtime, TERMINATION_FORCE_MS)) return;
     this.forceFinalize(runtime);
   }
 
@@ -361,6 +434,10 @@ export class TerminalManager extends EventEmitter {
     } satisfies LiveTerminalEvent);
     runtime.resolveExit();
     this.pruneInactive(metadata.projectId);
+  }
+
+  private assertProjectAvailable(projectId: string): void {
+    if (this.deletingProjects.has(projectId)) throw new Error("Project removal is in progress");
   }
 
   private pruneInactive(projectId: string): void {

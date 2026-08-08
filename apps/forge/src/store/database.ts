@@ -17,12 +17,13 @@ import {
   type SessionSummary,
   type ShellTerminalMetadata,
 } from "@anvil/protocol";
+import { removeProjectFromSnapshot } from "@anvil/state";
 
 // Keep the specifier indirect until tsup's esbuild recognizes node:sqlite as a built-in.
 const sqliteModuleName = "node:sqlite";
 const { DatabaseSync } = await import(sqliteModuleName) as typeof import("node:sqlite");
 
-const SCHEMA_VERSION = 12;
+const SCHEMA_VERSION = 13;
 const RETAINED_EVENT_COUNT = 100_000;
 const MAX_COMPACTION_ROWS_PER_CHECKPOINT = 1_000;
 
@@ -54,14 +55,14 @@ function upgradeStoredResourceBlocks(value: unknown): unknown {
 
 function upgradeStoredSnapshotProtocol(value: unknown): unknown {
   if (
-    Number(ANVIL_PROTOCOL_VERSION) === 9 &&
+    Number(ANVIL_PROTOCOL_VERSION) === 10 &&
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    [5, 6, 7, 8].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
+    [5, 6, 7, 8, 9].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
   ) {
-    // Protocols 7–9 add strict session-relative project resources, Forge-owned
-    // read cursors, and root-owned project creation. Snapshots upgrade structurally.
+    // Protocols 7–10 add strict session-relative project resources, Forge-owned
+    // read cursors, root-owned project creation, and project removal. Snapshots upgrade structurally.
     return upgradeStoredResourceBlocks({
       ...(value as Record<string, unknown>),
       protocolVersion: ANVIL_PROTOCOL_VERSION,
@@ -94,15 +95,10 @@ export interface StoredTerminalRecord {
   historyVersion: number;
 }
 
-export interface SpeechUsage {
-  date: string;
-  requests: number;
-  characters: number;
-}
-
-export interface SpeechUsageReservationLimits {
-  requests: number;
-  characters: number;
+export interface DeletedProjectData {
+  event: AnvilEvent;
+  sessionIds: string[];
+  artifactIds: string[];
 }
 
 export interface ArtifactRecord {
@@ -133,7 +129,36 @@ export class ForgeDatabase {
     this.database.close();
   }
 
+  seedConfigProjectsOnce(projects: readonly ProjectSummary[]): void {
+    if (this.runtimeMetadata("config_projects_seeded") !== undefined) return;
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      // Before project removal existed, configured projects were authoritative and
+      // re-imported on every start. Preserve all of them during this one-time
+      // migration; subsequent starts use the database as the source of truth.
+      this.upsertProjects(projects);
+      this.database.prepare(`
+        INSERT INTO runtime_metadata (key, value) VALUES ('config_projects_seeded', '1')
+      `).run();
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
   syncProjects(projects: readonly ProjectSummary[]): void {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      this.upsertProjects(projects);
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private upsertProjects(projects: readonly ProjectSummary[]): void {
     const upsert = this.database.prepare(`
       INSERT INTO projects (id, name, path, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?)
@@ -143,15 +168,8 @@ export class ForgeDatabase {
         updated_at = excluded.updated_at
     `);
     const timestamp = new Date().toISOString();
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      for (const project of projects) {
-        upsert.run(project.id, project.name, project.path, timestamp, timestamp);
-      }
-      this.database.exec("COMMIT");
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      throw error;
+    for (const project of projects) {
+      upsert.run(project.id, project.name, project.path, timestamp, timestamp);
     }
   }
 
@@ -181,6 +199,75 @@ export class ForgeDatabase {
       if (!committed) throw new Error("Project creation did not produce an event");
       this.database.exec("COMMIT");
       return committed;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  deleteProjectWithEvent(projectId: string, event: UnsequencedAnvilEvent): DeletedProjectData {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const project = this.database.prepare("SELECT id FROM projects WHERE id = ?").get(projectId);
+      if (!project) throw new Error("Project not found");
+      const sessionIds = (this.database.prepare(
+        "SELECT id FROM sessions WHERE project_id = ? ORDER BY created_at ASC",
+      ).all(projectId) as Array<{ id: unknown }>).map((row) => String(row.id));
+      const artifactIds = (this.database.prepare(`
+        SELECT artifacts.id AS id
+        FROM artifacts JOIN sessions ON sessions.id = artifacts.session_id
+        WHERE sessions.project_id = ?
+      `).all(projectId) as Array<{ id: unknown }>).map((row) => String(row.id));
+
+      this.database.prepare(`
+        DELETE FROM pending_interactions
+        WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)
+      `).run(projectId);
+      this.database.prepare(`
+        DELETE FROM commands
+        WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)
+      `).run(projectId);
+      this.database.prepare(`
+        UPDATE events
+        SET type = 'unknown', payload_json = ?, raw_json = NULL
+        WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)
+      `).run(JSON.stringify({ eventType: "session.redacted", payload: null }), projectId);
+      this.database.prepare(`
+        UPDATE events
+        SET type = 'unknown', payload_json = ?, raw_json = NULL
+        WHERE type = 'project.upserted'
+          AND json_extract(payload_json, '$.project.id') = ?
+      `).run(JSON.stringify({ eventType: "project.redacted", payload: null }), projectId);
+      this.database.prepare("DELETE FROM terminal_records WHERE project_id = ?").run(projectId);
+      this.database.prepare("DELETE FROM sessions WHERE project_id = ?").run(projectId);
+      const deleted = this.database.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
+      if (Number(deleted.changes) !== 1) throw new Error("Project not found");
+      // Redact snapshots inside the same transaction. Keeping their cursors is
+      // required for crash-safe recovery when older journal rows were compacted.
+      const snapshots = this.database.prepare(
+        "SELECT cursor, snapshot_json FROM snapshots",
+      ).all() as Array<{ cursor: unknown; snapshot_json: unknown }>;
+      const updateSnapshot = this.database.prepare(
+        "UPDATE snapshots SET snapshot_json = ? WHERE cursor = ?",
+      );
+      const deleteSnapshot = this.database.prepare("DELETE FROM snapshots WHERE cursor = ?");
+      for (const row of snapshots) {
+        try {
+          const snapshot = upgradeStoredSnapshotProtocol(parseJson(row.snapshot_json));
+          if (!isAnvilSnapshot(snapshot)) throw new Error("Invalid snapshot");
+          updateSnapshot.run(
+            JSON.stringify(removeProjectFromSnapshot(snapshot, projectId)),
+            Number(row.cursor),
+          );
+        } catch {
+          // Corrupt snapshots are unusable and may still contain private data.
+          deleteSnapshot.run(Number(row.cursor));
+        }
+      }
+      const [committed] = this.insertEvents([event]);
+      if (!committed) throw new Error("Project removal did not produce an event");
+      this.database.exec("COMMIT");
+      return { event: committed, sessionIds, artifactIds };
     } catch (error) {
       this.database.exec("ROLLBACK");
       throw error;
@@ -368,57 +455,6 @@ export class ForgeDatabase {
       context.tokens, context.contextWindow, context.percent,
     );
     return Number(result.changes) === 1;
-  }
-
-  speechUsage(date: string): SpeechUsage {
-    const row = this.database.prepare(`
-      SELECT requests, characters FROM speech_daily_usage WHERE date = ?
-    `).get(date) as Record<string, unknown> | undefined;
-    return {
-      date,
-      requests: Number(row?.requests ?? 0),
-      characters: Number(row?.characters ?? 0),
-    };
-  }
-
-  reserveSpeechUsage(
-    date: string,
-    characters: number,
-    limits: SpeechUsageReservationLimits,
-  ):
-    | { accepted: true; usage: SpeechUsage }
-    | { accepted: false; usage: SpeechUsage; limit: "characters" | "requests" } {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("Invalid speech usage date");
-    if (!Number.isSafeInteger(characters) || characters < 1) throw new Error("Invalid speech character count");
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
-      const current = this.speechUsage(date);
-      if (current.requests + 1 > limits.requests) {
-        this.database.exec("COMMIT");
-        return { accepted: false, usage: current, limit: "requests" };
-      }
-      if (current.characters + characters > limits.characters) {
-        this.database.exec("COMMIT");
-        return { accepted: false, usage: current, limit: "characters" };
-      }
-      const usage = {
-        date,
-        requests: current.requests + 1,
-        characters: current.characters + characters,
-      };
-      this.database.prepare(`
-        INSERT INTO speech_daily_usage (date, requests, characters)
-        VALUES (?, ?, ?)
-        ON CONFLICT(date) DO UPDATE SET
-          requests = excluded.requests,
-          characters = excluded.characters
-      `).run(usage.date, usage.requests, usage.characters);
-      this.database.exec("COMMIT");
-      return { accepted: true, usage };
-    } catch (error) {
-      this.database.exec("ROLLBACK");
-      throw error;
-    }
   }
 
   listTerminalRecords(projectId?: string): StoredTerminalRecord[] {
@@ -1114,15 +1150,11 @@ export class ForgeDatabase {
       `);
     }
 
-    if (version < 12) {
+    if (version < 13) {
       this.database.exec(`
         BEGIN IMMEDIATE;
-        CREATE TABLE speech_daily_usage (
-          date TEXT PRIMARY KEY,
-          requests INTEGER NOT NULL CHECK(requests >= 0),
-          characters INTEGER NOT NULL CHECK(characters >= 0)
-        );
-        PRAGMA user_version = 12;
+        DROP TABLE IF EXISTS speech_daily_usage;
+        PRAGMA user_version = 13;
         COMMIT;
       `);
     }

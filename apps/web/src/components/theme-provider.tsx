@@ -9,15 +9,24 @@ import {
 } from "react";
 
 export type Theme = "dark" | "light" | "system";
+export const ACCENTS = ["neutral", "blue", "cyan", "emerald", "amber", "rose", "pink", "purple"] as const;
+export type Accent = (typeof ACCENTS)[number];
 
 type ThemeProviderContextValue = {
   theme: Theme;
   setTheme: (theme: Theme) => void;
+  accent: Accent;
+  setAccent: (accent: Accent) => void;
 };
 
 const ThemeProviderContext = createContext<ThemeProviderContextValue | undefined>(undefined);
 const THEME_STORAGE_KEY = "ocode-theme";
 const LEGACY_THEME_STORAGE_KEY = "anvil-theme";
+const ACCENT_STORAGE_KEY = "ocode-accent";
+
+function isAccent(value: string | null): value is Accent {
+  return value !== null && (ACCENTS as readonly string[]).includes(value);
+}
 
 function applyTheme(theme: Theme) {
   const root = document.documentElement;
@@ -58,8 +67,19 @@ export function ThemeProvider({
       return defaultTheme;
     }
   });
+  const [accent, setAccentState] = useState<Accent>(() => {
+    try {
+      const stored = localStorage.getItem(ACCENT_STORAGE_KEY);
+      return isAccent(stored) ? stored : "neutral";
+    } catch {
+      return "neutral";
+    }
+  });
 
   useLayoutEffect(() => applyTheme(theme), [theme]);
+  useLayoutEffect(() => {
+    document.documentElement.dataset.accent = accent;
+  }, [accent]);
 
   useEffect(() => {
     if (theme !== "system") return;
@@ -79,7 +99,16 @@ export function ThemeProvider({
       }
       setThemeState(nextTheme);
     },
-  }), [storageKey, theme]);
+    accent,
+    setAccent: (nextAccent) => {
+      try {
+        localStorage.setItem(ACCENT_STORAGE_KEY, nextAccent);
+      } catch {
+        // Accent selection still applies for the current page when storage is unavailable.
+      }
+      setAccentState(nextAccent);
+    },
+  }), [accent, storageKey, theme]);
 
   return (
     <ThemeProviderContext.Provider value={value}>

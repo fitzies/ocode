@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,7 +13,12 @@ import {
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
+import { DesktopUpdateStore, publishDesktopRelease } from "../desktop/desktopUpdateStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
+import {
+  GITHUB_REPOSITORY_MAX_PAGE,
+  GitHubRepositoryCatalogError,
+} from "../projects/githubRepositoryCatalog.ts";
 import { canonicalizeProjectsRoot } from "../projects/projectsRoot.ts";
 import { ForgeDatabase } from "../store/database.ts";
 import { ForgeHttpServer } from "./server.ts";
@@ -246,6 +251,62 @@ describe("ForgeHttpServer", () => {
     })).status).toBe(404);
   });
 
+  it("serves owner-authenticated Tauri update manifests and immutable bundles", async () => {
+    const updateDirectory = mkdtempSync(join(tmpdir(), "ocode-http-updates-"));
+    const bundle = join(updateDirectory, "ocode.app.tar.gz");
+    const signature = `${bundle}.sig`;
+    writeFileSync(bundle, "desktop bundle");
+    writeFileSync(signature, "YWJjZA==");
+    const release = publishDesktopRelease(updateDirectory, {
+      artifactPath: bundle,
+      signaturePath: signature,
+      version: "0.2.0",
+      target: "darwin",
+      arch: "aarch64",
+      notes: "Desktop updates",
+      pubDate: "2026-08-08T00:00:00.000Z",
+    });
+
+    await server.close();
+    server = new ForgeHttpServer({
+      events,
+      artifacts,
+      desktopUpdates: new DesktopUpdateStore(updateDirectory),
+      ownerLogin: "owner@example.com",
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+    const updateUrl = `${baseUrl}/api/v1/desktop/updates/darwin/aarch64/0.1.1`;
+
+    expect((await fetch(updateUrl)).status).toBe(403);
+    const manifestResponse = await fetch(updateUrl, {
+      headers: { "tailscale-user-login": "owner@example.com" },
+    });
+    expect(manifestResponse.status).toBe(200);
+    expect(manifestResponse.headers.get("cache-control")).toBe("no-store");
+    const manifest = await manifestResponse.json() as { version: string; url: string; signature: string };
+    expect(manifest).toMatchObject({ version: "0.2.0", signature: "YWJjZA==" });
+
+    const download = await fetch(manifest.url, {
+      headers: { "tailscale-user-login": "owner@example.com" },
+    });
+    expect(download.headers.get("cache-control")).toBe("private, max-age=31536000, immutable");
+    expect(download.headers.get("content-disposition")).toContain(release.artifact);
+    expect(await download.text()).toBe("desktop bundle");
+    const head = await fetch(manifest.url, {
+      method: "HEAD",
+      headers: { "tailscale-user-login": "owner@example.com" },
+    });
+    expect(head.headers.get("content-length")).toBe("14");
+    expect(await head.text()).toBe("");
+    expect((await fetch(`${baseUrl}/api/v1/desktop/updates/darwin/x86_64/0.1.1`, {
+      headers: { "tailscale-user-login": "owner@example.com" },
+    })).status).toBe(204);
+    rmSync(updateDirectory, { recursive: true, force: true });
+  });
+
   it("runs an owner-initiated web app rebuild", async () => {
     await server.close();
     let rebuilt = false;
@@ -316,6 +377,77 @@ describe("ForgeHttpServer", () => {
     expect(updated.status).toBe(200);
     expect(await updated.json()).toEqual({ path: nextRoot });
     rmSync(initialRoot, { recursive: true, force: true });
+  });
+
+  it("paginates GitHub repositories only for the authenticated owner and returns fixed errors", async () => {
+    await server.close();
+    let fail = false;
+    const requestedPages: number[] = [];
+    server = new ForgeHttpServer({
+      events,
+      ownerLogin: "owner@example.com",
+      listGitHubRepositories: async (page) => {
+        requestedPages.push(page);
+        if (fail) {
+          throw new GitHubRepositoryCatalogError(
+            "gh_unauthenticated",
+            "Forge's GitHub CLI is not authenticated. Run gh auth login on Forge and try again.",
+          );
+        }
+        return {
+          repositories: [{
+            nameWithOwner: "organization/private-tools",
+            name: "private-tools",
+            owner: "organization",
+            private: true,
+            updatedAt: "2026-07-23T01:00:00Z",
+          }],
+          page,
+          hasMore: page === 1,
+        };
+      },
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+    const ownerHeaders = { "tailscale-user-login": "owner@example.com" };
+
+    expect((await fetch(`${baseUrl}/api/v1/github/repositories?page=2`)).status).toBe(403);
+
+    const invalidPages = ["0", "1.5", String(GITHUB_REPOSITORY_MAX_PAGE + 1), "1&page=2"];
+    for (const invalidPage of invalidPages) {
+      const invalid = await fetch(`${baseUrl}/api/v1/github/repositories?page=${invalidPage}`, { headers: ownerHeaders });
+      expect(invalid.status).toBe(400);
+      expect(await invalid.json()).toMatchObject({
+        code: "invalid_github_repository_page",
+        message: `GitHub repository page must be an integer between 1 and ${GITHUB_REPOSITORY_MAX_PAGE}.`,
+      });
+    }
+    expect(requestedPages).toEqual([]);
+
+    const success = await fetch(`${baseUrl}/api/v1/github/repositories?page=2`, { headers: ownerHeaders });
+    expect(success.status).toBe(200);
+    expect(success.headers.get("cache-control")).toBe("no-store");
+    expect(await success.json()).toEqual({
+      repositories: [expect.objectContaining({
+        nameWithOwner: "organization/private-tools",
+        private: true,
+      })],
+      page: 2,
+      hasMore: false,
+    });
+    expect(requestedPages).toEqual([2]);
+
+    fail = true;
+    const failure = await fetch(`${baseUrl}/api/v1/github/repositories?page=3`, { headers: ownerHeaders });
+    expect(failure.status).toBe(503);
+    expect(await failure.json()).toMatchObject({
+      code: "gh_unauthenticated",
+      message: "Forge's GitHub CLI is not authenticated. Run gh auth login on Forge and try again.",
+      retryable: true,
+    });
+    expect(requestedPages).toEqual([2, 3]);
   });
 
   it("rejects rebuild requests when rebuilding is unavailable", async () => {

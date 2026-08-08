@@ -551,7 +551,7 @@ button:disabled {
 
 .session-row--active,
 .session-row--active:hover {
-  background: var(--accent);
+  background: color-mix(in oklab, var(--primary) 7%, var(--accent));
 }
 
 .session-copy {

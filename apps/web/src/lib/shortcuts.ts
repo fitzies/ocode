@@ -1,5 +1,5 @@
 export type ShortcutId =
-  | "newThread" | "closeThread" | "search" | "terminal" | "toggleSidebar"
+  | "newThread" | "closeThread" | "search" | "settings" | "terminal" | "toggleSidebar"
   | "nextThread" | "previousThread"
   | `thread${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
@@ -11,6 +11,7 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   newThread: "Mod+KeyN",
   closeThread: "Mod+KeyW",
   search: "Mod+KeyK",
+  settings: "Mod+Comma",
   terminal: "Ctrl+Backquote",
   toggleSidebar: "Mod+KeyB",
   nextThread: "Ctrl+Tab",
@@ -56,7 +57,7 @@ export function matchesShortcut(event: Pick<KeyboardEvent, "altKey" | "code" | "
 
 export function formatShortcutParts(chord: string): string[] {
   const mac = typeof navigator !== "undefined" && /^(Mac|iPhone|iPad|iPod)/i.test(navigator.platform);
-  const names: Record<string, string> = { Mod: mac ? "⌘" : "Ctrl", Ctrl: mac ? "⌃" : "Ctrl", Alt: mac ? "⌥" : "Alt", Shift: mac ? "⇧" : "Shift", Backquote: "`", Tab: "Tab" };
+  const names: Record<string, string> = { Mod: mac ? "⌘" : "Ctrl", Ctrl: mac ? "⌃" : "Ctrl", Alt: mac ? "⌥" : "Alt", Shift: mac ? "⇧" : "Shift", Backquote: "`", Comma: ",", Tab: "Tab" };
   return chord.split("+").map((part) => names[part] ?? part.replace(/^(Key|Digit)/, ""));
 }
 

@@ -11,10 +11,17 @@ export interface ProjectGitHeaderPresentation {
 }
 
 export function projectGitCheckSummary(checks: readonly ProjectGitCheck[]) {
-  const passed = checks.filter((check) => ["passed", "skipped", "neutral"].includes(check.state)).length;
+  const passed = checks.filter((check) => check.state === "passed").length;
   const running = checks.filter((check) => check.state === "running" || check.state === "queued").length;
   const failed = checks.filter((check) => check.state === "failed").length;
   return { passed, running, failed, total: checks.length };
+}
+
+export function projectGitDeliveryCompletion(checks: readonly ProjectGitCheck[]) {
+  const summary = projectGitCheckSummary(checks);
+  const terminal = checks.length > 0 && checks.every((check) => !["queued", "running", "unknown"].includes(check.state));
+  const hasIssues = checks.some((check) => check.state === "failed" || check.state === "cancelled");
+  return { ...summary, terminal, hasIssues };
 }
 
 function pullRequestPresentation(pullRequest: ProjectGitPullRequest): Pick<ProjectGitHeaderPresentation, "label" | "tone" | "busy"> {
@@ -29,6 +36,22 @@ function pullRequestPresentation(pullRequest: ProjectGitPullRequest): Pick<Proje
     case "closed": return { label: `${prefix} · Closed`, tone: "neutral", busy: false };
     default: return { label: prefix, tone: "neutral", busy: false };
   }
+}
+
+function commitPresentation(branch: string, checks: readonly ProjectGitCheck[]): Pick<ProjectGitHeaderPresentation, "label" | "tone" | "busy"> | undefined {
+  if (checks.length === 0) return undefined;
+  const summary = projectGitCheckSummary(checks);
+  if (summary.failed > 0) return { label: `${branch} · Delivery failed`, tone: "danger", busy: false };
+  if (summary.running > 0) {
+    const deploying = checks.some((check) => check.kind === "deployment" && (check.state === "running" || check.state === "queued"));
+    return { label: `${branch} · ${deploying ? "Deploying" : "Checks running"}`, tone: "info", busy: true };
+  }
+  if (checks.every((check) => ["passed", "skipped", "neutral"].includes(check.state))) {
+    return checks.some((check) => check.state === "passed")
+      ? { label: `${branch} · Ready`, tone: "success", busy: false }
+      : { label: `${branch} · Complete`, tone: "neutral", busy: false };
+  }
+  return { label: `${branch} · Status incomplete`, tone: "warning", busy: false };
 }
 
 export function projectGitPresentation(status: ProjectGitStatus): ProjectGitHeaderPresentation {
@@ -56,7 +79,10 @@ export function projectGitPresentation(status: ProjectGitStatus): ProjectGitHead
     ? { action: "commit" as const, actionLabel: "Commit & push" }
     : status.action === "push" ? { action: "push" as const, actionLabel: "Push" } : {};
   const pullRequest = status.github?.pullRequest;
-  if (pullRequest) return { ...pullRequestPresentation(pullRequest), ...localAction };
+  const commit = status.github?.commit;
+  const delivery = commitPresentation(branch, commit?.checks ?? []);
+  if (delivery) return { ...delivery, ...localAction };
+  if (!commit && pullRequest) return { ...pullRequestPresentation(pullRequest), ...localAction };
   if (status.action === "commit-and-push") {
     return {
       label: `${branch} · ${status.changedFiles} changed`,

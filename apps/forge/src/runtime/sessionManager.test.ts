@@ -2,9 +2,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { UnsequencedAnvilEvent } from "@anvil/pi-rpc";
 import {
   ANVIL_PROTOCOL_VERSION,
   createOcodeAskUserQuestionResponse,
+  GENERAL_PROJECT_NAME,
   type AnvilClientCommand,
 } from "@anvil/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import type { ForgeConfig } from "../config.ts";
 import { ForgeEventService } from "../events/eventService.ts";
+import { ProjectCloneError } from "../projects/projectCloneService.ts";
 import { ForgeDatabase } from "../store/database.ts";
 import { SessionManager } from "./sessionManager.ts";
 
@@ -99,7 +102,20 @@ beforeEach(() => {
         send({ type: "agent_start" });
         send({ type: "message_start", message: { role: "user", content: request.message, timestamp: 1 } });
         send({ type: "message_end", message: { role: "user", content: request.message, timestamp: 1 } });
-        if (request.message === "Stream output") {
+        if (request.message === "Fix the sidebar while Pi names this thread") {
+          send({ type: "response", id: request.id, command: request.type, success: true });
+          send({ type: "agent_settled" });
+          setTimeout(() => {
+            sessionName = "Generated sidebar title";
+            send({ type: "session_info_changed", name: sessionName });
+          }, 100);
+        } else if (request.message === "Reject first prompt") {
+          send({ type: "response", id: request.id, command: request.type, success: false, error: "Prompt rejected" });
+        } else if (request.message === "Reject matching title") {
+          sessionName = request.message;
+          send({ type: "session_info_changed", name: sessionName });
+          send({ type: "response", id: request.id, command: request.type, success: false, error: "Prompt rejected after naming" });
+        } else if (request.message === "Stream output") {
           send({ type: "message_start", message: { id: "assistant-stream", role: "assistant", content: [], timestamp: 2 } });
           send({ type: "message_update", message: { id: "assistant-stream" }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "Hello" } });
           send({ type: "message_update", message: { id: "assistant-stream" }, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: " world" } });
@@ -175,6 +191,7 @@ beforeEach(() => {
     databasePath: ":memory:",
     sessionDir: join(directory, "sessions"),
     artifactDir: join(directory, "artifacts"),
+    desktopUpdateDir: join(directory, "desktop-updates"),
     piExecutable: executable,
     webRoot: join(directory, "web"),
     projectsRoot: directory,
@@ -193,6 +210,27 @@ afterEach(async () => {
 });
 
 describe("SessionManager", () => {
+  it("does not remove an adopted General home workspace", async () => {
+    const generalHome = join(directory, "general-home");
+    mkdirSync(generalHome);
+    const project = { id: "existing-home", name: GENERAL_PROJECT_NAME, path: generalHome, workspaceKind: "general" as const };
+    events.createProject(project, {
+      type: "project.upserted",
+      payload: { project },
+      sessionId: null,
+      timestamp: new Date().toISOString(),
+    } as UnsequencedAnvilEvent);
+
+    events.markGeneralProject(project.id);
+    const response = await manager.handleCommand(command("remove-general", "project.delete", null, {
+      projectId: project.id,
+    }));
+
+    expect(response.success).toBe(false);
+    expect(response.error).toBe("The General home workspace cannot be removed");
+    expect(events.projectSummary(project.id)).toEqual(expect.objectContaining(project));
+  });
+
   it("creates a real RPC subprocess session and sends a prompt", async () => {
     const create = command("create-1", "session.create", null, { projectId: "anvil", sessionId: requestedSessionId });
     const created = await manager.handleCommand(create);
@@ -242,6 +280,77 @@ describe("SessionManager", () => {
       lastUserMessageSequence: expect.any(Number),
     });
     expect(database.readEventsAfter(0).some((event) => event.type === "session.prompted" && event.sessionId === sessionId)).toBe(true);
+  });
+
+  it("uses the first prompt as a provisional title until Pi generates one", async () => {
+    await manager.handleCommand(command("create-provisional-title", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    await waitUntil(() => events.sessionSummary(requestedSessionId)?.title === "Runtime test");
+    await manager.handleCommand(command("reset-provisional-title", "session.rename", requestedSessionId, {
+      title: "New session",
+    }));
+
+    const response = await manager.handleCommand(command(
+      "prompt-provisional-title",
+      "prompt.send",
+      requestedSessionId,
+      { content: "Fix the sidebar while Pi names this thread", delivery: "prompt" },
+    ));
+
+    expect(response.success).toBe(true);
+    expect(events.sessionSummary(requestedSessionId)?.title)
+      .toBe("Fix the sidebar while Pi names this…");
+    expect(database.getSession(requestedSessionId)?.session.title)
+      .toBe("Fix the sidebar while Pi names this…");
+
+    await waitUntil(() => events.sessionSummary(requestedSessionId)?.title === "Generated sidebar title");
+    expect(database.getSession(requestedSessionId)?.session.title).toBe("Generated sidebar title");
+  });
+
+  it("restores the default title when the first prompt is rejected", async () => {
+    await manager.handleCommand(command("create-rejected-title", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    await waitUntil(() => events.sessionSummary(requestedSessionId)?.title === "Runtime test");
+    await manager.handleCommand(command("reset-rejected-title", "session.rename", requestedSessionId, {
+      title: "New session",
+    }));
+
+    const response = await manager.handleCommand(command(
+      "prompt-rejected-title",
+      "prompt.send",
+      requestedSessionId,
+      { content: "Reject first prompt", delivery: "prompt" },
+    ));
+
+    expect(response).toMatchObject({ success: false, error: "Prompt rejected" });
+    expect(events.sessionSummary(requestedSessionId)?.title).toBe("New session");
+    expect(database.getSession(requestedSessionId)?.session.title).toBe("New session");
+  });
+
+  it("does not roll back a matching title generated by Pi before rejection", async () => {
+    await manager.handleCommand(command("create-matching-title", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    await waitUntil(() => events.sessionSummary(requestedSessionId)?.title === "Runtime test");
+    await manager.handleCommand(command("reset-matching-title", "session.rename", requestedSessionId, {
+      title: "New session",
+    }));
+
+    const response = await manager.handleCommand(command(
+      "prompt-matching-title",
+      "prompt.send",
+      requestedSessionId,
+      { content: "Reject matching title", delivery: "prompt" },
+    ));
+
+    expect(response).toMatchObject({ success: false, error: "Prompt rejected after naming" });
+    expect(events.sessionSummary(requestedSessionId)?.title).toBe("Reject matching title");
+    expect(database.getSession(requestedSessionId)?.session.title).toBe("Reject matching title");
   });
 
   it("routes durable read-state commands without starting Pi", async () => {
@@ -559,8 +668,8 @@ describe("SessionManager", () => {
       name: "Existing Project",
     }));
     expect(detected).toMatchObject({
-      success: true,
-      data: { status: "existing", path: existingDirectory },
+      success: false,
+      error: expect.stringContaining("Use a Forge directory"),
     });
     expect(events.currentSnapshot().projects.some((project) => project.path === existingDirectory)).toBe(false);
 
@@ -580,7 +689,7 @@ describe("SessionManager", () => {
     const blocked = await manager.handleCommand(command("project-blocked-entry", "project.create", null, {
       name: "Blocked Project",
     }));
-    expect(blocked).toMatchObject({ success: false, error: expect.stringContaining("not a safe project directory") });
+    expect(blocked).toMatchObject({ success: false, error: expect.stringContaining("Use a Forge directory") });
 
     await manager.stopAll();
     const orphanDirectory = join(config.sessionDir, "deleted-before-cleanup");
@@ -601,6 +710,130 @@ describe("SessionManager", () => {
 
     expect(failed).toMatchObject({ success: false, error: "database unavailable" });
     expect(existsSync(join(directory, "temporary-project"))).toBe(false);
+  });
+
+  it("runs clone staging cleanup after the projects root is canonicalized", async () => {
+    await manager.stopAll();
+    const cleanupStale = vi.fn();
+    manager = new SessionManager(config, database, events, {
+      projectCloner: { clone: vi.fn(), cleanupStale },
+    });
+
+    expect(cleanupStale).toHaveBeenCalledOnce();
+    expect(cleanupStale).toHaveBeenCalledWith(directory);
+  });
+
+  it("clones a normalized GitHub repository and registers it only after the move", async () => {
+    await manager.stopAll();
+    const clone = vi.fn(async (root: string, slug: string, repository: string) => {
+      const destination = join(root, slug);
+      mkdirSync(destination);
+      writeFileSync(join(destination, "README.md"), repository);
+      return destination;
+    });
+    manager = new SessionManager(config, database, events, { projectCloner: { clone } });
+
+    const response = await manager.handleCommand(command("project-clone", "project.clone", null, {
+      name: "Cloned Project",
+      repository: "git@github.com:Owner/repository.git",
+    }));
+
+    expect(response).toMatchObject({ success: true, data: { status: "cloned", projectId: expect.any(String) } });
+    expect(clone).toHaveBeenCalledWith(directory, "cloned-project", "Owner/repository");
+    expect(events.currentSnapshot().projects).toContainEqual(expect.objectContaining({
+      name: "Cloned Project",
+      path: join(directory, "cloned-project"),
+    }));
+  });
+
+  it("rejects clone name and path collisions without invoking the cloner", async () => {
+    await manager.stopAll();
+    const clone = vi.fn();
+    manager = new SessionManager(config, database, events, { projectCloner: { clone } });
+
+    const invalidRepository = await manager.handleCommand(command("project-clone-invalid-repository", "project.clone", null, {
+      name: "Invalid Repository",
+      repository: "https://token@github.com/owner/repository?token=secret",
+    }));
+    expect(invalidRepository).toMatchObject({ success: false, error: expect.stringContaining("valid GitHub repository") });
+
+    const duplicateName = await manager.handleCommand(command("project-clone-name-collision", "project.clone", null, {
+      name: "Anvil",
+      repository: "owner/repository",
+    }));
+    expect(duplicateName).toMatchObject({ success: false, error: expect.stringContaining("name already exists") });
+    expect(clone).not.toHaveBeenCalled();
+
+    mkdirSync(join(directory, "occupied"));
+    clone.mockRejectedValueOnce(new ProjectCloneError("existing destination was not changed"));
+    const collision = await manager.handleCommand(command("project-clone-path-collision", "project.clone", null, {
+      name: "Occupied",
+      repository: "owner/repository",
+    }));
+    expect(collision).toMatchObject({ success: false, error: expect.stringContaining("not changed") });
+    expect(existsSync(join(directory, "occupied"))).toBe(true);
+  });
+
+  it("preserves a successfully cloned workspace when registration persistence fails", async () => {
+    await manager.stopAll();
+    manager = new SessionManager(config, database, events, {
+      projectCloner: {
+        clone: async (root, slug) => {
+          const destination = join(root, slug);
+          mkdirSync(destination);
+          writeFileSync(join(destination, "keep.txt"), "cloned workspace");
+          return destination;
+        },
+      },
+    });
+    vi.spyOn(events, "createProject").mockImplementationOnce(() => {
+      throw new Error("database unavailable");
+    });
+
+    const response = await manager.handleCommand(command("project-clone-persistence-failure", "project.clone", null, {
+      name: "Preserved Clone",
+      repository: "owner/repository",
+    }));
+
+    expect(response).toMatchObject({ success: false, error: expect.stringContaining("cloned successfully") });
+    expect(response.error).toContain("use “Use a Forge directory”");
+    expect(readFileSync(join(directory, "preserved-clone", "keep.txt"), "utf8")).toBe("cloned workspace");
+    expect(events.currentSnapshot().projects.some((project) => project.path === join(directory, "preserved-clone"))).toBe(false);
+  });
+
+  it("reserves a clone destination while an earlier clone is running", async () => {
+    await manager.stopAll();
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    let started = false;
+    manager = new SessionManager(config, database, events, {
+      projectCloner: {
+        clone: async (root, slug) => {
+          started = true;
+          await blocked;
+          const destination = join(root, slug);
+          mkdirSync(destination);
+          return destination;
+        },
+      },
+    });
+    const first = manager.handleCommand(command("project-clone-concurrent-1", "project.clone", null, {
+      name: "Concurrent Clone",
+      repository: "owner/repository",
+    }));
+    await waitUntil(() => started);
+    const nextRoot = join(directory, "root-change-during-clone");
+    mkdirSync(nextRoot);
+    expect(() => manager.setProjectsRoot(nextRoot)).toThrow("cannot be changed while a repository is being cloned");
+    expect(manager.getProjectsRoot()).toBe(directory);
+    const second = await manager.handleCommand(command("project-clone-concurrent-2", "project.clone", null, {
+      name: "Concurrent Clone",
+      repository: "owner/repository",
+    }));
+    expect(second).toMatchObject({ success: false, error: expect.stringContaining("already being cloned") });
+    release();
+    await expect(first).resolves.toMatchObject({ success: true });
+    expect(events.currentSnapshot().projects.filter((project) => project.name === "Concurrent Clone")).toHaveLength(1);
   });
 
   it("persists projects root changes and creates future projects there", async () => {
@@ -651,6 +884,50 @@ describe("SessionManager", () => {
     manager = new SessionManager(config, database, events);
     expect(events.currentSnapshot().sessions.some((session) => session.id === sessionId)).toBe(false);
     expect(existsSync(runtimeDirectory)).toBe(false);
+  });
+
+  it("removes all project sessions without touching the workspace or reseeding config on restart", async () => {
+    const workspaceFile = join(directory, "workspace-stays.txt");
+    writeFileSync(workspaceFile, "keep");
+    const created = await manager.handleCommand(command("create-project-removal", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    expect(created.success).toBe(true);
+    const runtimeDirectory = join(config.sessionDir, requestedSessionId);
+    expect(existsSync(runtimeDirectory)).toBe(true);
+    const attachment = events.ingestAttachment(
+      requestedSessionId,
+      Buffer.from("private attachment"),
+      "text/plain",
+      "private.txt",
+    );
+    const attachmentPath = artifacts.pathFor(attachment.artifactId)!;
+    expect(existsSync(attachmentPath)).toBe(true);
+
+    const [removed, duplicateRemoval] = await Promise.all([
+      manager.handleCommand(command("remove-project", "project.delete", null, { projectId: "anvil" })),
+      manager.handleCommand(command("remove-project-again", "project.delete", null, { projectId: "anvil" })),
+    ]);
+
+    expect(removed.success).toBe(true);
+    expect(duplicateRemoval.success).toBe(false);
+    expect(duplicateRemoval.error).toBe("Project not found");
+    expect(events.currentSnapshot().projects).toEqual([]);
+    expect(events.currentSnapshot().sessions).toEqual([]);
+    expect(database.listProjects()).toEqual([]);
+    expect(database.getSession(requestedSessionId)).toBeUndefined();
+    expect(database.getArtifact(attachment.artifactId)).toBeUndefined();
+    expect(existsSync(runtimeDirectory)).toBe(false);
+    expect(existsSync(attachmentPath)).toBe(false);
+    expect(readFileSync(workspaceFile, "utf8")).toBe("keep");
+    expect(existsSync(directory)).toBe(true);
+
+    await manager.stopAll();
+    events = new ForgeEventService(database, config.projects, artifacts);
+    manager = new SessionManager(config, database, events);
+    expect(events.currentSnapshot().projects).toEqual([]);
+    expect(database.listProjects()).toEqual([]);
   });
 
   it("marks active runs and dialogs interrupted when Forge restarts", async () => {

@@ -37,8 +37,9 @@
 }
 
 .project-resource-tab--active {
-  border-color: var(--foreground);
   color: var(--foreground);
+  background: color-mix(in oklab, var(--primary) 6%, transparent);
+  border-color: var(--primary-indicator);
 }
 
 .project-resource-tab > button:first-child {

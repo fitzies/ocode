@@ -31,7 +31,7 @@ function relativeTime(value?: string): string {
 }
 
 function duration(check: ProjectGitCheck): string | undefined {
-  if (!check.startedAt) return undefined;
+  if (!check.startedAt || (!check.completedAt && check.state !== "running" && check.state !== "queued")) return undefined;
   const start = new Date(check.startedAt).getTime();
   const end = check.completedAt ? new Date(check.completedAt).getTime() : Date.now();
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return undefined;
@@ -64,7 +64,7 @@ function checkIcon(check: ProjectGitCheck) {
 function stateLabel(check: ProjectGitCheck): string {
   if (check.state === "running") return "Running…";
   if (check.state === "queued") return "Queued";
-  if (check.state === "passed") return duration(check) ?? "Passed";
+  if (check.state === "passed") return check.kind === "deployment" ? "Live" : duration(check) ?? "Passed";
   if (check.state === "failed") return "Failed";
   if (check.state === "cancelled") return "Cancelled";
   if (check.state === "skipped") return "Skipped";
@@ -78,9 +78,13 @@ function CheckRow({ check }: { check: ProjectGitCheck }) {
       <span className="flex size-4 items-center justify-center">{checkIcon(check)}</span>
       <span className="min-w-0">
         <span className="block truncate text-foreground">{check.name}</span>
-        {check.workflow && check.workflow !== check.name && (
-          <span className="block truncate text-[0.625rem] text-muted-foreground">{check.workflow}</span>
-        )}
+        {(check.signalCount && check.signalCount > 1) || (check.workflow && check.workflow !== check.name) ? (
+          <span className="block truncate text-[0.625rem] text-muted-foreground">
+            {check.signalCount && check.signalCount > 1 ? `${check.signalCount} GitHub signals combined` : ""}
+            {check.signalCount && check.signalCount > 1 && check.workflow && check.workflow !== check.name ? " · " : ""}
+            {check.workflow && check.workflow !== check.name ? check.workflow : ""}
+          </span>
+        ) : null}
       </span>
       <span className={cn(
         "whitespace-nowrap text-[0.625rem] text-muted-foreground",
@@ -101,22 +105,58 @@ function CheckRow({ check }: { check: ProjectGitCheck }) {
   );
 }
 
+function CheckGroup({ title, checks, detail }: { title: string; checks: ProjectGitCheck[]; detail: string }) {
+  const summary = projectGitCheckSummary(checks);
+  return (
+    <div className="px-4 pb-3">
+      <div className="mb-1.5 flex items-center justify-between">
+        <strong className="text-[0.625rem] font-semibold uppercase tracking-[0.1em]">{title}</strong>
+        <span className="font-mono text-[0.625rem] text-muted-foreground">{detail || `${summary.passed} / ${summary.total}`}</span>
+      </div>
+      {checks.map((check, index) => <CheckRow key={`${check.name}-${index}`} check={check} />)}
+    </div>
+  );
+}
+
 function Checks({ checks }: { checks: ProjectGitCheck[] }) {
   const agents = checks.filter((check) => check.kind === "agent");
-  const delivery = checks.filter((check) => check.kind !== "agent");
+  const deployments = checks.filter((check) => check.kind === "deployment");
+  const ci = checks.filter((check) => check.kind === "check");
   const summary = projectGitCheckSummary(checks);
+  const incomplete = checks.filter((check) => check.state === "cancelled" || check.state === "unknown").length;
+  const onlyNeutral = checks.length > 0 && checks.every((check) => check.state === "skipped" || check.state === "neutral");
+  const deliveryLabel = summary.failed > 0
+    ? "Delivery needs attention"
+    : summary.running > 0
+      ? "Delivery in progress"
+      : incomplete > 0
+        ? "Delivery status incomplete"
+        : onlyNeutral ? "Delivery finished" : checks.length > 0 ? "Delivery complete" : "No delivery status reported";
 
   return (
     <>
       <div className="px-4 py-3">
-        <div className="mb-1.5 flex items-center justify-between">
-          <strong className="text-[0.625rem] font-semibold uppercase tracking-[0.1em]">Checks & deployments</strong>
-          <span className="font-mono text-[0.625rem] text-muted-foreground">{summary.passed} / {summary.total}</span>
+        <div className="flex items-center gap-2 font-medium">
+          {summary.failed > 0
+            ? <HugeiconsIcon icon={Alert02Icon} strokeWidth={2} className="size-3.5 text-[var(--red)]" />
+            : summary.running > 0
+              ? <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-3.5 animate-spin text-[var(--status-info)]" />
+              : incomplete > 0 || onlyNeutral || checks.length === 0
+                ? <HugeiconsIcon icon={Clock03Icon} strokeWidth={2} className="size-3.5 text-[var(--amber)]" />
+                : <HugeiconsIcon icon={CheckmarkCircle02Icon} strokeWidth={2} className="size-3.5 text-[var(--green)]" />}
+          <strong className="text-[0.75rem]">{deliveryLabel}</strong>
         </div>
-        {delivery.length > 0 ? delivery.map((check, index) => <CheckRow key={`${check.name}-${index}`} check={check} />) : (
-          <p className="border-t border-border/70 py-2 text-[0.6875rem] text-muted-foreground">No checks have been reported.</p>
-        )}
+        <p className="mt-1 pl-[1.375rem] text-[0.625rem] text-muted-foreground">
+          {checks.length > 0 ? `${summary.passed}/${summary.total} checks passed · ${summary.running} active${summary.failed > 0 ? ` · ${summary.failed} failed` : ""}${incomplete > 0 ? ` · ${incomplete} incomplete` : ""}` : "Nothing has reported for this commit yet."}
+        </p>
       </div>
+      {ci.length > 0 ? <CheckGroup title="CI checks" checks={ci} detail={`${projectGitCheckSummary(ci).passed} / ${ci.length} passed`} /> : (
+        <div className="px-4 pb-3">
+          <div className="mb-1.5 flex items-center justify-between"><strong className="text-[0.625rem] font-semibold uppercase tracking-[0.1em]">CI checks</strong><span className="font-mono text-[0.625rem] text-muted-foreground">0 reported</span></div>
+          <p className="border-t border-border/70 py-2 text-[0.625rem] text-muted-foreground">No CI checks were reported for this commit.</p>
+        </div>
+      )}
+      {deployments.length > 0 && <CheckGroup title="Deployments" checks={deployments} detail={`${deployments.length} ${deployments.length === 1 ? "environment" : "environments"}`} />}
       {agents.length > 0 && (
         <div className="mx-4 mb-3 rounded-lg border border-[color-mix(in_oklab,var(--status-info)_30%,var(--border))] bg-[color-mix(in_oklab,var(--status-info)_7%,transparent)] px-3 py-2.5">
           <div className="mb-1 flex items-center gap-1.5 text-[0.6875rem] font-medium text-[var(--status-info)]">
@@ -147,13 +187,15 @@ export function ProjectGitStatusPanel({
   onRefresh: () => void;
 }) {
   const pullRequest = status.github?.pullRequest;
+  const commit = status.github?.commit;
+  const checks = commit ? commit.checks : pullRequest?.checks ?? [];
   const remoteLabel = status.remote?.provider === "github" && status.remote.owner && status.remote.repository
     ? `${status.remote.owner}/${status.remote.repository}`
     : status.remote?.name ?? "Local repository";
   const branchDestination = pullRequest?.baseBranch ?? status.upstream;
 
   return (
-    <div className="repository-status-panel">
+    <div className="min-w-0 text-popover-foreground">
       <div className="flex items-start justify-between gap-3 px-4 py-3.5">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 font-medium text-foreground">
@@ -173,8 +215,18 @@ export function ProjectGitStatusPanel({
         ) : <span className="text-[0.625rem] text-muted-foreground">{remoteLabel}</span>}
       </div>
 
-      {pullRequest && (
+      {commit && (
         <div className="border-y border-border bg-muted/20 px-4 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <strong className="min-w-0 truncate text-[0.75rem] font-medium text-foreground">{commit.subject}</strong>
+            <a className="shrink-0 font-mono text-[0.625rem] text-[var(--status-info)] hover:underline" href={commit.url} target="_blank" rel="noreferrer">{commit.shortHash}</a>
+          </div>
+          <p className="mt-1 text-[0.625rem] text-muted-foreground">Current pushed commit · {status.ahead > 0 ? `${status.ahead} local ${status.ahead === 1 ? "commit" : "commits"} ahead` : "up to date"}</p>
+        </div>
+      )}
+
+      {pullRequest && (
+        <div className={cn("border-b border-border bg-muted/20 px-4 py-3", !commit && "border-t")}>
           <div className="flex items-start justify-between gap-3">
             <a className="min-w-0 truncate font-medium text-foreground hover:underline" href={pullRequest.url} target="_blank" rel="noreferrer">
               PR #{pullRequest.number} · {pullRequest.title}
@@ -187,10 +239,6 @@ export function ProjectGitStatusPanel({
         </div>
       )}
 
-      {!pullRequest && status.remote?.provider === "github" && !status.remoteStatusError && (
-        <div className="border-y border-border bg-muted/20 px-4 py-2.5 text-[0.6875rem] text-muted-foreground">No pull request for this branch.</div>
-      )}
-
       <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-4 py-3">
         <div>
           <strong className="text-[0.625rem] font-semibold uppercase tracking-[0.1em]">Local</strong>
@@ -200,6 +248,7 @@ export function ProjectGitStatusPanel({
               : "Working tree clean"}
             {status.ahead > 0 ? ` · ${status.ahead} ahead` : ""}
             {(status.behind ?? 0) > 0 ? ` · ${status.behind} behind` : ""}
+            {commit && status.changedFiles > 0 ? <span className="text-[var(--amber)]"> · not included in this delivery</span> : null}
           </p>
           {status.lastCommit && <p className="mt-1 truncate font-mono text-[0.5625rem] text-muted-foreground">{status.lastCommit.shortHash} · {status.lastCommit.subject}</p>}
         </div>
@@ -216,14 +265,14 @@ export function ProjectGitStatusPanel({
 
       {status.remoteStatusError && (
         <div className="px-4 pb-3">
-          <Alert><HugeiconsIcon icon={CloudUploadIcon} strokeWidth={2} /><AlertTitle>Remote status unavailable</AlertTitle><AlertDescription>{status.remoteStatusError}</AlertDescription></Alert>
+          <Alert><HugeiconsIcon icon={CloudUploadIcon} strokeWidth={2} /><AlertTitle>{commit && !commit.complete ? "Some delivery status unavailable" : "Remote status unavailable"}</AlertTitle><AlertDescription>{status.remoteStatusError}</AlertDescription></Alert>
         </div>
       )}
 
-      {pullRequest && <><Separator /><Checks checks={pullRequest.checks} /></>}
+      {(commit || pullRequest) && <><Separator /><Checks checks={checks} /></>}
 
       <div className="flex items-center justify-between border-t border-border px-4 py-2.5 text-[0.625rem] text-muted-foreground">
-        <span>Updated {relativeTime(status.statusUpdatedAt)}</span>
+        <span>{commit ? <><a className="hover:text-foreground hover:underline" href={commit.url} target="_blank" rel="noreferrer">Status for {commit.shortHash}</a> · </> : null}Updated {relativeTime(status.statusUpdatedAt)}</span>
         <div className="flex items-center gap-1">
           {onGitAction && gitActionLabel && (
             <Button variant="ghost" size="xs" className="bg-transparent" onClick={onGitAction} disabled={gitActionBusy} aria-label={gitActionLabel}>
@@ -232,7 +281,7 @@ export function ProjectGitStatusPanel({
             </Button>
           )}
           {pullRequest && (
-            <Button asChild variant="ghost" size="xs"><a href={pullRequest.url} target="_blank" rel="noreferrer">View PR<HugeiconsIcon icon={ExternalLinkIcon} strokeWidth={2} /></a></Button>
+            <Button asChild variant="ghost" size="xs"><a href={pullRequest.url} target="_blank" rel="noreferrer">PR<HugeiconsIcon icon={ExternalLinkIcon} strokeWidth={2} /></a></Button>
           )}
           <Button variant="ghost" size="icon-xs" aria-label="Refresh repository status" onClick={onRefresh} disabled={refreshing}>
             <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} className={cn("size-3.5", refreshing && "animate-spin")} />

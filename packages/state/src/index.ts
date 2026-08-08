@@ -96,6 +96,39 @@ function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T
   return next;
 }
 
+function withoutKeys<T>(record: Record<string, T>, keys: ReadonlySet<string>): Record<string, T> {
+  return Object.fromEntries(Object.entries(record).filter(([key]) => !keys.has(key)));
+}
+
+export function removeProjectFromSnapshot(snapshot: AnvilSnapshot, projectId: string): AnvilSnapshot {
+  const sessionIds = new Set(
+    snapshot.sessions
+      .filter((session) => session.projectId === projectId)
+      .map((session) => session.id),
+  );
+  const sessions = snapshot.sessions.filter((session) => !sessionIds.has(session.id));
+  return {
+    ...snapshot,
+    projects: snapshot.projects.filter((project) => project.id !== projectId),
+    sessions,
+    activeSessionId: snapshot.activeSessionId && sessionIds.has(snapshot.activeSessionId)
+      ? sessions[0]?.id ?? null
+      : snapshot.activeSessionId,
+    timelines: withoutKeys(snapshot.timelines, sessionIds),
+    catalogs: withoutKeys(snapshot.catalogs, sessionIds),
+    pendingInteractions: snapshot.pendingInteractions.filter(
+      (request) => !sessionIds.has(request.sessionId),
+    ),
+    extensionStatuses: snapshot.extensionStatuses.filter(
+      (status) => !sessionIds.has(status.sessionId),
+    ),
+    widgets: snapshot.widgets.filter((widget) => !sessionIds.has(widget.sessionId)),
+    queues: withoutKeys(snapshot.queues, sessionIds),
+    composerDrafts: withoutKeys(snapshot.composerDrafts, sessionIds),
+    runStates: withoutKeys(snapshot.runStates, sessionIds),
+  };
+}
+
 function updateSession(
   snapshot: AnvilSnapshot,
   sessionId: string,
@@ -194,6 +227,8 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
       };
     case "project.upserted":
       return { ...next, projects: replaceProject(snapshot, event.payload.project) };
+    case "project.deleted":
+      return removeProjectFromSnapshot(next, event.payload.projectId);
     case "session.upserted": {
       const incoming = event.payload.session;
       const existing = snapshot.sessions.find((session) => session.id === incoming.id);
@@ -283,7 +318,7 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
         event.payload.modelId === undefined &&
         event.payload.thinkingLevel === undefined &&
         event.payload.title === undefined;
-      const { branch, ...configuration } = event.payload;
+      const { branch, titleSource: _titleSource, ...configuration } = event.payload;
       return {
         ...next,
         sessions: updateSession(snapshot, event.sessionId, {

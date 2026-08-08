@@ -12,21 +12,26 @@ import {
   type AnvilCommandResponse,
   type AnvilEvent,
   type AnvilStreamReset,
+  type GitHubRepositoryPage,
 } from "@anvil/protocol";
 
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
+import { DesktopUpdateStore } from "../desktop/desktopUpdateStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
+import {
+  GITHUB_REPOSITORY_PAGE_ERROR,
+  GitHubRepositoryCatalogError,
+  isValidGitHubRepositoryPageNumber,
+} from "../projects/githubRepositoryCatalog.ts";
 import { ProjectFileService } from "../projects/projectFileService.ts";
 import { ProjectGitService } from "../projects/projectGitService.ts";
 import { ProjectsRootValidationError } from "../projects/projectsRoot.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
-import type { SpeechController } from "../speech/speechRuntime.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
 import { ProjectFileRoutes } from "./projectFileRoutes.ts";
 import { ProjectGitRoutes } from "./projectGitRoutes.ts";
 import { authorizedOwner, sameOrigin } from "./security.ts";
-import { SpeechRoutes } from "./speechRoutes.ts";
 import { TerminalWebSocketChannel } from "./terminalWebSocket.ts";
 
 const MAX_COMMAND_BYTES = 2 * 1024 * 1024;
@@ -42,10 +47,11 @@ export interface ForgeHttpServerOptions {
   projectFiles?: ProjectFileService;
   projectGit?: ProjectGitService;
   searchFiles?: (sessionId: string, query: string, limit: number) => Promise<string[] | undefined>;
+  listGitHubRepositories?: (page: number) => Promise<GitHubRepositoryPage>;
   getProjectsRoot?: () => string;
   setProjectsRoot?: (path: string) => string;
   requestRebuild?: () => Promise<void>;
-  speech?: SpeechController;
+  desktopUpdates?: DesktopUpdateStore;
   terminals?: TerminalManager;
   instanceId?: string;
   ownerLogin?: string;
@@ -101,12 +107,10 @@ export class ForgeHttpServer {
   private readonly instanceId: string;
   private readonly projectFileRoutes?: ProjectFileRoutes;
   private readonly projectGitRoutes?: ProjectGitRoutes;
-  private readonly speechRoutes: SpeechRoutes;
   private readonly terminalChannel?: TerminalWebSocketChannel;
 
   constructor(private readonly options: ForgeHttpServerOptions) {
     this.instanceId = options.instanceId ?? randomUUID();
-    this.speechRoutes = new SpeechRoutes(options.speech);
     this.server = createServer((request, response) => {
       void this.route(request, response).catch((error) => {
         if (response.headersSent) {
@@ -176,7 +180,21 @@ export class ForgeHttpServer {
       sendJson(response, 403, apiError("owner_rejected", "Tailscale identity is not authorized"));
       return;
     }
-    if (await this.speechRoutes.handle(request, response, url)) return;
+    if (request.method === "GET" && url.pathname === "/api/v1/github/repositories") {
+      const pageValues = url.searchParams.getAll("page");
+      const rawPage = pageValues[0];
+      const page = rawPage === undefined ? 1 : Number(rawPage);
+      if (
+        pageValues.length > 1 ||
+        (rawPage !== undefined && !/^[1-9]\d*$/.test(rawPage)) ||
+        !isValidGitHubRepositoryPageNumber(page)
+      ) {
+        sendJson(response, 400, apiError("invalid_github_repository_page", GITHUB_REPOSITORY_PAGE_ERROR));
+        return;
+      }
+      await this.githubRepositories(response, page);
+      return;
+    }
     if (request.method === "GET" && url.pathname === "/api/v1/settings/projects-root") {
       this.projectsRoot(response);
       return;
@@ -189,6 +207,16 @@ export class ForgeHttpServer {
     if (this.projectGitRoutes && await this.projectGitRoutes.handle(request, response, url)) return;
     if (request.method === "POST" && url.pathname === "/api/v1/admin/rebuild") {
       await this.rebuild(request, response);
+      return;
+    }
+    const desktopUpdateArtifactMatch = /^\/api\/v1\/desktop\/updates\/artifacts\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+    if ((request.method === "GET" || request.method === "HEAD") && desktopUpdateArtifactMatch) {
+      await this.desktopUpdateArtifact(request, response, desktopUpdateArtifactMatch[1]!, desktopUpdateArtifactMatch[2]!, desktopUpdateArtifactMatch[3]!);
+      return;
+    }
+    const desktopUpdateMatch = /^\/api\/v1\/desktop\/updates\/([^/]+)\/([^/]+)\/([^/]+)$/.exec(url.pathname);
+    if (request.method === "GET" && desktopUpdateMatch) {
+      await this.desktopUpdate(request, response, desktopUpdateMatch[1]!, desktopUpdateMatch[2]!);
       return;
     }
     const attachmentDeleteMatch = /^\/api\/v1\/sessions\/([^/]+)\/attachments\/([^/]+)$/.exec(url.pathname);
@@ -296,6 +324,23 @@ export class ForgeHttpServer {
       if (await this.staticFile(request, response, url.pathname)) return;
     }
     sendJson(response, 404, apiError("not_found", "Route not found"));
+  }
+
+  private async githubRepositories(response: ServerResponse, page: number): Promise<void> {
+    if (!this.options.listGitHubRepositories) {
+      sendJson(response, 503, apiError("github_repositories_unavailable", "GitHub repository listing is unavailable", true));
+      return;
+    }
+    try {
+      sendJson(response, 200, await this.options.listGitHubRepositories(page));
+    } catch (error) {
+      if (error instanceof GitHubRepositoryCatalogError) {
+        const status = error.code === "github_timeout" ? 504 : error.code === "github_failed" ? 502 : 503;
+        sendJson(response, status, apiError(error.code, error.message, true));
+        return;
+      }
+      sendJson(response, 502, apiError("github_failed", "Forge could not load GitHub repositories. Try again.", true));
+    }
   }
 
   private projectsRoot(response: ServerResponse): void {
@@ -494,6 +539,93 @@ export class ForgeHttpServer {
       "content-security-policy": "sandbox",
     });
     response.end(request.method === "HEAD" ? undefined : favicon.body);
+  }
+
+  private async desktopUpdate(
+    request: IncomingMessage,
+    response: ServerResponse,
+    encodedTarget: string,
+    encodedArch: string,
+  ): Promise<void> {
+    if (!this.options.desktopUpdates) {
+      response.writeHead(204, { "cache-control": "no-store" });
+      response.end();
+      return;
+    }
+    let target: string;
+    let arch: string;
+    try {
+      target = decodeURIComponent(encodedTarget);
+      arch = decodeURIComponent(encodedArch);
+    } catch {
+      sendJson(response, 400, apiError("invalid_desktop_update", "Desktop update target is malformed"));
+      return;
+    }
+    const release = await this.options.desktopUpdates.latest(target, arch);
+    if (!release) {
+      response.writeHead(204, { "cache-control": "no-store" });
+      response.end();
+      return;
+    }
+    const forwardedProtocol = request.headers["x-forwarded-proto"];
+    const protocol = (Array.isArray(forwardedProtocol) ? forwardedProtocol[0] : forwardedProtocol)?.split(",", 1)[0]?.trim() === "https"
+      ? "https"
+      : "http";
+    const host = request.headers.host;
+    if (!host || !/^[a-z0-9.-]+(?::\d{1,5})?$/i.test(host)) {
+      sendJson(response, 400, apiError("invalid_desktop_update", "Desktop update request host is invalid"));
+      return;
+    }
+    const artifactUrl = `${protocol}://${host}/api/v1/desktop/updates/artifacts/${encodeURIComponent(target)}/${encodeURIComponent(arch)}/${encodeURIComponent(release.artifact)}`;
+    sendJson(response, 200, {
+      version: release.version,
+      notes: release.notes ?? "",
+      pub_date: release.pubDate,
+      url: artifactUrl,
+      signature: release.signature,
+    });
+  }
+
+  private async desktopUpdateArtifact(
+    request: IncomingMessage,
+    response: ServerResponse,
+    encodedTarget: string,
+    encodedArch: string,
+    encodedArtifact: string,
+  ): Promise<void> {
+    let target: string;
+    let arch: string;
+    let artifact: string;
+    try {
+      target = decodeURIComponent(encodedTarget);
+      arch = decodeURIComponent(encodedArch);
+      artifact = decodeURIComponent(encodedArtifact);
+    } catch {
+      sendJson(response, 400, apiError("invalid_desktop_update", "Desktop update artifact path is malformed"));
+      return;
+    }
+    const opened = await this.options.desktopUpdates?.openArtifact(target, arch, artifact);
+    if (!opened) {
+      sendJson(response, 404, apiError("desktop_update_not_found", "Desktop update artifact was not found"));
+      return;
+    }
+    response.writeHead(200, {
+      "content-type": "application/gzip",
+      "content-length": opened.byteLength,
+      "content-disposition": `attachment; filename="${opened.artifact}"`,
+      "cache-control": "private, max-age=31536000, immutable",
+      "x-content-type-options": "nosniff",
+      "content-security-policy": "sandbox",
+    });
+    if (request.method === "HEAD") {
+      await opened.handle.close();
+      response.end();
+      return;
+    }
+    const stream = opened.handle.createReadStream();
+    stream.on("error", (error) => response.destroy(error));
+    response.once("close", () => stream.destroy());
+    stream.pipe(response);
   }
 
   private async artifact(

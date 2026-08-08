@@ -156,6 +156,10 @@ function namePastedFile(file: File, index: number): File {
   });
 }
 
+export function isFileDrag(dataTransfer: Pick<DataTransfer, "types"> | null): boolean {
+  return Boolean(dataTransfer && Array.from(dataTransfer.types).includes("Files"));
+}
+
 function Widget({ widget }: { widget: ExtensionWidget }) {
   return (
     <aside className="extension-widget" aria-label={`Extension widget ${widget.key}`}>
@@ -232,8 +236,10 @@ export function Composer({
   const [fileItems, setFileItems] = useState<WorkspaceFile[]>([]);
   const [fileIndex, setFileIndex] = useState(0);
   const [fileMenuDismissed, setFileMenuDismissed] = useState(false);
+  const [fileDropActive, setFileDropActive] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileDragDepthRef = useRef(0);
   const running = status === "running";
   const readyAttachments = attachments.flatMap((attachment) => attachment.reference ? [attachment.reference] : []);
   const uploadsPending = attachments.some((attachment) => attachment.status === "uploading");
@@ -278,7 +284,55 @@ export function Composer({
     setFileItems([]);
     setFileIndex(0);
     setFileMenuDismissed(false);
+    setFileDropActive(false);
+    fileDragDepthRef.current = 0;
   }, [sessionId]);
+
+  useEffect(() => {
+    const resetFileDrag = () => {
+      fileDragDepthRef.current = 0;
+      setFileDropActive(false);
+    };
+    const onFileDragEnter = (event: DragEvent) => {
+      if (!isFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      fileDragDepthRef.current += 1;
+      setFileDropActive(true);
+    };
+    const onFileDragOver = (event: DragEvent) => {
+      if (!isFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+      setFileDropActive(true);
+    };
+    const onFileDragLeave = (event: DragEvent) => {
+      if (!isFileDrag(event.dataTransfer)) return;
+      fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+      if (fileDragDepthRef.current === 0) setFileDropActive(false);
+    };
+    const onFileDrop = (event: DragEvent) => {
+      if (!isFileDrag(event.dataTransfer)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      resetFileDrag();
+      if (files.length) onAttachFiles(sessionId, files);
+    };
+
+    window.addEventListener("dragenter", onFileDragEnter, true);
+    window.addEventListener("dragover", onFileDragOver, true);
+    window.addEventListener("dragleave", onFileDragLeave, true);
+    window.addEventListener("drop", onFileDrop, true);
+    window.addEventListener("blur", resetFileDrag);
+    return () => {
+      window.removeEventListener("dragenter", onFileDragEnter, true);
+      window.removeEventListener("dragover", onFileDragOver, true);
+      window.removeEventListener("dragleave", onFileDragLeave, true);
+      window.removeEventListener("drop", onFileDrop, true);
+      window.removeEventListener("blur", resetFileDrag);
+      fileDragDepthRef.current = 0;
+    };
+  }, [onAttachFiles, sessionId]);
 
   useEffect(() => {
     if (!draft) return;
@@ -455,7 +509,14 @@ export function Composer({
           {" queued"}
         </div>
       )}
-      <form className="composer" onSubmit={submit}>
+      <form className={`composer${fileDropActive ? " composer--file-drop-active" : ""}`} onSubmit={submit}>
+        <span className="sr-only" aria-live="polite">
+          {fileDropActive ? "Drop files anywhere on this page to attach them." : ""}
+        </span>
+        <div className="composer-file-dropzone" aria-hidden="true">
+          <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} />
+          <span><strong>Drop files to attach</strong><small>Release anywhere on this page</small></span>
+        </div>
         {fileMention && fileItems.length > 0 && !fileMenuDismissed && (
           <div id="file-mention-menu" className="slash-menu file-menu" role="listbox" aria-label="Workspace files">
             <div className="slash-menu-heading">
@@ -635,7 +696,7 @@ export function Composer({
       )}
       <div className="composer-status">
         <span className="composer-status-workspace">
-          {workspaceKind === "worktree" ? "worktree" : "main workspace"}
+          {workspaceKind === "general" ? "home workspace" : workspaceKind === "worktree" ? "worktree" : "main workspace"}
         </span>
         <SubagentActivityPopover activity={subagents} />
       </div>

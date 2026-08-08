@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 
 const MAX_HISTORY_LINES = 5_000;
@@ -73,6 +73,26 @@ export class TerminalHistoryStore {
 
   flushAll(): void {
     for (const path of this.cache.keys()) this.flushPath(path);
+  }
+
+  reconcile(historyFiles: readonly string[]): void {
+    const known = new Set(historyFiles.map((historyFile) => this.path(historyFile)));
+    for (const projectEntry of readdirSync(this.root, { withFileTypes: true })) {
+      const projectPath = resolve(this.root, projectEntry.name);
+      if (!projectPath.startsWith(`${this.root}${sep}`)) continue;
+      if (!projectEntry.isDirectory()) {
+        try { rmSync(projectPath, { force: true }); } catch { /* Retry on the next startup. */ }
+        continue;
+      }
+      for (const historyEntry of readdirSync(projectPath, { withFileTypes: true })) {
+        const historyPath = resolve(projectPath, historyEntry.name);
+        if (!historyPath.startsWith(`${projectPath}${sep}`) || known.has(historyPath)) continue;
+        try { rmSync(historyPath, { recursive: historyEntry.isDirectory(), force: true }); } catch { /* Retry later. */ }
+      }
+      if (![...known].some((historyPath) => historyPath.startsWith(`${projectPath}${sep}`))) {
+        try { rmSync(projectPath, { recursive: true, force: true }); } catch { /* Retry later. */ }
+      }
+    }
   }
 
   private schedule(path: string): void {

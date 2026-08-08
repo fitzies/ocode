@@ -67,6 +67,7 @@
     --popover-foreground: oklch(0.145 0 0);
     --primary: oklch(0.205 0 0);
     --primary-foreground: oklch(0.985 0 0);
+    --primary-indicator: color-mix(in oklab, var(--primary) 65%, var(--foreground));
     --secondary: oklch(0.97 0 0);
     --secondary-foreground: oklch(0.205 0 0);
     --muted: oklch(0.97 0 0);
@@ -135,6 +136,56 @@
     --sidebar-accent-foreground: oklch(0.985 0 0);
     --sidebar-border: oklch(1 0 0 / 10%);
     --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* Tailwind 400 accents stay vivid against both app themes and keep dark button text legible. */
+:root[data-accent="blue"] {
+    --primary: oklch(0.707 0.165 254.624);
+    --primary-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.707 0.165 254.624);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
+}
+
+:root[data-accent="cyan"] {
+    --primary: oklch(0.789 0.154 211.53);
+    --primary-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.789 0.154 211.53);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
+}
+
+:root[data-accent="emerald"] {
+    --primary: oklch(0.765 0.177 163.223);
+    --primary-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.765 0.177 163.223);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
+}
+
+:root[data-accent="amber"] {
+    --primary: oklch(0.828 0.189 84.429);
+    --primary-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.828 0.189 84.429);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
+}
+
+:root[data-accent="rose"] {
+    --primary: oklch(0.712 0.194 13.428);
+    --primary-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.712 0.194 13.428);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
+}
+
+:root[data-accent="pink"] {
+    --primary: oklch(0.718 0.202 349.761);
+    --primary-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.718 0.202 349.761);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
+}
+
+:root[data-accent="purple"] {
+    --primary: oklch(0.714 0.203 305.504);
+    --primary-foreground: oklch(0.145 0 0);
+    --sidebar-primary: oklch(0.714 0.203 305.504);
+    --sidebar-primary-foreground: oklch(0.145 0 0);
 }
 
 @layer base {

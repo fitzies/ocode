@@ -3,13 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { ProjectSummary } from "@anvil/protocol";
-
-import {
-  DEFAULT_DAILY_CHARACTER_LIMIT,
-  DEFAULT_DAILY_REQUEST_LIMIT,
-  type SpeechConfig,
-} from "./speech/types.ts";
+import { GENERAL_PROJECT_ID, type ProjectSummary } from "@anvil/protocol";
 
 export interface ForgeConfig {
   host: "127.0.0.1" | "::1";
@@ -17,6 +11,7 @@ export interface ForgeConfig {
   databasePath: string;
   sessionDir: string;
   artifactDir: string;
+  desktopUpdateDir: string;
   terminalHistoryDir?: string;
   piExecutable: string;
   piExtensionPath?: string;
@@ -24,7 +19,6 @@ export interface ForgeConfig {
   webRoot: string;
   projectsRoot: string;
   projects: ProjectSummary[];
-  speech?: SpeechConfig;
 }
 
 interface ConfigFile {
@@ -32,7 +26,6 @@ interface ConfigFile {
   piExecutable?: unknown;
   projectsRoot?: unknown;
   projects?: unknown;
-  speech?: unknown;
 }
 
 function environmentValue(environment: NodeJS.ProcessEnv, name: string): string | undefined {
@@ -68,45 +61,6 @@ function defaultStateDirectory(): string {
   );
 }
 
-export function speechApiKey(environment: NodeJS.ProcessEnv = process.env): string | undefined {
-  return environment.OCODE_OPENAI_API_KEY?.trim() || undefined;
-}
-
-function configuredSpeech(value: unknown): SpeechConfig | undefined {
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("speech must be an object when configured");
-  }
-  const record = value as Record<string, unknown>;
-  const allowed = new Set(["provider", "voice", "style", "dailyCharacterLimit", "dailyRequestLimit"]);
-  const unsupported = Object.keys(record).find((key) => !allowed.has(key));
-  if (unsupported) throw new Error(`speech contains unsupported property: ${unsupported}`);
-  if (record.provider !== "openai") throw new Error('speech.provider must be "openai"');
-  for (const property of ["voice", "style"] as const) {
-    const option = record[property];
-    if (option !== undefined && (typeof option !== "string" || !option)) {
-      throw new Error(`speech.${property} must be a non-empty string when configured`);
-    }
-  }
-  for (const property of ["dailyCharacterLimit", "dailyRequestLimit"] as const) {
-    const limit = record[property];
-    if (limit !== undefined && (typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1)) {
-      throw new Error(`speech.${property} must be a positive safe integer`);
-    }
-  }
-  return {
-    provider: "openai",
-    ...(typeof record.voice === "string" ? { voice: record.voice } : {}),
-    ...(typeof record.style === "string" ? { style: record.style } : {}),
-    dailyCharacterLimit: typeof record.dailyCharacterLimit === "number"
-      ? record.dailyCharacterLimit
-      : DEFAULT_DAILY_CHARACTER_LIMIT,
-    dailyRequestLimit: typeof record.dailyRequestLimit === "number"
-      ? record.dailyRequestLimit
-      : DEFAULT_DAILY_REQUEST_LIMIT,
-  };
-}
-
 function configuredProjects(value: unknown): ProjectSummary[] {
   if (!Array.isArray(value)) throw new Error("Forge config must contain a projects array");
   const ids = new Set<string>();
@@ -118,6 +72,9 @@ function configuredProjects(value: unknown): ProjectSummary[] {
     const record = candidate as Record<string, unknown>;
     if (typeof record.id !== "string" || !record.id || typeof record.name !== "string" || !record.name || typeof record.path !== "string") {
       throw new Error(`Project ${index + 1} requires non-empty id, name, and path`);
+    }
+    if (record.id === GENERAL_PROJECT_ID) {
+      throw new Error(`Project id ${GENERAL_PROJECT_ID} is reserved for the General home workspace`);
     }
     const path = realpathSync(resolve(record.path));
     if (!statSync(path).isDirectory()) throw new Error(`Project path is not a directory: ${path}`);
@@ -159,7 +116,6 @@ export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): F
     throw new Error("Forge requires ownerLogin; set OCODE_ALLOW_UNAUTHENTICATED=true only for loopback development");
   }
   const projects = configuredProjects(file.projects);
-  const speech = configuredSpeech(file.speech);
   if (file.projectsRoot !== undefined && (typeof file.projectsRoot !== "string" || !file.projectsRoot.trim())) {
     throw new Error("projectsRoot must be a non-empty directory path when configured");
   }
@@ -177,6 +133,7 @@ export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): F
     databasePath: resolve(environmentValue(environment, "DATABASE") ?? join(stateDirectory, "forge.sqlite")),
     sessionDir: resolve(environmentValue(environment, "SESSION_DIR") ?? join(stateDirectory, "pi-sessions")),
     artifactDir: resolve(environmentValue(environment, "ARTIFACT_DIR") ?? join(stateDirectory, "artifacts")),
+    desktopUpdateDir: resolve(environmentValue(environment, "DESKTOP_UPDATE_DIR") ?? join(stateDirectory, "desktop-updates")),
     terminalHistoryDir: resolve(environmentValue(environment, "TERMINAL_HISTORY_DIR") ?? join(stateDirectory, "terminal-history")),
     piExecutable,
     piExtensionPath,
@@ -188,7 +145,6 @@ export function loadForgeConfig(environment: NodeJS.ProcessEnv = process.env): F
     ),
     projectsRoot,
     projects,
-    ...(speech ? { speech } : {}),
   };
 }
 

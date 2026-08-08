@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/main.ts"],
+  entry: ["src/main.ts", "src/desktop/publishDesktopUpdate.ts"],
   format: ["esm"],
   platform: "node",
   target: "node22",

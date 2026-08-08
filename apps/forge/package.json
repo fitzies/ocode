@@ -10,6 +10,7 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsup --config tsup.main.config.ts && tsup src/pi/anvilInlineArtifact.ts --format esm --platform node --target node22 --out-dir dist/pi --sourcemap",
     "start": "node dist/main.js",
+    "publish:desktop": "node dist/desktop/publishDesktopUpdate.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests"
   },

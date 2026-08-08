@@ -48,6 +48,19 @@ describe("Sidebar thread ordering", () => {
     expect(markup).not.toContain(">Unsettled<");
   });
 
+  it("exposes the active thread as the current page", () => {
+    const client = new FixtureAnvilClient();
+    const snapshot = client.getSnapshot();
+    const activeSessionId = snapshot.activeSessionId!;
+    const markup = renderSnapshot(snapshot);
+    const start = markup.indexOf(`data-session-id="${activeSessionId}"`);
+    const next = markup.indexOf("data-session-id=", start + 1);
+    const activeCard = markup.slice(start, next === -1 ? undefined : next);
+
+    expect(activeCard).toContain('aria-current="page"');
+    expect(markup.match(/aria-current="page"/g)).toHaveLength(1);
+  });
+
   it("uses the repository directory name rather than a display-name slug", () => {
     const client = new FixtureAnvilClient();
     const base = client.getSnapshot();

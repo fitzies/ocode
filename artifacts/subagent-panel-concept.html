@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ocode — Subagent panel concept</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0b0c;
+    --side: #0d0d0f;
+    --panel: #0e0e10;
+    --raised: #151518;
+    --soft: #19191d;
+    --line: #242429;
+    --line-strong: #303037;
+    --text: #f0efed;
+    --muted: #aaa7a1;
+    --faint: #74716c;
+    --blue: #84a7ff;
+    --green: #68c99a;
+    --amber: #e6b968;
+    --red: #e98282;
+    --mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", monospace;
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; }
+  body {
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    background: transparent;
+    color: var(--text);
+    font-family: var(--sans);
+  }
+  input.control { position: fixed; inline-size: 1px; block-size: 1px; opacity: 0; pointer-events: none; }
+  .artifact {
+    width: min(1180px, 100%);
+    height: min(720px, calc(100vh - 36px));
+    min-height: 590px;
+    display: grid;
+    grid-template-columns: 202px minmax(380px, 1fr) 414px;
+    overflow: hidden;
+    background: var(--bg);
+    border: 1px solid #2a2a2f;
+    border-radius: 13px;
+    box-shadow: 0 28px 80px rgba(0,0,0,.42);
+    animation: arrive 360ms cubic-bezier(.2,.8,.2,1) both;
+    transition: grid-template-columns 180ms ease;
+  }
+  #panel-toggle:not(:checked) ~ .artifact { grid-template-columns: 202px minmax(380px, 1fr) 0; }
+  #panel-toggle:not(:checked) ~ .artifact .agent-panel { opacity: 0; pointer-events: none; }
+  button, label { -webkit-tap-highlight-color: transparent; }
+  .sidebar {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(180deg, rgba(255,255,255,.018), transparent 160px), var(--side);
+    border-right: 1px solid var(--line);
+  }
+  .brand { height: 53px; display: flex; align-items: center; padding: 0 14px; font-size: 12px; font-weight: 650; letter-spacing: -.01em; }
+  .search { height: 31px; margin: 2px 11px 17px; padding: 0 9px; display: flex; align-items: center; gap: 7px; color: var(--faint); background: #121215; border: 1px solid var(--line); border-radius: 7px; font-size: 10px; }
+  .side-label { margin: 0 13px 8px; color: #686660; font-size: 8px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+  .thread { margin: 0 8px 3px; padding: 9px 10px; border-radius: 7px; color: var(--muted); }
+  .thread.active { background: #17171a; color: var(--text); }
+  .thread strong { display: block; overflow: hidden; font-size: 10.5px; font-weight: 570; white-space: nowrap; text-overflow: ellipsis; }
+  .thread small { display: flex; justify-content: space-between; margin-top: 5px; color: var(--faint); font: 8px var(--mono); }
+  .thread .working { color: var(--green); }
+  .sidebar-foot { margin-top: auto; padding: 11px; border-top: 1px solid var(--line); color: var(--faint); font-size: 9px; }
+
+  .conversation { min-width: 0; display: flex; flex-direction: column; background: radial-gradient(circle at 50% -10%, rgba(255,255,255,.025), transparent 330px), var(--bg); }
+  .chat-head { height: 63px; flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; padding: 0 19px; border-bottom: 1px solid var(--line); }
+  .chat-title strong { display: block; font-size: 11.5px; font-weight: 620; }
+  .chat-title small { display: block; margin-top: 5px; color: var(--faint); font: 8px var(--mono); }
+  .head-actions { display: flex; gap: 6px; }
+  .head-button { width: 29px; height: 29px; display:grid; place-items:center; color: var(--faint); border: 1px solid var(--line); border-radius: 7px; font-size: 13px; }
+  .messages { flex: 1; min-height: 0; overflow: hidden; padding: 31px 30px 16px; }
+  .message-column { width: min(650px, 100%); margin: 0 auto; }
+  .user-message { max-width: 80%; margin-left: auto; padding: 10px 12px; background: #19191c; border: 1px solid #29292e; border-radius: 10px 10px 3px 10px; font-size: 11px; line-height: 1.55; }
+  .assistant-message { margin-top: 27px; color: #d5d2cc; font-size: 11px; line-height: 1.68; }
+  .assistant-message p { margin: 0 0 12px; }
+  .spawn-row { margin: 15px 0 16px; display: flex; align-items: center; gap: 9px; padding: 8px 10px; color: var(--muted); border-left: 2px solid #557bd0; background: linear-gradient(90deg, rgba(85,123,208,.09), transparent 70%); font-size: 9.5px; }
+  .pulse { width: 7px; height: 7px; border: 2px solid var(--blue); border-radius: 50%; box-shadow: 0 0 0 3px rgba(132,167,255,.08); animation: breathe 1.8s ease-in-out infinite; }
+  .spawn-row b { color: #d7d5d0; font-weight: 590; }
+  .spawn-row span:last-child { margin-left: auto; color: var(--faint); font: 8px var(--mono); }
+  .code { display: inline-block; padding: 1px 5px; background: #17171a; border: 1px solid #242429; border-radius: 4px; font: 9px var(--mono); }
+  .composer-wrap { flex: 0 0 auto; padding: 10px 25px 13px; background: linear-gradient(180deg, transparent, var(--bg) 24%); }
+  .composer { width: min(650px, 100%); margin: 0 auto; padding: 11px; background: #151518; border: 1px solid #2b2b30; border-radius: 10px; box-shadow: 0 17px 45px rgba(0,0,0,.3); }
+  .prompt { height: 41px; padding: 2px 3px; color: #76736e; font-size: 11px; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; }
+  .tool-left { display: flex; align-items: center; gap: 4px; color: var(--faint); font-size: 9px; }
+  .tool-chip { padding: 5px 6px; border-radius: 5px; }
+  .tool-right { display: flex; align-items: center; gap: 8px; }
+  .agent-trigger {
+    display: flex; align-items: center; gap: 6px; padding: 6px 8px; color: #d5d2cc;
+    background: rgba(132,167,255,.09); border: 1px solid rgba(132,167,255,.26); border-radius: 6px;
+    font: 8.5px var(--mono); cursor: pointer; transition: background 120ms ease, border-color 120ms ease;
+  }
+  .agent-trigger:hover { background: rgba(132,167,255,.15); border-color: rgba(132,167,255,.4); }
+  .agent-trigger .running-dot { width: 5px; height: 5px; background: var(--blue); border-radius: 50%; box-shadow: 0 0 0 3px rgba(132,167,255,.09); }
+  .send { width: 27px; height: 27px; display:grid; place-items:center; background: #eceae6; color:#111; border-radius:7px; font-size:12px; }
+
+  .agent-panel {
+    min-width: 0; height: 100%; display: grid; grid-template-rows: 41px auto minmax(0,1fr); overflow: hidden;
+    background: var(--panel); border-left: 1px solid var(--line); opacity: 1; transition: opacity 140ms ease;
+  }
+  .panel-tabs { min-width:0; display:flex; align-items:stretch; gap:2px; padding: 3px 4px 0; border-bottom:1px solid var(--line); background:#0c0c0e; }
+  .panel-tab { display:flex; align-items:center; gap:6px; min-width:0; max-width:155px; padding:0 9px; color:var(--faint); border-bottom:2px solid transparent; font-size:9.5px; }
+  .panel-tab.active { color:var(--text); background:rgba(132,167,255,.045); border-color:var(--blue); }
+  .panel-tab .mini-dot { width:5px; height:5px; border-radius:50%; background:var(--blue); }
+  .panel-tab.file { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .panel-close { margin-left:auto; width:30px; display:grid; place-items:center; color:var(--faint); cursor:pointer; border-radius:5px; }
+  .panel-close:hover { color:var(--text); background:var(--soft); }
+  .panel-summary { padding: 14px 14px 11px; border-bottom:1px solid var(--line); }
+  .summary-top { display:flex; align-items:center; justify-content:space-between; }
+  .summary-top h2 { margin:0; font-size:12px; font-weight:630; letter-spacing:-.01em; }
+  .live-pill { display:flex; align-items:center; gap:5px; color:var(--green); font:7.5px var(--mono); text-transform:uppercase; letter-spacing:.06em; }
+  .summary-copy { margin:6px 0 11px; color:var(--faint); font-size:9px; line-height:1.45; }
+  .run-meter { display:grid; grid-template-columns:1fr 1fr 1fr; gap:3px; }
+  .run-meter span { height:3px; background:#25252a; border-radius:4px; }
+  .run-meter span.done { background:var(--green); }
+  .run-meter span.live { background:var(--blue); animation:breathe 1.8s ease-in-out infinite; }
+  .panel-body { min-height:0; display:grid; grid-template-columns:137px minmax(0,1fr); }
+  .agent-list { min-width:0; overflow:hidden; border-right:1px solid var(--line); padding:9px 6px; }
+  .list-heading { padding:3px 7px 8px; color:#66645f; font-size:7px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; }
+  .agent-row { display:grid; grid-template-columns:12px minmax(0,1fr); gap:6px; margin-bottom:3px; padding:8px 7px; color:var(--muted); border-radius:6px; cursor:pointer; }
+  .agent-row:hover { background:#17171a; }
+  .agent-row .state { width:7px; height:7px; margin-top:2px; border:1.5px solid var(--blue); border-radius:50%; }
+  .agent-row.done .state { background:var(--green); border-color:var(--green); }
+  .agent-row strong { display:block; overflow:hidden; font-size:8.5px; font-weight:590; white-space:nowrap; text-overflow:ellipsis; }
+  .agent-row small { display:block; margin-top:3px; color:var(--faint); font:6.8px var(--mono); }
+  #agent-researcher:checked ~ .artifact label[for="agent-researcher"],
+  #agent-scout:checked ~ .artifact label[for="agent-scout"],
+  #agent-reviewer:checked ~ .artifact label[for="agent-reviewer"] { color:var(--text); background:#1a1a1e; box-shadow:inset 2px 0 var(--blue); }
+  .agent-detail { display:none; min-width:0; min-height:0; flex-direction:column; overflow:hidden; }
+  #agent-researcher:checked ~ .artifact .detail-researcher,
+  #agent-scout:checked ~ .artifact .detail-scout,
+  #agent-reviewer:checked ~ .artifact .detail-reviewer { display:flex; }
+  .detail-head { padding:12px 13px 10px; border-bottom:1px solid var(--line); }
+  .detail-title { display:flex; align-items:center; gap:7px; }
+  .detail-title strong { font-size:10px; font-weight:620; }
+  .status-text { margin-left:auto; color:var(--blue); font:7px var(--mono); }
+  .detail-task { margin:6px 0 0; color:var(--faint); font-size:8px; line-height:1.45; }
+  .detail-scroll { min-height:0; overflow:auto; padding:12px 13px 18px; scrollbar-width:thin; }
+  .stream-note { display:flex; align-items:center; gap:5px; margin-bottom:12px; color:#77746f; font:6.8px var(--mono); }
+  .stream-note span { width:5px; height:5px; border-radius:50%; background:var(--amber); }
+  .event { position:relative; padding:0 0 15px 17px; }
+  .event:not(:last-child)::before { position:absolute; left:3px; top:9px; bottom:-2px; width:1px; content:""; background:var(--line-strong); }
+  .event-dot { position:absolute; left:0; top:2px; width:7px; height:7px; border:1.5px solid var(--faint); border-radius:50%; background:var(--panel); }
+  .event.reason .event-dot { border-color:var(--amber); }
+  .event.tool .event-dot { border-color:var(--blue); }
+  .event.result .event-dot { border-color:var(--green); background:var(--green); }
+  .event-time { color:#625f5a; font:6.5px var(--mono); }
+  .event h3 { margin:3px 0 4px; color:#d4d1cb; font-size:8.5px; font-weight:590; }
+  .event p { margin:0; color:#8d8a84; font-size:8px; line-height:1.5; }
+  .event pre { margin:6px 0 0; padding:7px; overflow:hidden; color:#a8bdf1; background:#121216; border:1px solid var(--line); border-radius:5px; font:6.8px/1.45 var(--mono); white-space:pre-wrap; }
+  .empty-detail { display:grid; flex:1; place-items:center; padding:20px; color:var(--faint); text-align:center; font-size:9px; }
+  .hint { position:fixed; left:50%; bottom:5px; transform:translateX(-50%); color:#77746f; font:8px var(--mono); white-space:nowrap; }
+
+  @keyframes arrive { from { opacity:0; transform:translateY(7px) scale(.995); } to { opacity:1; transform:none; } }
+  @keyframes breathe { 50% { opacity:.42; } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation:none !important; transition:none !important; } }
+  @media (max-width: 900px) {
+    body { padding:0; }
+    .artifact { height:100vh; min-height:560px; border:0; border-radius:0; grid-template-columns:0 minmax(0,1fr) min(414px, 48vw); }
+    .sidebar { opacity:0; pointer-events:none; }
+    #panel-toggle:not(:checked) ~ .artifact { grid-template-columns:0 minmax(0,1fr) 0; }
+  }
+  @media (max-width: 650px) {
+    .artifact, #panel-toggle:not(:checked) ~ .artifact { position:relative; display:block; }
+    .conversation { width:100%; height:100%; }
+    .agent-panel { position:absolute; z-index:5; inset:0; width:100%; }
+    #panel-toggle:not(:checked) ~ .artifact .agent-panel { display:none; }
+    .panel-body { grid-template-columns:132px minmax(0,1fr); }
+    .messages { padding-inline:17px; }
+    .composer-wrap { padding-inline:12px; }
+  }
+</style>
+</head>
+<body>
+<input class="control" type="checkbox" id="panel-toggle" checked />
+<input class="control" type="radio" name="agent" id="agent-researcher" checked />
+<input class="control" type="radio" name="agent" id="agent-scout" />
+<input class="control" type="radio" name="agent" id="agent-reviewer" />
+
+<main class="artifact" aria-label="Interactive concept showing an ocode subagent activity panel">
+  <aside class="sidebar">
+    <div class="brand">ocode</div>
+    <div class="search">⌕&nbsp;&nbsp; Search conversations</div>
+    <div class="side-label">Active</div>
+    <div class="thread active"><strong>Add conversation search</strong><small><span>anvil · main</span><span class="working">Working</span></small></div>
+    <div class="thread"><strong>Forge reconnection review</strong><small><span>anvil · main</span><span>12m</span></small></div>
+    <div class="thread"><strong>Terminal resize issue</strong><small><span>anvil · fix/pty</span><span>1h</span></small></div>
+    <div class="side-label" style="margin-top:18px">Settled</div>
+    <div class="thread"><strong>Desktop update dialog</strong><small><span>anvil · main</span><span>Tue</span></small></div>
+    <div class="sidebar-foot">Forge connected</div>
+  </aside>
+
+  <section class="conversation">
+    <header class="chat-head">
+      <div class="chat-title"><strong>Add conversation-content search</strong><small>anvil / main &nbsp;·&nbsp; forge</small></div>
+      <div class="head-actions"><span class="head-button">⌘</span><span class="head-button">•••</span></div>
+    </header>
+    <div class="messages">
+      <div class="message-column">
+        <div class="user-message">Investigate the existing sidebar and design server-backed conversation search. Use subagents to inspect the client and database paths.</div>
+        <div class="assistant-message">
+          <p>I’ll inspect the current thread list, persistence model, and search patterns in parallel.</p>
+          <div class="spawn-row"><span class="pulse"></span><b>3 subagents</b> inspecting client, Forge, and test coverage<span>2 active · 1 finished</span></div>
+          <p>The current sidebar only filters loaded thread metadata. Forge already has the durable message state needed for a bounded content-search endpoint.</p>
+          <p>I’m comparing the safest query shape with the existing <span class="code">workspaceFiles</span> search API.</p>
+        </div>
+      </div>
+    </div>
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="prompt">Ask a follow-up…</div>
+        <div class="toolbar">
+          <div class="tool-left"><span class="tool-chip">＋</span><span class="tool-chip">GPT-5.6</span><span class="tool-chip">High</span></div>
+          <div class="tool-right">
+            <label class="agent-trigger" for="panel-toggle" title="Toggle subagent activity panel"><span class="running-dot"></span><span>2 active</span><span>·</span><span style="color:var(--green)">✓ 1</span></label>
+            <span class="send">↑</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="agent-panel" aria-label="Subagent activity">
+    <nav class="panel-tabs" aria-label="Right panel tabs">
+      <span class="panel-tab active"><span class="mini-dot"></span>Agents</span>
+      <span class="panel-tab file">workspaceFiles.ts</span>
+      <label class="panel-close" for="panel-toggle" aria-label="Close panel">×</label>
+    </nav>
+    <section class="panel-summary">
+      <div class="summary-top"><h2>Subagent activity</h2><span class="live-pill"><span class="pulse" style="width:5px;height:5px;border-width:1px"></span>Live</span></div>
+      <p class="summary-copy">One place for every observable child-agent event.</p>
+      <div class="run-meter" aria-label="One finished and two running"><span class="done"></span><span class="live"></span><span class="live"></span></div>
+    </section>
+    <div class="panel-body">
+      <nav class="agent-list" aria-label="Agents">
+        <div class="list-heading">This turn</div>
+        <label class="agent-row" for="agent-researcher"><span class="state"></span><span><strong>Researcher</strong><small>1m 24s · running</small></span></label>
+        <label class="agent-row" for="agent-scout"><span class="state"></span><span><strong>Scout</strong><small>48s · running</small></span></label>
+        <label class="agent-row done" for="agent-reviewer"><span class="state"></span><span><strong>Reviewer</strong><small>32s · completed</small></span></label>
+      </nav>
+
+      <section class="agent-detail detail-researcher">
+        <header class="detail-head">
+          <div class="detail-title"><strong>Researcher</strong><span class="status-text">RUNNING · 1:24</span></div>
+          <p class="detail-task">Compare durable conversation-search approaches and identify relevant server boundaries.</p>
+        </header>
+        <div class="detail-scroll">
+          <div class="stream-note"><span></span>Provider-emitted reasoning and tool activity</div>
+          <article class="event reason"><span class="event-dot"></span><span class="event-time">10:42:08</span><h3>Reasoning summary</h3><p>I’ll first locate how Forge stores finalized user and assistant messages, then check whether current indexes can support bounded search.</p></article>
+          <article class="event tool"><span class="event-dot"></span><span class="event-time">10:42:12</span><h3>Searched the codebase</h3><pre>pattern: session_messages
+path: apps/forge/src</pre></article>
+          <article class="event result"><span class="event-dot"></span><span class="event-time">10:42:13</span><h3>Found 6 matches</h3><p>Top matches in the SQLite store and session detail projection.</p></article>
+          <article class="event tool"><span class="event-dot"></span><span class="event-time">10:42:20</span><h3>Read database.ts</h3><p>Inspecting durable columns, indexes, and event compaction behavior.</p></article>
+          <article class="event reason"><span class="event-dot"></span><span class="event-time">10:42:34</span><h3>Reasoning summary</h3><p>A bounded Forge query is preferable to browser indexing because searches must work after reconnecting on another device.</p></article>
+        </div>
+      </section>
+
+      <section class="agent-detail detail-scout">
+        <header class="detail-head"><div class="detail-title"><strong>Scout</strong><span class="status-text">RUNNING · 0:48</span></div><p class="detail-task">Map the current sidebar filtering and result-row components.</p></header>
+        <div class="detail-scroll">
+          <div class="stream-note"><span></span>Provider-emitted reasoning and tool activity</div>
+          <article class="event tool"><span class="event-dot"></span><span class="event-time">10:42:11</span><h3>Read Sidebar.tsx</h3><p>Tracing title, project, and branch filtering.</p></article>
+          <article class="event reason"><span class="event-dot"></span><span class="event-time">10:42:18</span><h3>Reasoning summary</h3><p>The existing row already has space for one secondary line; a matching message excerpt can appear there without changing navigation.</p></article>
+          <article class="event tool"><span class="event-dot"></span><span class="event-time">10:42:29</span><h3>Searching tests</h3><pre>pattern: thread-search
+path: apps/web/src</pre></article>
+        </div>
+      </section>
+
+      <section class="agent-detail detail-reviewer">
+        <header class="detail-head"><div class="detail-title"><strong>Reviewer</strong><span class="status-text" style="color:var(--green)">COMPLETED · 0:32</span></div><p class="detail-task">Review the proposed search boundaries for privacy and reconnect safety.</p></header>
+        <div class="detail-scroll">
+          <div class="stream-note"><span style="background:var(--green)"></span>Complete observable record</div>
+          <article class="event reason"><span class="event-dot"></span><span class="event-time">10:42:09</span><h3>Reasoning summary</h3><p>I’ll focus on result bounding, archived-session behavior, and avoiding query text in logs.</p></article>
+          <article class="event result"><span class="event-dot"></span><span class="event-time">10:42:41</span><h3>Review complete</h3><p>Recommend a minimum two-character query, capped excerpts, one result per session, and server-side authorization through the existing owner boundary.</p></article>
+        </div>
+      </section>
+    </div>
+  </aside>
+</main>
+<div class="hint">Click the bottom-right agent indicator to toggle the panel · select an agent to inspect its activity</div>
+</body>
+</html>

@@ -42,6 +42,56 @@ describe("FixtureAnvilClient", () => {
     expect(client.getSnapshot().activeSessionId).toBe(session.id);
   });
 
+  it("removes a fixture project and all of its session state", async () => {
+    const client = new FixtureAnvilClient();
+    const project = client.getSnapshot().projects[0]!;
+    const sessionIds = client.getSnapshot().sessions
+      .filter((session) => session.projectId === project.id)
+      .map((session) => session.id);
+
+    await client.deleteProject(project.id);
+
+    expect(client.getSnapshot().projects.some((candidate) => candidate.id === project.id)).toBe(false);
+    expect(client.getSnapshot().sessions.some((session) => session.projectId === project.id)).toBe(false);
+    for (const sessionId of sessionIds) {
+      expect(client.getSnapshot().timelines[sessionId]).toBeUndefined();
+      expect(client.getSnapshot().catalogs[sessionId]).toBeUndefined();
+    }
+    expect(client.getSnapshot().workspaceLocation?.projectId).not.toBe(project.id);
+  });
+
+  it("provides realistic GitHub repositories in fixture mode", async () => {
+    const client = new FixtureAnvilClient();
+
+    const firstPage = await client.listGitHubRepositories();
+    const secondPage = await client.listGitHubRepositories(2);
+
+    expect(firstPage).toEqual({
+      repositories: expect.arrayContaining([
+        expect.objectContaining({ nameWithOwner: "ocode-labs/forge-console", private: true }),
+        expect.objectContaining({ nameWithOwner: "collaborator/design-system", private: false }),
+      ]),
+      page: 1,
+      hasMore: true,
+    });
+    expect(secondPage).toEqual({
+      repositories: [expect.objectContaining({ nameWithOwner: "octocat/Hello-World" })],
+      page: 2,
+      hasMore: false,
+    });
+  });
+
+  it("clones a project in fixture mode", async () => {
+    const client = new FixtureAnvilClient();
+
+    await client.cloneProject("Cloned Project", "owner/repository");
+
+    expect(client.getSnapshot().projects).toContainEqual(expect.objectContaining({
+      name: "Cloned Project",
+      path: expect.stringContaining("/cloned-project"),
+    }));
+  });
+
   it("creates sessions in the explicitly selected project", () => {
     const client = new FixtureAnvilClient();
     const projectId = client.getSnapshot().projects.at(-1)?.id;
@@ -54,6 +104,22 @@ describe("FixtureAnvilClient", () => {
     );
     expect(created?.projectId).toBe(projectId);
     expect(client.getSnapshot().catalogs[created!.id]).toBeDefined();
+  });
+
+  it("shows the first prompt as a provisional title until Pi names the thread", async () => {
+    const client = new FixtureAnvilClient();
+    const projectId = client.getSnapshot().projects.at(-1)!.id;
+    client.createSession(projectId);
+    const sessionId = client.getSnapshot().activeSessionId!;
+
+    void client.sendPrompt("Fix   the sidebar while Pi names this thread");
+
+    expect(client.getSnapshot().sessions.find((session) => session.id === sessionId)?.title)
+      .toBe("Fix the sidebar while Pi names this…");
+
+    await client.renameSession(sessionId, "Generated sidebar title");
+    expect(client.getSnapshot().sessions.find((session) => session.id === sessionId)?.title)
+      .toBe("Generated sidebar title");
   });
 
   it("replays raw RPC records over time and can restore the final state instantly", () => {

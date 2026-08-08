@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ocode — New project dialog variants</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --ink: #f1f1ef;
+    --muted: #9b9b96;
+    --quiet: #71716c;
+    --line: #33332f;
+    --line-strong: #4c4c46;
+    --panel: #191917;
+    --panel-2: #20201d;
+    --field: #151513;
+    --accent: #e8e8e3;
+    --accent-ink: #171715;
+    --green: #91b89a;
+    --green-bg: #1c2920;
+    --amber: #c4aa70;
+    --shadow: 0 22px 70px rgba(0,0,0,.42), 0 1px 0 rgba(255,255,255,.035) inset;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body { background: transparent; color: var(--ink); padding: 28px; }
+  button, input { font: inherit; }
+  .page { width: min(1160px, 100%); margin: 0 auto; }
+  .intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin: 0 0 20px; }
+  .eyebrow { margin: 0 0 6px; color: var(--quiet); font: 600 10px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: clamp(20px, 3vw, 28px); line-height: 1.12; letter-spacing: -.035em; font-weight: 610; }
+  .intro-copy { margin: 0; max-width: 430px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+  .variants { display: grid; grid-template-columns: 1.12fr .94fr .94fr; align-items: start; gap: 18px; }
+  .variant { min-width: 0; animation: enter .55s cubic-bezier(.2,.7,.2,1) both; }
+  .variant:nth-child(2) { animation-delay: .07s; }
+  .variant:nth-child(3) { animation-delay: .14s; }
+  .variant-head { min-height: 55px; display: flex; align-items: start; justify-content: space-between; gap: 10px; padding: 0 2px 10px; }
+  .variant-name { margin: 0 0 3px; font-size: 13px; font-weight: 620; letter-spacing: -.01em; }
+  .variant-note { margin: 0; color: var(--quiet); font-size: 11px; line-height: 1.35; }
+  .badge { flex: none; border: 1px solid #526055; background: #233027; color: #b5d0bb; border-radius: 999px; padding: 4px 7px; font: 600 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .07em; text-transform: uppercase; }
+  .dialog { overflow: hidden; border: 1px solid var(--line); border-radius: 11px; background: var(--panel); box-shadow: var(--shadow); }
+  .dialog-main { padding: 20px; }
+  .kicker { color: var(--quiet); font: 600 9px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .12em; text-transform: uppercase; }
+  h2 { margin: 7px 0 5px; font-size: 18px; line-height: 1.25; letter-spacing: -.025em; font-weight: 620; }
+  .description { margin: 0 0 18px; min-height: 36px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+  .tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; margin-bottom: 18px; padding: 3px; border: 1px solid #2e2e2b; border-radius: 7px; background: #131311; }
+  .tab { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; border: 0; border-radius: 4px; background: transparent; color: var(--quiet); padding: 7px 4px; font-size: 10px; }
+  .tab.active { background: #2a2a26; color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 1px 0 rgba(255,255,255,.05) inset; }
+  .icon { width: 13px; height: 13px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+  .form { display: grid; gap: 13px; }
+  label { display: block; margin-bottom: 6px; color: #d6d6d1; font-size: 11px; font-weight: 560; }
+  .input-shell { display: flex; align-items: center; gap: 8px; min-height: 36px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--field); padding: 0 10px; box-shadow: 0 0 0 1px transparent; }
+  .input-shell.focused { border-color: #77776f; box-shadow: 0 0 0 2px rgba(193,193,182,.08); }
+  .input-shell input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--ink); background: transparent; font-size: 11px; }
+  .input-shell input::placeholder { color: #5f5f5a; }
+  .lead-icon { width: 14px; height: 14px; flex: none; color: var(--quiet); }
+  .hint { margin: 5px 0 0; color: var(--quiet); font-size: 9.5px; line-height: 1.4; }
+  .path { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 9px 10px; border: 1px solid #2b2b28; border-radius: 6px; background: #161614; color: var(--muted); font: 9.5px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .path span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .check { color: var(--green); margin-left: auto; }
+  .status { display: flex; gap: 8px; padding: 9px 10px; border: 1px solid #314037; border-radius: 6px; background: var(--green-bg); color: #b5c9b9; font-size: 9.5px; line-height: 1.4; }
+  .status strong { color: #d5dfd7; font-weight: 600; }
+  .footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); background: #171715; padding: 12px 20px; }
+  .btn { border: 1px solid var(--line-strong); border-radius: 6px; background: transparent; color: #d5d5d0; padding: 7px 11px; font-size: 10px; font-weight: 570; }
+  .btn.primary { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+  .choices { display: grid; gap: 7px; }
+  .choice { display: grid; grid-template-columns: 30px 1fr 14px; gap: 9px; align-items: center; border: 1px solid var(--line); border-radius: 7px; background: #181816; padding: 11px; }
+  .choice.selected { border-color: #67675f; background: #22221f; }
+  .choice-icon { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid #363632; border-radius: 6px; background: #141412; color: #a8a8a1; }
+  .choice-title { display: block; color: #e4e4df; font-size: 11px; font-weight: 590; }
+  .choice-copy { display: block; margin-top: 2px; color: var(--quiet); font-size: 9px; line-height: 1.3; }
+  .arrow { color: #666660; }
+  .pastebox { border: 1px solid #62625b; border-radius: 8px; background: var(--field); padding: 11px; box-shadow: 0 0 0 2px rgba(193,193,182,.06); }
+  .paste-input { display: flex; align-items: center; gap: 8px; }
+  .paste-input input { width: 100%; min-width: 0; border: 0; outline: 0; color: var(--ink); background: transparent; font: 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .detected { display: flex; align-items: center; gap: 6px; margin-top: 9px; border-top: 1px solid #30302c; padding-top: 9px; color: var(--green); font-size: 9px; }
+  .mini-summary { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; margin-top: 13px; border-top: 1px solid #2e2e2a; padding-top: 12px; font-size: 9.5px; }
+  .mini-summary dt { color: var(--quiet); }
+  .mini-summary dd { margin: 0; max-width: 170px; overflow: hidden; text-overflow: ellipsis; color: #c7c7c1; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+  .footnote { display: flex; align-items: center; gap: 6px; margin-top: 12px; color: var(--quiet); font-size: 9px; line-height: 1.4; }
+  .lock { width: 11px; height: 11px; }
+  @keyframes enter { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
+  @media (max-width: 900px) {
+    .variants { grid-template-columns: 1fr 1fr; }
+    .variant:first-child { grid-column: 1 / -1; width: min(560px, 100%); justify-self: center; }
+  }
+  @media (max-width: 620px) {
+    body { padding: 18px 12px; }
+    .intro { display: block; }
+    .intro-copy { margin-top: 8px; }
+    .variants { grid-template-columns: 1fr; }
+    .variant:first-child { grid-column: auto; width: auto; }
+    .variant-head { min-height: auto; }
+  }
+  @media (prefers-reduced-motion: reduce) { .variant { animation: none; } }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="intro">
+    <div>
+      <p class="eyebrow">ocode · interface study</p>
+      <h1>Bringing a project onto Forge</h1>
+    </div>
+    <p class="intro-copy">Three ways to extend the existing New project dialog. All keep the destination explicit and use Forge’s own Git credentials.</p>
+  </header>
+
+  <section class="variants" aria-label="New project dialog variants">
+    <article class="variant">
+      <div class="variant-head">
+        <div>
+          <p class="variant-name">A · One dialog, three modes</p>
+          <p class="variant-note">Fast, familiar, and closest to the current UI.</p>
+        </div>
+        <span class="badge">Recommended</span>
+      </div>
+      <div class="dialog">
+        <div class="dialog-main">
+          <div class="kicker">Forge projects</div>
+          <h2>New project</h2>
+          <p class="description">Create a workspace on Forge or bring in an existing repository.</p>
+          <div class="tabs" role="tablist" aria-label="Project source">
+            <button class="tab" type="button">
+              <svg class="icon" viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"/></svg>Blank
+            </button>
+            <button class="tab active" type="button" aria-selected="true">
+              <svg class="icon" viewBox="0 0 20 20"><path d="M5 4h8a2 2 0 0 1 2 2v10H7a2 2 0 0 1-2-2V4Z"/><path d="M7 7h6M7 10h4"/></svg>Clone
+            </button>
+            <button class="tab" type="button">
+              <svg class="icon" viewBox="0 0 20 20"><path d="M3 6.5h5l1.5 2H17v7.5H3z"/></svg>Existing
+            </button>
+          </div>
+          <div class="form">
+            <div>
+              <label for="repo-a">Repository URL</label>
+              <div class="input-shell focused">
+                <svg class="lead-icon icon" viewBox="0 0 20 20"><path d="M10 2.7a7.3 7.3 0 0 0-2.3 14.2c.4.1.5-.2.5-.4v-1.6c-2.2.5-2.7-1-2.7-1-.4-.9-.9-1.1-.9-1.1-.7-.5.1-.5.1-.5.8.1 1.2.8 1.2.8.7 1.2 1.9.9 2.3.7.1-.5.3-.9.5-1.1-1.8-.2-3.6-.9-3.6-4a3.1 3.1 0 0 1 .8-2.2c-.1-.2-.4-1 .1-2.2 0 0 .7-.2 2.3.8a7.8 7.8 0 0 1 4.2 0c1.6-1.1 2.3-.8 2.3-.8.5 1.2.2 2 .1 2.2.5.6.8 1.4.8 2.2 0 3.1-1.9 3.8-3.7 4 .3.3.6.8.6 1.5v2.3c0 .2.1.5.5.4A7.3 7.3 0 0 0 10 2.7Z"/></svg>
+                <input id="repo-a" value="git@github.com:olive/atlas.git" aria-label="Repository URL" />
+                <svg class="icon check" viewBox="0 0 20 20"><path d="m4 10 4 4 8-9"/></svg>
+              </div>
+              <p class="hint">HTTPS and SSH Git URLs are supported.</p>
+            </div>
+            <div>
+              <label for="name-a">Project name</label>
+              <div class="input-shell"><input id="name-a" value="atlas" /></div>
+            </div>
+            <div>
+              <label>Directory on Forge</label>
+              <div class="path"><svg class="icon" viewBox="0 0 20 20"><path d="M3 6.5h5l1.5 2H17v7.5H3z"/></svg><span>/home/oli/code/atlas</span><svg class="icon check" viewBox="0 0 20 20"><path d="m4 10 4 4 8-9"/></svg></div>
+            </div>
+            <div class="status">
+              <svg class="icon" viewBox="0 0 20 20"><path d="M10 2.5 16 5v4.5c0 3.8-2.5 6.4-6 8-3.5-1.6-6-4.2-6-8V5z"/><path d="m7 10 2 2 4-5"/></svg>
+              <span><strong>Forge is authenticated with GitHub.</strong><br />Private repositories can be cloned.</span>
+            </div>
+          </div>
+        </div>
+        <footer class="footer"><button class="btn">Cancel</button><button class="btn primary">Clone project</button></footer>
+      </div>
+    </article>
+
+    <article class="variant">
+      <div class="variant-head">
+        <div>
+          <p class="variant-name">B · Source chooser first</p>
+          <p class="variant-note">More explanatory, but adds a step.</p>
+        </div>
+      </div>
+      <div class="dialog">
+        <div class="dialog-main">
+          <div class="kicker">Forge projects</div>
+          <h2>Add a project</h2>
+          <p class="description">Choose where the workspace should come from.</p>
+          <div class="choices">
+            <div class="choice selected">
+              <span class="choice-icon"><svg class="icon" viewBox="0 0 20 20"><path d="M5 4h8a2 2 0 0 1 2 2v10H7a2 2 0 0 1-2-2V4Z"/><path d="M7 7h6M7 10h4"/></svg></span>
+              <span><span class="choice-title">Clone a repository</span><span class="choice-copy">GitHub, GitLab, or another Git remote</span></span>
+              <svg class="icon arrow" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+            </div>
+            <div class="choice">
+              <span class="choice-icon"><svg class="icon" viewBox="0 0 20 20"><path d="M10 4v12M4 10h12"/></svg></span>
+              <span><span class="choice-title">Start empty</span><span class="choice-copy">Create a new directory on Forge</span></span>
+              <svg class="icon arrow" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+            </div>
+            <div class="choice">
+              <span class="choice-icon"><svg class="icon" viewBox="0 0 20 20"><path d="M3 6.5h5l1.5 2H17v7.5H3z"/></svg></span>
+              <span><span class="choice-title">Use a Forge directory</span><span class="choice-copy">Register a workspace already on disk</span></span>
+              <svg class="icon arrow" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+            </div>
+          </div>
+          <p class="footnote"><svg class="icon lock" viewBox="0 0 20 20"><rect x="4" y="9" width="12" height="8" rx="2"/><path d="M7 9V6a3 3 0 0 1 6 0v3"/></svg>Operations run on Forge, not in this browser.</p>
+        </div>
+        <footer class="footer"><button class="btn">Cancel</button><button class="btn primary">Continue</button></footer>
+      </div>
+    </article>
+
+    <article class="variant">
+      <div class="variant-head">
+        <div>
+          <p class="variant-name">C · Paste-first smart dialog</p>
+          <p class="variant-note">Fastest for experts; more implicit.</p>
+        </div>
+      </div>
+      <div class="dialog">
+        <div class="dialog-main">
+          <div class="kicker">Forge projects</div>
+          <h2>New project</h2>
+          <p class="description">Paste a repository URL, or enter a name to start empty.</p>
+          <div class="pastebox">
+            <div class="paste-input">
+              <svg class="lead-icon icon" viewBox="0 0 20 20"><path d="M5 4h8a2 2 0 0 1 2 2v10H7a2 2 0 0 1-2-2V4Z"/><path d="M7 7h6M7 10h4"/></svg>
+              <input value="https://github.com/olive/atlas" aria-label="Project source" />
+              <svg class="icon check" viewBox="0 0 20 20"><path d="m4 10 4 4 8-9"/></svg>
+            </div>
+            <div class="detected"><svg class="icon" viewBox="0 0 20 20"><path d="M10 2.5 16 5v4.5c0 3.8-2.5 6.4-6 8-3.5-1.6-6-4.2-6-8V5z"/></svg>GitHub repository detected</div>
+          </div>
+          <dl class="mini-summary">
+            <dt>Project name</dt><dd>atlas</dd>
+            <dt>Destination</dt><dd>~/code/atlas</dd>
+            <dt>Authentication</dt><dd>Forge SSH</dd>
+            <dt>Checkout</dt><dd>default branch</dd>
+          </dl>
+          <p class="footnote"><svg class="icon lock" viewBox="0 0 20 20"><rect x="4" y="9" width="12" height="8" rx="2"/><path d="M7 9V6a3 3 0 0 1 6 0v3"/></svg>The destination can be reviewed before cloning.</p>
+        </div>
+        <footer class="footer"><button class="btn">Cancel</button><button class="btn primary">Clone project</button></footer>
+      </div>
+    </article>
+  </section>
+</main>
+</body>
+</html>

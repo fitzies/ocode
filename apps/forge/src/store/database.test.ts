@@ -48,30 +48,31 @@ describe("ForgeDatabase event journal", () => {
     }
   });
 
-  it("persists only aggregate daily speech usage and enforces reservations transactionally", () => {
-    const directory = mkdtempSync(join(tmpdir(), "ocode-speech-usage-"));
+  it("removes legacy speech usage data during migration", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ocode-schema-v12-"));
     const path = join(directory, "forge.sqlite");
     try {
       const database = new ForgeDatabase(path);
-      expect(database.speechUsage("2026-07-23")).toEqual({ date: "2026-07-23", requests: 0, characters: 0 });
-      expect(database.reserveSpeechUsage("2026-07-23", 4, { requests: 2, characters: 5 })).toEqual({
-        accepted: true,
-        usage: { date: "2026-07-23", requests: 1, characters: 4 },
-      });
-      expect(database.reserveSpeechUsage("2026-07-23", 2, { requests: 2, characters: 5 })).toMatchObject({
-        accepted: false,
-        limit: "characters",
-      });
-      expect(database.speechUsage("2026-07-23")).toMatchObject({ requests: 1, characters: 4 });
       database.close();
 
+      const legacy = new DatabaseSync(path);
+      legacy.exec(`
+        CREATE TABLE speech_daily_usage (
+          date TEXT PRIMARY KEY,
+          requests INTEGER NOT NULL,
+          characters INTEGER NOT NULL
+        );
+        INSERT INTO speech_daily_usage VALUES ('2026-07-23', 1, 100);
+        PRAGMA user_version = 12;
+      `);
+      legacy.close();
+
+      const migrated = new ForgeDatabase(path);
+      migrated.close();
       const raw = new DatabaseSync(path);
-      const columns = raw.prepare("PRAGMA table_info(speech_daily_usage)").all() as Array<{ name: string }>;
-      expect(columns.map(({ name }) => name)).toEqual(["date", "requests", "characters"]);
+      expect(raw.prepare("SELECT name FROM sqlite_master WHERE name = 'speech_daily_usage'").get()).toBeUndefined();
+      expect((raw.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
       raw.close();
-      const reopened = new ForgeDatabase(path);
-      expect(reopened.speechUsage("2026-07-23")).toMatchObject({ requests: 1, characters: 4 });
-      reopened.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -443,6 +444,143 @@ describe("ForgeDatabase event journal", () => {
       [2, "unknown"],
       [3, "session.deleted"],
     ]);
+    database.close();
+  });
+
+  it("imports every configured project exactly once during the database-authority migration", () => {
+    const database = new ForgeDatabase(":memory:");
+    const existing = { id: "project-existing", name: "Existing", path: "/repo/existing" };
+    const configured = { id: "project-configured", name: "Configured", path: "/repo/configured" };
+    database.syncProjects([existing]);
+
+    database.seedConfigProjectsOnce([configured]);
+    expect(database.listProjects().map((project) => project.id).sort()).toEqual([
+      existing.id,
+      configured.id,
+    ].sort());
+
+    database.seedConfigProjectsOnce([{ id: "project-late", name: "Late", path: "/repo/late" }]);
+    expect(database.listProjects().some((project) => project.id === "project-late")).toBe(false);
+    database.close();
+  });
+
+  it("transactionally removes a project cascade and redacts its durable content", () => {
+    const database = new ForgeDatabase(":memory:");
+    const project = { id: "project-remove", name: "Private Project", path: "/repo/private-project" };
+    const session = {
+      id: "session-remove",
+      projectId: project.id,
+      title: "Private thread title",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "waiting" as const,
+      modelId: "test/model",
+      thinkingLevel: "off" as const,
+    };
+    const committed = [database.createProjectWithEvent(project, {
+      sessionId: null,
+      timestamp: session.updatedAt,
+      type: "project.upserted",
+      payload: { project },
+    }), database.createSessionWithEvent(session, {
+      sessionId: session.id,
+      timestamp: session.updatedAt,
+      type: "session.upserted",
+      payload: { session },
+    })];
+    database.appendEvents([{
+      sessionId: session.id,
+      timestamp: session.updatedAt,
+      type: "interaction.requested",
+      payload: { request: {
+        id: "private-request", sessionId: session.id, method: "confirm", title: "Private question", requestedAt: session.updatedAt,
+      } },
+    }], [{
+      id: "01959f7e-7d64-7000-8000-000000000099",
+      sessionId: session.id,
+      mediaType: "text/plain",
+      byteLength: 7,
+      name: "private.txt",
+      purpose: "output",
+      createdAt: session.updatedAt,
+    }]);
+    database.upsertTerminalRecord({
+      metadata: {
+        projectId: project.id,
+        terminalId: "terminal-private",
+        label: "Private shell",
+        status: "interrupted",
+        createdAt: session.updatedAt,
+        updatedAt: session.updatedAt,
+        sequence: 0,
+        rows: 24,
+        cols: 80,
+      },
+      historyFile: "private/history.log",
+      historyVersion: 1,
+    });
+    database.beginCommand({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "private-command",
+      sessionId: session.id,
+      timestamp: session.updatedAt,
+      type: "run.cancel",
+      payload: {},
+    });
+    const beforeDelete = applyAnvilEvents(createEmptySnapshot(), [
+      ...committed,
+      ...database.readEventsAfter(2),
+    ]);
+    database.saveSnapshot(beforeDelete);
+
+    const deleted = database.deleteProjectWithEvent(project.id, {
+      sessionId: null,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "project.deleted",
+      payload: { projectId: project.id },
+    });
+
+    expect(deleted.sessionIds).toEqual([session.id]);
+    expect(deleted.artifactIds).toEqual(["01959f7e-7d64-7000-8000-000000000099"]);
+    expect(database.listProjects()).toEqual([]);
+    expect(database.getSession(session.id)).toBeUndefined();
+    expect(database.listArtifacts()).toEqual([]);
+    expect(database.listPendingInteractions()).toEqual([]);
+    expect(database.listTerminalRecords(project.id)).toEqual([]);
+    expect(database.commandOutcome("private-command")).toBeUndefined();
+    const redactedSnapshot = database.latestSnapshot()?.snapshot;
+    expect(redactedSnapshot?.projects).toEqual([]);
+    expect(redactedSnapshot?.sessions).toEqual([]);
+    expect(JSON.stringify(redactedSnapshot)).not.toContain("Private");
+    expect(JSON.stringify(redactedSnapshot)).not.toContain(project.path);
+    const journal = database.readEventsAfter(0);
+    expect(journal.map((item) => item.type)).toEqual(["unknown", "unknown", "unknown", "project.deleted"]);
+    expect(JSON.stringify(journal)).not.toContain("Private");
+    expect(JSON.stringify(journal)).not.toContain(project.path);
+    database.close();
+  });
+
+  it("rolls back every project removal mutation when the event is invalid", () => {
+    const database = new ForgeDatabase(":memory:");
+    const project = { id: "project-rollback", name: "Rollback", path: "/repo/rollback" };
+    database.syncProjects([project]);
+    database.createSession({
+      id: "session-rollback",
+      projectId: project.id,
+      title: "Keep me",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle",
+      modelId: "test/model",
+      thinkingLevel: "off",
+    });
+
+    expect(() => database.deleteProjectWithEvent(project.id, {
+      sessionId: null,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "project.deleted",
+      payload: {},
+    } as never)).toThrow("Refusing to persist invalid event");
+    expect(database.listProjects()).toEqual([project]);
+    expect(database.getSession("session-rollback")).toBeDefined();
     database.close();
   });
 

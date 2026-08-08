@@ -1,5 +1,5 @@
-import { normalizeProjectSlug, normalizeSessionTitle, SESSION_TITLE_MAX_LENGTH } from "@anvil/protocol";
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { isGeneralProject, normalizeSessionTitle, SESSION_TITLE_MAX_LENGTH, type ProjectSummary, type SessionSummary } from "@anvil/protocol";
+import { type FormEvent, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import {
   AlertDialog,
@@ -19,144 +19,51 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { terminalClient } from "@/lib/terminalClient";
 
-function projectPath(root: string, slug: string): string {
-  return `${root.replace(/\/$/, "")}/${slug}`;
+export function projectThreadCount(projectId: string, sessions: readonly SessionSummary[]): number {
+  return sessions.filter((session) => session.projectId === projectId).length;
 }
 
-export function NewProjectDialog({
-  onClose,
-  onCreate,
-  onAddExisting,
-  getProjectsRoot,
-}: {
-  onClose: () => void;
-  onCreate: (name: string) => Promise<{ status: "created" } | { status: "existing"; path: string }>;
-  onAddExisting: (name: string, path: string) => Promise<void>;
-  getProjectsRoot: () => Promise<string>;
-}) {
-  const [name, setName] = useState("");
-  const [projectsRoot, setProjectsRoot] = useState<string>();
-  const [rootError, setRootError] = useState<string>();
-  const [pending, setPending] = useState(false);
-  const [existingPath, setExistingPath] = useState<string>();
-  const [error, setError] = useState<string>();
-  const nameRef = useRef<HTMLInputElement>(null);
-  const slug = normalizeProjectSlug(name);
-  const preview = projectsRoot
-    ? projectPath(projectsRoot, slug || "project-name")
-    : "Loading projects root…";
+export function projectRemovalConfirmationMatches(projectName: string, threadCount: number, confirmation: string): boolean {
+  return threadCount === 0 || confirmation === projectName;
+}
 
-  useEffect(() => {
-    let cancelled = false;
-    void getProjectsRoot().then((path) => {
-      if (!cancelled) setProjectsRoot(path);
-    }).catch((failure) => {
-      if (!cancelled) setRootError(failure instanceof Error ? failure.message : String(failure));
-    });
-    return () => { cancelled = true; };
-  }, [getProjectsRoot]);
+export function projectRemovalWarning(threadCount: number, terminalCount?: number): string {
+  const threads = `${threadCount} ${threadCount === 1 ? "thread" : "threads"}`;
+  const terminals = terminalCount === undefined
+    ? "terminal records and history"
+    : `${terminalCount} ${terminalCount === 1 ? "terminal" : "terminals"} and their history`;
+  return `Active work will be stopped. ocode will permanently remove ${threads}, Pi sessions, artifacts, pending requests, and ${terminals}. Workspace files remain untouched on disk.`;
+}
 
-  const submit = async (event: FormEvent) => {
-    event.preventDefault();
-    if (!name.trim() || !slug || !projectsRoot || pending) return;
-    setPending(true);
-    setError(undefined);
-    try {
-      if (existingPath) {
-        await onAddExisting(name.trim(), existingPath);
-        onClose();
-        return;
-      }
-      const result = await onCreate(name.trim());
-      if (result.status === "existing") {
-        setExistingPath(result.path);
-        setPending(false);
-        return;
-      }
-      onClose();
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : String(failure));
-      setPending(false);
-    }
-  };
+function useProjectTerminalCount(projectId: string | undefined): number | undefined {
+  const terminals = useSyncExternalStore(
+    terminalClient.subscribe,
+    () => terminalClient.terminals(projectId ?? ""),
+    () => terminalClient.terminals(projectId ?? ""),
+  );
+  const loaded = useSyncExternalStore(
+    terminalClient.subscribe,
+    () => projectId ? terminalClient.projectLoaded(projectId) : false,
+    () => projectId ? terminalClient.projectLoaded(projectId) : false,
+  );
+  useEffect(() => projectId ? terminalClient.watchProject(projectId) : undefined, [projectId]);
+  return loaded ? terminals.length : undefined;
+}
 
+function ProjectRetentionSummary({ projectId, threadCount }: { projectId: string; threadCount: number }) {
+  const terminalCount = useProjectTerminalCount(projectId);
   return (
-    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
-      <DialogContent
-        aria-describedby="new-project-description"
-        className="sm:max-w-md"
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          nameRef.current?.focus();
-        }}
-        onEscapeKeyDown={(event) => pending && event.preventDefault()}
-        onPointerDownOutside={(event) => pending && event.preventDefault()}
-      >
-        <DialogHeader>
-          <span className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-            Forge projects
-          </span>
-          <DialogTitle>New project</DialogTitle>
-          <DialogDescription id="new-project-description">
-            Name your project. Forge will create its directory under the configured projects root.
-          </DialogDescription>
-        </DialogHeader>
-        <form className="grid gap-4" onSubmit={submit}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="project-name">Name</FieldLabel>
-              <Input
-                ref={nameRef}
-                id="project-name"
-                value={name}
-                onChange={(event) => {
-                  setName(event.target.value);
-                  setExistingPath(undefined);
-                  setError(undefined);
-                }}
-                placeholder="My project"
-                maxLength={80}
-                disabled={pending}
-                aria-invalid={(Boolean(name.trim()) && !slug) || undefined}
-                required
-              />
-              {name.trim() && !slug && <FieldDescription>Use a name containing letters or numbers.</FieldDescription>}
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="project-path-preview">Directory on Forge</FieldLabel>
-              <Input
-                id="project-path-preview"
-                value={preview}
-                readOnly
-                spellCheck={false}
-                aria-label="New project path preview"
-                className="font-mono text-xs text-muted-foreground"
-              />
-            </Field>
-          </FieldGroup>
-          {existingPath && (
-            <div className="rounded-md border border-border bg-muted/35 px-3 py-2.5 text-xs" role="status">
-              <strong className="block text-foreground">Project directory found</strong>
-              <span className="text-muted-foreground">Forge will add this existing directory without changing its contents.</span>
-            </div>
-          )}
-          {(rootError || error) && <FieldError role="alert">{rootError ?? error}</FieldError>}
-          <DialogFooter className="border-t border-border/60 pt-3">
-            <Button type="button" variant="outline" onClick={onClose} disabled={pending}>
-              Cancel
-            </Button>
-            <Button type="submit" disabled={!name.trim() || !slug || !projectsRoot || pending}>
-              {pending
-                ? existingPath ? "Adding…" : "Checking…"
-                : existingPath ? "Add existing project" : "Create project"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <span className="text-xs text-muted-foreground">
+      {threadCount} {threadCount === 1 ? "thread" : "threads"}
+      <span aria-hidden="true"> · </span>
+      {terminalCount === undefined
+        ? "Loading terminals…"
+        : `${terminalCount} ${terminalCount === 1 ? "terminal" : "terminals"}`}
+    </span>
   );
 }
 
@@ -256,6 +163,175 @@ export function ProjectsRootDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+export function ManageProjectsDialog({
+  projects,
+  sessions,
+  onClose,
+  onRemove,
+}: {
+  projects: ProjectSummary[];
+  sessions: SessionSummary[];
+  onClose: () => void;
+  onRemove: (projectId: string) => Promise<void>;
+}) {
+  const [selectedProjectId, setSelectedProjectId] = useState<string>();
+  const [confirmationName, setConfirmationName] = useState("");
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+  const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const threadCount = selectedProject ? projectThreadCount(selectedProject.id, sessions) : 0;
+  const terminalCount = useProjectTerminalCount(selectedProject?.id);
+  const requiresTypedConfirmation = threadCount > 0;
+  const confirmed = selectedProject
+    ? projectRemovalConfirmationMatches(selectedProject.name, threadCount, confirmationName)
+    : false;
+
+  useEffect(() => {
+    setConfirmationName("");
+    setError(undefined);
+  }, [selectedProjectId]);
+
+  useEffect(() => {
+    if (selectedProjectId && !projects.some((project) => project.id === selectedProjectId)) {
+      setSelectedProjectId(undefined);
+      setPending(false);
+    }
+  }, [projects, selectedProjectId]);
+
+  const returnToList = () => {
+    if (pending) return;
+    setSelectedProjectId(undefined);
+  };
+
+  const remove = async () => {
+    if (!selectedProject || pending || !confirmed) return;
+    setPending(true);
+    setError(undefined);
+    try {
+      await onRemove(selectedProject.id);
+      onClose();
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : String(failure));
+      setPending(false);
+    }
+  };
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
+      <DialogContent
+        className="sm:max-w-xl"
+        onEscapeKeyDown={(event) => pending && event.preventDefault()}
+      >
+        {selectedProject ? (
+          <>
+            <DialogHeader>
+              <span className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.12em] text-destructive">
+                Destructive action
+              </span>
+              <DialogTitle>Remove “{selectedProject.name}” from ocode?</DialogTitle>
+              <DialogDescription>
+                {projectRemovalWarning(threadCount, terminalCount)}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 rounded-md border border-border bg-muted/30 p-3 text-sm">
+              <div>
+                <span className="block text-xs text-muted-foreground">Project</span>
+                <strong>{selectedProject.name}</strong>
+              </div>
+              <div className="min-w-0">
+                <span className="block text-xs text-muted-foreground">Workspace path</span>
+                <code className="block break-all text-xs">{selectedProject.path}</code>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <span className="block text-xs text-muted-foreground">Threads removed</span>
+                  <strong>{threadCount}</strong>
+                </div>
+                <div>
+                  <span className="block text-xs text-muted-foreground">Terminals removed</span>
+                  <strong>{terminalCount ?? "Loading…"}</strong>
+                </div>
+              </div>
+              <p className="font-medium text-foreground">Workspace files remain untouched on disk.</p>
+            </div>
+            {requiresTypedConfirmation && (
+              <Field>
+                <FieldLabel htmlFor="remove-project-confirmation">
+                  Type <strong>{selectedProject.name}</strong> to confirm
+                </FieldLabel>
+                <Input
+                  id="remove-project-confirmation"
+                  autoComplete="off"
+                  value={confirmationName}
+                  onChange={(event) => setConfirmationName(event.target.value)}
+                  disabled={pending}
+                  aria-invalid={Boolean(error) || undefined}
+                />
+              </Field>
+            )}
+            {error && <FieldError role="alert">{error}</FieldError>}
+            <DialogFooter className="border-t border-border/60 pt-3">
+              <Button type="button" variant="outline" onClick={returnToList} disabled={pending}>Cancel</Button>
+              <Button variant="destructive" onClick={() => void remove()} disabled={pending || !confirmed}>
+                {pending ? "Removing…" : "Remove from ocode"}
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <DialogHeader>
+              <span className="font-mono text-[0.625rem] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+                Forge settings
+              </span>
+              <DialogTitle>Manage projects</DialogTitle>
+              <DialogDescription>
+                Remove projects from ocode without changing their workspace files on disk.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid max-h-[min(28rem,60vh)] gap-2 overflow-y-auto" aria-label="Registered projects">
+              {projects.map((project) => {
+                const count = projectThreadCount(project.id, sessions);
+                const general = isGeneralProject(project);
+                return (
+                  <div key={project.id} className="flex min-w-0 items-center gap-3 rounded-md border border-border px-3 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <strong className="block truncate text-sm">{project.name}</strong>
+                      <span className="block truncate font-mono text-xs text-muted-foreground" title={project.path}>{general ? "~/" : project.path}</span>
+                      <ProjectRetentionSummary projectId={project.id} threadCount={count} />
+                    </div>
+                    {general ? (
+                      <span className="shrink-0 rounded-sm bg-muted px-2 py-1 text-xs font-medium text-muted-foreground">Built in</span>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="shrink-0 text-destructive hover:text-destructive"
+                        aria-label={`Remove ${project.name} from ocode`}
+                        onClick={() => setSelectedProjectId(project.id)}
+                      >
+                        Remove
+                      </Button>
+                    )}
+                  </div>
+                );
+              })}
+              {projects.length === 0 && (
+                <div className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
+                  No projects are registered with ocode.
+                </div>
+              )}
+            </div>
+            <DialogFooter className="border-t border-border/60 pt-3">
+              <Button type="button" variant="outline" onClick={onClose}>Close</Button>
+            </DialogFooter>
+          </>
+        )}
       </DialogContent>
     </Dialog>
   );

@@ -1,6 +1,6 @@
 # ocode desktop
 
-A minimal Tauri v2 shell for the Forge-served web app. It loads Forge directly as a remote HTTPS origin so the existing relative HTTP, SSE, and WebSocket connections keep the same origin. The remote page receives only narrowly scoped native window-dragging permissions for the integrated macOS title bar.
+A minimal Tauri v2 shell for the Forge-served web app. It loads Forge directly as a remote HTTPS origin so the existing relative HTTP, SSE, and WebSocket connections keep the same origin. The trusted Forge page receives narrowly scoped native permissions for the integrated macOS title bar and signed desktop updates.
 
 ## Prerequisites
 
@@ -46,7 +46,36 @@ OCODE_FORGE_URL=https://your-forge-host.example.ts.net corepack pnpm build:deskt
 
 A missing or invalid value opens a local setup page instead. The hostname embedded in a build is visible to anyone with that build, although it does not contain Tailscale credentials.
 
-The Forge page remains same-origin with its HTTP, SSE, and WebSocket endpoints. Tailscale Serve—not the desktop app—adds the identity headers that Forge verifies. The desktop shell defines no plugins. Its only remote capability is restricted to the main macOS window on `https://*.ts.net/*` and permits native window dragging/maximizing for the integrated title bar; it does not expose filesystem, shell, network, or general window commands. Do not broaden this capability without a separate security review.
+The Forge page remains same-origin with its HTTP, SSE, and WebSocket endpoints. Tailscale Serve—not the desktop app—adds the identity headers that Forge verifies. The title-bar capability is restricted to the main macOS window on the tailnet. At build time, `scripts/tauri.mjs` grants updater/restart commands only to the exact `OCODE_FORGE_URL` origin. Updates must also pass Tauri's embedded signature verification. The app exposes no filesystem, shell, or general network plugin. Do not broaden these capabilities without a separate security review.
+
+## Signed desktop updates
+
+The updater public key is embedded in `src-tauri/tauri.conf.json`. Its matching private key was generated once at `~/.config/ocode/desktop-updater.key` on Forge and must stay outside the repository. Securely copy that existing key to the same path on the Mac used for release builds and keep it mode `0600`. Do **not** generate a new key: clients with the embedded public key would reject its signatures. Rotating the key requires another manually installed bootstrap build.
+
+The current key is deliberately passwordless for unattended personal release builds and depends on Forge/macOS file permissions for protection. A CI secret can instead provide `TAURI_SIGNING_PRIVATE_KEY` and, for an encrypted replacement key introduced during a bootstrap release, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+
+The desktop build wrapper injects both the Forge update endpoint and an exact-origin native capability from `OCODE_FORGE_URL`. Increase the version in both `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`, then build on the target Mac:
+
+```bash
+OCODE_FORGE_URL=https://your-forge-host.example.ts.net corepack pnpm build:desktop
+```
+
+Tauri produces a signed `.app.tar.gz` updater payload and adjacent `.sig` file under `apps/desktop/src-tauri/target/release/bundle/macos/`. Copy those two files to Forge through the administration channel, build Forge so the publisher CLI is available, and publish them:
+
+```bash
+corepack pnpm build
+corepack pnpm publish:desktop -- \
+  --artifact /path/on/forge/ocode.app.tar.gz \
+  --signature /path/on/forge/ocode.app.tar.gz.sig \
+  --version 0.1.2 \
+  --target darwin \
+  --arch aarch64 \
+  --notes "What changed"
+```
+
+Forge stores releases under `OCODE_DESKTOP_UPDATE_DIR`, defaulting to `~/.local/state/ocode/desktop-updates`, and serves them only to the authenticated Tailscale owner. Published versions and artifact URLs are immutable, and the Tauri signature remains the integrity boundary.
+
+The first updater-enabled application must be installed manually: after building version `0.1.1` on the Mac, quit ocode and replace the installed application with `apps/desktop/src-tauri/target/release/bundle/macos/ocode.app` (or install the generated DMG), then reopen it. Later releases are available from **Settings → Desktop updates**.
 
 ## Commands
 

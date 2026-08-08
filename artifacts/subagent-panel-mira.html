@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ocode — Mira subagent timeline</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --background:#0a0a0b; --foreground:#fafafa;
+    --card:#101012; --card-foreground:#f5f5f5;
+    --popover:#111113; --popover-foreground:#f5f5f5;
+    --primary:#e7e7e7; --primary-foreground:#171717;
+    --secondary:#202023; --secondary-foreground:#f4f4f5;
+    --muted:#19191c; --muted-foreground:#a1a1aa;
+    --accent:#1d1d20; --accent-foreground:#fafafa;
+    --destructive:#ef6b73; --border:#27272a; --input:#303036; --ring:#8b8b93;
+    --success:#68bd8d; --warning:#d3a85f;
+    --radius:.625rem;
+    --sans:"Inter Variable",Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    --mono:"Geist Mono Variable","SFMono-Regular",Consolas,monospace;
+  }
+  *{box-sizing:border-box} html,body{margin:0;min-height:100%}
+  body{display:grid;place-items:center;padding:18px;background:transparent;color:var(--foreground);font-family:var(--sans)}
+  .control{position:fixed;width:1px;height:1px;opacity:0;pointer-events:none}
+  .app{width:min(1180px,100%);height:min(720px,calc(100vh - 36px));min-height:590px;display:grid;grid-template-columns:196px minmax(360px,1fr) 432px;overflow:hidden;background:var(--background);border:1px solid var(--border);border-radius:12px;box-shadow:0 28px 80px rgba(0,0,0,.45);transition:grid-template-columns 160ms ease;animation:enter 280ms ease-out both}
+  #panel:not(:checked)~.app{grid-template-columns:196px minmax(360px,1fr) 0}
+  #panel:not(:checked)~.app .right-panel{opacity:0;pointer-events:none}
+  button,label,summary{font:inherit;-webkit-tap-highlight-color:transparent}
+  label,summary{cursor:pointer}
+  .icon{width:14px;height:14px;display:block;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+  .sidebar{min-width:0;display:flex;flex-direction:column;background:#0c0c0e;border-right:1px solid var(--border)}
+  .brand{height:52px;display:flex;align-items:center;padding:0 13px;font-size:12px;font-weight:600}
+  .search{height:28px;margin:2px 10px 16px;display:flex;align-items:center;gap:7px;padding:0 8px;color:var(--muted-foreground);background:color-mix(in oklab,var(--input) 30%,transparent);border:1px solid var(--border);border-radius:6px;font-size:10px}
+  .group-label{padding:0 12px 7px;color:#6f6f78;font-size:9px;font-weight:500}
+  .thread{margin:0 7px 3px;padding:8px 9px;border-radius:6px;color:var(--muted-foreground)}
+  .thread.active{color:var(--foreground);background:var(--muted)}
+  .thread strong{display:block;overflow:hidden;font-size:10.5px;font-weight:500;white-space:nowrap;text-overflow:ellipsis}
+  .thread small{display:flex;justify-content:space-between;margin-top:4px;color:#73737c;font:8px var(--mono)}
+  .thread small b{color:var(--success);font-weight:500}
+  .forge{margin-top:auto;padding:11px;border-top:1px solid var(--border);color:#73737c;font-size:9px}
+  .main{min-width:0;display:flex;flex-direction:column;background:radial-gradient(circle at 50% -10%,rgba(255,255,255,.025),transparent 310px),var(--background)}
+  .header{height:60px;flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:0 18px;border-bottom:1px solid var(--border)}
+  .heading strong{display:block;font-size:11.5px;font-weight:550}.heading small{display:block;margin-top:4px;color:#71717a;font:8px var(--mono)}
+  .header-actions{display:flex;gap:6px}.icon-button{width:28px;height:28px;display:grid;place-items:center;color:var(--muted-foreground);border:1px solid var(--border);border-radius:6px}
+  .messages{flex:1;min-height:0;padding:30px 27px;overflow:hidden}.column{width:min(640px,100%);margin:auto}
+  .user{max-width:83%;margin-left:auto;padding:9px 11px;background:var(--muted);border:1px solid var(--border);border-radius:9px 9px 3px 9px;font-size:11px;line-height:1.55}
+  .assistant{margin-top:24px;color:#d4d4d8;font-size:11px;line-height:1.68}.assistant p{margin:0 0 12px}
+  .agent-callout{display:flex;align-items:center;gap:8px;margin:14px 0;padding:8px 0;color:var(--muted-foreground);border-top:1px solid var(--border);border-bottom:1px solid var(--border);font-size:9.5px}
+  .agent-callout .orb{width:7px;height:7px;border:2px solid var(--foreground);border-top-color:transparent;border-radius:50%;animation:spin .9s linear infinite}.agent-callout strong{color:var(--foreground);font-weight:500}.agent-callout small{margin-left:auto;color:#71717a;font:8px var(--mono)}
+  .composer-wrap{padding:10px 22px 12px;background:linear-gradient(180deg,transparent,var(--background) 26%)}
+  .composer{width:min(640px,100%);margin:auto;padding:10px;background:var(--card);border:1px solid var(--border);border-radius:9px;box-shadow:0 16px 42px rgba(0,0,0,.28)}
+  .prompt{height:40px;padding:2px;color:#74747d;font-size:11px}.composer-row{display:flex;align-items:center;justify-content:space-between}.composer-left,.composer-right{display:flex;align-items:center;gap:5px}
+  .ghost-button{height:27px;display:inline-flex;align-items:center;gap:5px;padding:0 7px;color:var(--muted-foreground);border-radius:6px;font-size:10px}.ghost-button:hover{color:var(--foreground);background:var(--muted)}
+  .agent-button{height:27px;display:inline-flex;align-items:center;gap:6px;padding:0 8px;color:var(--foreground);background:color-mix(in oklab,var(--input) 30%,transparent);border:1px solid var(--border);border-radius:6px;font-size:10px;font-weight:500}.agent-button:hover{background:var(--accent)}
+  .status-dot{width:6px;height:6px;background:var(--success);border-radius:50%;box-shadow:0 0 0 3px color-mix(in oklab,var(--success) 14%,transparent)}
+  .send{width:27px;height:27px;display:grid;place-items:center;color:var(--primary-foreground);background:var(--primary);border-radius:6px}
+  .right-panel{min-width:0;height:100%;display:grid;grid-template-rows:40px auto auto minmax(0,1fr);overflow:hidden;background:var(--background);border-left:1px solid var(--border);opacity:1;transition:opacity 120ms ease}
+  .resource-tabs{display:flex;align-items:stretch;gap:2px;padding:3px 4px 0;background:#0c0c0e;border-bottom:1px solid var(--border)}
+  .resource-tab{display:flex;align-items:center;gap:6px;min-width:0;max-width:160px;padding:0 9px;color:var(--muted-foreground);border-bottom:2px solid transparent;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.resource-tab.active{color:var(--foreground);background:color-mix(in oklab,var(--muted) 55%,transparent);border-color:var(--foreground)}
+  .resource-tab .status-dot{width:5px;height:5px;box-shadow:none}.close{margin-left:auto;width:28px;display:grid;place-items:center;color:var(--muted-foreground);border-radius:5px}.close:hover{color:var(--foreground);background:var(--muted)}
+  .panel-heading{padding:14px 14px 11px}.title-row{display:flex;align-items:center;gap:8px}.title-row h2{margin:0;font-size:13px;font-weight:550;letter-spacing:-.01em}
+  .badge{height:20px;display:inline-flex;align-items:center;gap:5px;padding:0 8px;color:var(--foreground);background:color-mix(in oklab,var(--input) 30%,transparent);border:1px solid var(--border);border-radius:999px;font-size:10px;font-weight:500}.badge .status-dot{width:5px;height:5px;box-shadow:none}
+  .stop-button{margin-left:auto;height:26px;padding:0 8px;color:var(--destructive);background:color-mix(in oklab,var(--destructive) 12%,transparent);border:0;border-radius:6px;font-size:10px;font-weight:500}
+  .panel-heading p{margin:6px 0 0;color:var(--muted-foreground);font-size:11px;line-height:1.45}
+  .agent-tabs{margin:0 14px 12px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;padding:3px;background:var(--muted);border-radius:8px}
+  .agent-tab{min-width:0;display:flex;align-items:center;justify-content:center;gap:5px;height:27px;padding:0 6px;color:var(--muted-foreground);border:1px solid transparent;border-radius:6px;font-size:10px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .agent-tab:hover{color:var(--foreground)}
+  #researcher:checked~.app label[for=researcher],#scout:checked~.app label[for=scout],#reviewer:checked~.app label[for=reviewer]{color:var(--foreground);background:var(--background);border-color:var(--border);box-shadow:0 1px 2px rgba(0,0,0,.3)}
+  .agent-tab .tiny{width:5px;height:5px;border-radius:50%;background:var(--muted-foreground)}.agent-tab .tiny.live{background:var(--success)}
+  .detail{min-height:0;display:none;grid-template-rows:auto minmax(0,1fr);border-top:1px solid var(--border)}
+  #researcher:checked~.app .detail.researcher,#scout:checked~.app .detail.scout,#reviewer:checked~.app .detail.reviewer{display:grid}
+  .detail-head{padding:11px 14px;border-bottom:1px solid var(--border)}.breadcrumb{display:flex;align-items:center;gap:5px;color:#71717a;font-size:9px}.breadcrumb b{color:var(--foreground);font-weight:500}
+  .task{margin:7px 0 0;color:#c3c3c8;font-size:11px;line-height:1.5}.meta{display:flex;align-items:center;gap:7px;margin-top:7px;color:#71717a;font:8px var(--mono)}.meta span+span::before{margin-right:7px;content:"·"}
+  .timeline-scroll{min-height:0;overflow:auto;padding:14px 14px 24px;scrollbar-width:thin}.timeline-label{margin:0 0 13px;color:#71717a;font-size:9px;font-weight:500;text-transform:uppercase;letter-spacing:.07em}
+  .timeline{list-style:none;margin:0;padding:0}.event{position:relative;display:grid;grid-template-columns:24px minmax(0,1fr);gap:9px;padding-bottom:16px}.event:not(:last-child)::before{position:absolute;left:11px;top:23px;bottom:0;width:1px;content:"";background:var(--border)}
+  .event-icon{position:relative;z-index:1;width:24px;height:24px;display:grid;place-items:center;color:var(--muted-foreground);background:var(--background);border:1px solid var(--border);border-radius:999px}.event-icon .icon{width:12px;height:12px}.event.running .event-icon{color:var(--foreground);border-color:#4a4a50}.event.complete .event-icon{color:var(--success)}
+  .event-main{min-width:0;padding-top:2px}.event-title{display:flex;align-items:baseline;gap:7px;min-width:0}.event-title strong{color:var(--foreground);font-size:11px;font-weight:500}.event-title time{margin-left:auto;color:#71717a;font:8px var(--mono)}
+  .event-copy{margin:4px 0 0;color:var(--muted-foreground);font-size:10.5px;line-height:1.5}
+  details.tool{margin-top:7px;background:color-mix(in oklab,var(--input) 18%,transparent);border:1px solid var(--border);border-radius:7px;overflow:hidden}details.tool summary{display:flex;align-items:center;gap:7px;min-height:32px;padding:6px 8px;list-style:none;color:#d4d4d8;font-size:10px;font-weight:500}details.tool summary::-webkit-details-marker{display:none}details.tool summary .chevron{margin-left:auto;color:#71717a;transition:transform 120ms ease}details[open].tool summary .chevron{transform:rotate(90deg)}
+  .tool-body{padding:8px;border-top:1px solid var(--border);color:var(--muted-foreground);font-size:10px;line-height:1.45}.tool-body pre{margin:0;padding:8px;overflow:auto;color:#c7c7ce;background:#0d0d0f;border-radius:5px;font:8px/1.5 var(--mono);white-space:pre-wrap}.result-line{display:flex;align-items:center;gap:6px;margin-top:7px;color:var(--success);font-size:9px}
+  .reasoning{margin-top:7px;padding:8px 9px;color:var(--muted-foreground);background:var(--muted);border-radius:7px;font-size:10px;line-height:1.5}.reasoning b{display:block;margin-bottom:3px;color:#d4d4d8;font-size:9px;font-weight:500}
+  .empty{display:grid;place-items:center;padding:30px;color:var(--muted-foreground);font-size:11px;text-align:center}
+  .hint{position:fixed;bottom:5px;left:50%;transform:translateX(-50%);color:#777780;font:8px var(--mono);white-space:nowrap}
+  @keyframes spin{to{transform:rotate(360deg)}}@keyframes enter{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+  @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
+  @media(max-width:900px){body{padding:0}.app{height:100vh;min-height:560px;border:0;border-radius:0;grid-template-columns:0 minmax(0,1fr) min(432px,48vw)}.sidebar{opacity:0}#panel:not(:checked)~.app{grid-template-columns:0 minmax(0,1fr) 0}}
+  @media(max-width:650px){.app,#panel:not(:checked)~.app{position:relative;display:block}.main{height:100%}.right-panel{position:absolute;z-index:4;inset:0;width:100%}#panel:not(:checked)~.app .right-panel{display:none}}
+</style>
+</head>
+<body>
+<input class="control" type="checkbox" id="panel" checked>
+<input class="control" type="radio" name="agent" id="researcher" checked>
+<input class="control" type="radio" name="agent" id="scout">
+<input class="control" type="radio" name="agent" id="reviewer">
+<main class="app" aria-label="Interactive Mira-style subagent timeline concept">
+  <aside class="sidebar">
+    <div class="brand">ocode</div>
+    <div class="search"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>Search conversations</div>
+    <div class="group-label">Active</div>
+    <div class="thread active"><strong>Add conversation search</strong><small><span>anvil · main</span><b>Working</b></small></div>
+    <div class="thread"><strong>Forge reconnect review</strong><small><span>anvil · main</span><span>12m</span></small></div>
+    <div class="thread"><strong>Terminal resize issue</strong><small><span>anvil · fix/pty</span><span>1h</span></small></div>
+    <div class="group-label" style="margin-top:16px">Settled</div>
+    <div class="thread"><strong>Desktop update dialog</strong><small><span>anvil · main</span><span>Tue</span></small></div>
+    <div class="forge">Forge connected</div>
+  </aside>
+
+  <section class="main">
+    <header class="header"><div class="heading"><strong>Add conversation-content search</strong><small>anvil / main · forge</small></div><div class="header-actions"><span class="icon-button">⌘</span><span class="icon-button">•••</span></div></header>
+    <div class="messages"><div class="column">
+      <div class="user">Investigate the sidebar and design server-backed conversation search. Use subagents to inspect the client and database paths.</div>
+      <div class="assistant"><p>I’ll inspect the current thread list, persistence model, and search patterns in parallel.</p><div class="agent-callout"><span class="orb"></span><strong>3 subagents</strong><span>inspecting client, Forge, and tests</span><small>2 running · 1 done</small></div><p>The sidebar currently filters loaded metadata only. Forge already has the durable message state needed for a bounded content-search endpoint.</p></div>
+    </div></div>
+    <div class="composer-wrap"><div class="composer"><div class="prompt">Ask a follow-up…</div><div class="composer-row"><div class="composer-left"><span class="ghost-button">＋</span><span class="ghost-button">GPT-5.6</span><span class="ghost-button">High</span></div><div class="composer-right"><label for="panel" class="agent-button"><span class="status-dot"></span>2 active · 1 done</label><span class="send">↑</span></div></div></div></div>
+  </section>
+
+  <aside class="right-panel" aria-label="Subagent activity panel">
+    <nav class="resource-tabs"><span class="resource-tab active"><span class="status-dot"></span>Agents</span><span class="resource-tab">workspaceFiles.ts</span><label class="close" for="panel" aria-label="Close panel">×</label></nav>
+    <header class="panel-heading"><div class="title-row"><h2>Subagents</h2><span class="badge"><span class="status-dot"></span>2 running</span><button class="stop-button">Stop all</button></div><p>Observable reasoning, tool calls, and results from this turn.</p></header>
+    <nav class="agent-tabs" aria-label="Select subagent"><label class="agent-tab" for="researcher"><span class="tiny live"></span>Researcher</label><label class="agent-tab" for="scout"><span class="tiny live"></span>Scout</label><label class="agent-tab" for="reviewer"><span class="tiny"></span>Reviewer</label></nav>
+
+    <section class="detail researcher">
+      <header class="detail-head"><div class="breadcrumb"><span>Main agent</span><span>›</span><b>Researcher</b></div><p class="task">Compare durable conversation-search approaches and identify the safest server boundary.</p><div class="meta"><span>GPT-5.6</span><span>High</span><span>1m 24s</span></div></header>
+      <div class="timeline-scroll"><p class="timeline-label">Activity</p><ol class="timeline">
+        <li class="event complete"><span class="event-icon"><svg class="icon" viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"/></svg></span><div class="event-main"><div class="event-title"><strong>Task received</strong><time>10:42:08</time></div><p class="event-copy">Inspect Forge storage and existing bounded-search APIs.</p></div></li>
+        <li class="event complete"><span class="event-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M9 18h6M10 22h4M8 14c-1.2-1-2-2.5-2-4a6 6 0 0 1 12 0c0 1.5-.8 3-2 4-.7.6-1 1.2-1 2H9c0-.8-.3-1.4-1-2Z"/></svg></span><div class="event-main"><div class="event-title"><strong>Reasoning</strong><time>10:42:10</time></div><div class="reasoning"><b>Provider-emitted summary</b>I’ll locate finalized user and assistant messages, then check whether the current SQLite indexes support bounded search.</div></div></li>
+        <li class="event complete"><span class="event-icon"><svg class="icon" viewBox="0 0 24 24"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/></svg></span><div class="event-main"><div class="event-title"><strong>Searched codebase</strong><time>10:42:12</time></div><details class="tool" open><summary><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m16 16 4 4"/></svg>ffgrep <span class="chevron">›</span></summary><div class="tool-body"><pre>pattern: session_messages
+path: apps/forge/src</pre><div class="result-line">✓ 6 matches found</div></div></details></div></li>
+        <li class="event complete"><span class="event-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6zM14 3v4h4M9 12h6M9 16h4"/></svg></span><div class="event-main"><div class="event-title"><strong>Read database store</strong><time>10:42:20</time></div><p class="event-copy">Checked durable columns, indexes, and event compaction.</p></div></li>
+        <li class="event running"><span class="event-icon"><svg class="icon" viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9"/></svg></span><div class="event-main"><div class="event-title"><strong>Comparing approaches</strong><time>now</time></div><div class="reasoning"><b>Provider-emitted summary</b>A Forge query is preferable to browser indexing because search must work immediately after reconnecting on another device.</div></div></li>
+      </ol></div>
+    </section>
+
+    <section class="detail scout"><header class="detail-head"><div class="breadcrumb"><span>Main agent</span><span>›</span><b>Scout</b></div><p class="task">Map current sidebar filtering and identify reusable result-row components.</p><div class="meta"><span>GPT-5.6</span><span>Medium</span><span>48s</span></div></header><div class="timeline-scroll"><p class="timeline-label">Activity</p><ol class="timeline"><li class="event complete"><span class="event-icon">✓</span><div class="event-main"><div class="event-title"><strong>Read Sidebar.tsx</strong><time>10:42:11</time></div><p class="event-copy">Traced title, project, and branch filtering.</p></div></li><li class="event running"><span class="event-icon">◌</span><div class="event-main"><div class="event-title"><strong>Inspecting tests</strong><time>now</time></div><details class="tool" open><summary>ffgrep <span class="chevron">›</span></summary><div class="tool-body"><pre>pattern: thread-search
+path: apps/web/src</pre></div></details></div></li></ol></div></section>
+
+    <section class="detail reviewer"><header class="detail-head"><div class="breadcrumb"><span>Main agent</span><span>›</span><b>Reviewer</b></div><p class="task">Review the search boundary for privacy and reconnect safety.</p><div class="meta"><span>GPT-5.6</span><span>High</span><span>32s</span></div></header><div class="timeline-scroll"><p class="timeline-label">Activity</p><ol class="timeline"><li class="event complete"><span class="event-icon">✓</span><div class="event-main"><div class="event-title"><strong>Review complete</strong><time>10:42:41</time></div><p class="event-copy">Use a two-character minimum, bounded excerpts, one match per session, and never write raw query text to server logs.</p></div></li></ol></div></section>
+  </aside>
+</main>
+<div class="hint">Toggle the panel from the composer · switch agents · expand or collapse tool details</div>
+</body>
+</html>

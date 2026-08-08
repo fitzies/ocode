@@ -391,6 +391,39 @@ describe("ForgeAnvilClient", () => {
     const sessionId = commands[0]!.payload.sessionId!;
     client.sendPrompt("Start immediately");
     expect(commands.map((command) => command.type)).toEqual(["session.create"]);
+    expect(client.getSnapshot().sessions.find((candidate) => candidate.id === sessionId)?.title)
+      .toBe("Start immediately");
+
+    const createdSession = {
+      ...session,
+      id: sessionId,
+      projectId: project.id,
+      title: "New session",
+    };
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-created-before-prompt",
+      sequence: 1,
+      sessionId,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "session.upserted",
+      payload: { session: createdSession },
+    } satisfies AnvilEvent));
+    await waitUntil(() => commands.length === 2);
+    expect(client.getSnapshot().sessions.find((candidate) => candidate.id === sessionId)?.title)
+      .toBe("Start immediately");
+
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-generated-title",
+      sequence: 2,
+      sessionId,
+      timestamp: "2026-07-23T01:00:02.000Z",
+      type: "session.configured",
+      payload: { title: "Generated start title" },
+    } satisfies AnvilEvent));
+    expect(client.getSnapshot().sessions.find((candidate) => candidate.id === sessionId)?.title)
+      .toBe("Generated start title");
 
     resolveCreate(new Response(JSON.stringify({
       protocolVersion: ANVIL_PROTOCOL_VERSION,
@@ -401,13 +434,69 @@ describe("ForgeAnvilClient", () => {
       outcome: "completed",
       data: { sessionId },
     })));
-    await waitUntil(() => commands.length === 2);
 
     expect(commands[1]).toMatchObject({
       type: "prompt.send",
       sessionId,
       payload: { content: "Start immediately", delivery: "prompt" },
     });
+  });
+
+  it("ignores a delayed provisional title event after the first prompt is rejected", async () => {
+    const stream = new FakeEventSource();
+    const rejectedSession = { ...session, title: "New session" };
+    const snapshot = createEmptySnapshot({
+      projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+      sessions: [rejectedSession],
+      activeSessionId: rejectedSession.id,
+    });
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [], cursor: 0 }));
+      }
+      const sent = JSON.parse(String(init?.body)) as { id: string };
+      return new Response(JSON.stringify({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: "response-prompt-rejected",
+        commandId: sent.id,
+        timestamp: "2026-07-23T01:00:01.000Z",
+        success: false,
+        outcome: "completed",
+        error: "Prompt rejected",
+      }));
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().sessions.length === 1);
+
+    const accepted = client.sendPrompt("Rejected first prompt");
+    expect(client.getSnapshot().sessions[0]?.title).toBe("Rejected first prompt");
+    await expect(accepted).resolves.toBe(false);
+    expect(client.getSnapshot().sessions[0]?.title).toBe("New session");
+
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-delayed-provisional-title",
+      sequence: 1,
+      sessionId: rejectedSession.id,
+      timestamp: "2026-07-23T01:00:01.000Z",
+      type: "session.configured",
+      payload: { title: "Rejected first prompt", titleSource: "provisional" },
+    } satisfies AnvilEvent));
+    expect(client.getSnapshot().sessions[0]?.title).toBe("New session");
+
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-rollback-provisional-title",
+      sequence: 2,
+      sessionId: rejectedSession.id,
+      timestamp: "2026-07-23T01:00:02.000Z",
+      type: "session.configured",
+      payload: { title: "New session" },
+    } satisfies AnvilEvent));
+    expect(client.getSnapshot().sessions[0]?.title).toBe("New session");
   });
 
   it("drains multiple prompts in FIFO order", async () => {
@@ -704,19 +793,55 @@ describe("ForgeAnvilClient", () => {
     await expect(client.renameSession(session.id, "   ")).rejects.toThrow("non-empty");
     await expect(client.renameSession(session.id, "x".repeat(121))).rejects.toThrow("at most 120");
     await expect(client.createProject("Tools")).resolves.toEqual({ status: "existing", path: "/code/tools" });
+    await client.cloneProject("private-tools", "organization/private-tools");
     await client.addExistingProject("Tools", "/code/tools");
     void client.renameSession(session.id, "  Renamed thread  ");
     void client.setSessionSettled(session.id, true);
     void client.deleteSession(session.id);
-    await waitUntil(() => bodies.length === 5);
+    void client.deleteProject("anvil");
+    await waitUntil(() => bodies.length === 7);
 
     expect(bodies).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "project.create", sessionId: null, payload: { name: "Tools" } }),
+      expect.objectContaining({
+        type: "project.clone",
+        sessionId: null,
+        payload: { name: "private-tools", repository: "organization/private-tools" },
+      }),
       expect.objectContaining({ type: "project.addExisting", sessionId: null, payload: { name: "Tools", path: "/code/tools" } }),
       expect.objectContaining({ type: "session.rename", sessionId: session.id, payload: { title: "Renamed thread" } }),
       expect.objectContaining({ type: "session.settled", sessionId: session.id, payload: { settled: true } }),
       expect.objectContaining({ type: "session.delete", sessionId: null, payload: { sessionId: session.id } }),
+      expect.objectContaining({ type: "project.delete", sessionId: null, payload: { projectId: "anvil" } }),
     ]));
+  });
+
+  it("propagates project clone command errors", async () => {
+    const stream = new FakeEventSource();
+    const snapshot = createEmptySnapshot({ projects: [{ id: "anvil", name: "Anvil", path: "/repo" }] });
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [], cursor: 0 }));
+      }
+      const sent = JSON.parse(String(init?.body)) as { id: string };
+      return new Response(JSON.stringify({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: "response-clone-failed",
+        commandId: sent.id,
+        timestamp: "2026-07-23T01:00:01.000Z",
+        success: false,
+        outcome: "completed",
+        error: "GitHub could not find that repository",
+      }));
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().projects.length === 1);
+
+    await expect(client.cloneProject("Missing", "owner/missing"))
+      .rejects.toThrow("GitHub could not find that repository");
   });
 
   it("sends read commands using the terminal sequence visible to the client", async () => {
@@ -800,6 +925,55 @@ describe("ForgeAnvilClient", () => {
 
     await expect(client.createProject("Missing")).rejects.toThrow("Workspace path does not exist");
     expect(client.getSnapshot().clientError).toBe("Workspace path does not exist");
+  });
+
+  it("requests and parses GitHub repository pages and surfaces fixed endpoint errors", async () => {
+    const repository = {
+      nameWithOwner: "organization/private-tools",
+      name: "private-tools",
+      owner: "organization",
+      private: true,
+      updatedAt: "2026-07-23T01:00:00Z",
+    };
+    const requests: string[] = [];
+    const success = new ForgeAnvilClient({
+      autoConnect: false,
+      fetch: (async (input) => {
+        requests.push(String(input));
+        return new Response(JSON.stringify({ repositories: [repository], page: 2, hasMore: true }));
+      }) as typeof fetch,
+    });
+    await expect(success.listGitHubRepositories(2)).resolves.toEqual({
+      repositories: [repository],
+      page: 2,
+      hasMore: true,
+    });
+    expect(requests).toEqual(["/api/v1/github/repositories?page=2"]);
+
+    const invalid = new ForgeAnvilClient({
+      autoConnect: false,
+      fetch: (async () => new Response(JSON.stringify({
+        repositories: [{ ...repository, private: "yes" }],
+        page: 1,
+        hasMore: false,
+      }))) as typeof fetch,
+    });
+    await expect(invalid.listGitHubRepositories()).rejects.toThrow("invalid GitHub repository page");
+
+    const wrongPage = new ForgeAnvilClient({
+      autoConnect: false,
+      fetch: (async () => new Response(JSON.stringify({ repositories: [], page: 2, hasMore: false }))) as typeof fetch,
+    });
+    await expect(wrongPage.listGitHubRepositories()).rejects.toThrow("invalid GitHub repository page");
+
+    const failed = new ForgeAnvilClient({
+      autoConnect: false,
+      fetch: (async () => new Response(JSON.stringify({
+        code: "gh_unauthenticated",
+        message: "Forge's GitHub CLI is not authenticated. Run gh auth login on Forge and try again.",
+      }), { status: 503 })) as typeof fetch,
+    });
+    await expect(failed.listGitHubRepositories()).rejects.toThrow("GitHub CLI is not authenticated");
   });
 
   it("fetches and updates the Forge projects root setting", async () => {

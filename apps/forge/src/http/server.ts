@@ -29,6 +29,7 @@ import { ProjectsRootValidationError } from "../projects/projectsRoot.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
 import type { SubagentInternalApi } from "../subagents/internalApi.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
+import { UsageService } from "../usage/usageService.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
 import { ProjectFileRoutes } from "./projectFileRoutes.ts";
 import { ProjectGitRoutes } from "./projectGitRoutes.ts";
@@ -54,6 +55,7 @@ export interface ForgeHttpServerOptions {
   requestRebuild?: () => Promise<void>;
   desktopUpdates?: DesktopUpdateStore;
   terminals?: TerminalManager;
+  usage?: UsageService;
   subagentApi?: SubagentInternalApi;
   instanceId?: string;
   ownerLogin?: string;
@@ -196,6 +198,10 @@ export class ForgeHttpServer {
         return;
       }
       await this.githubRepositories(response, page);
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/usage") {
+      await this.usage(response, url);
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/v1/settings/projects-root") {
@@ -344,6 +350,25 @@ export class ForgeHttpServer {
       }
       sendJson(response, 502, apiError("github_failed", "Forge could not load GitHub repositories. Try again.", true));
     }
+  }
+
+  private async usage(response: ServerResponse, url: URL): Promise<void> {
+    if (!this.options.usage) {
+      sendJson(response, 503, apiError("usage_unavailable", "Pi usage is unavailable", true));
+      return;
+    }
+    const rawDays = url.searchParams.get("days") ?? "30";
+    const days = Number(rawDays);
+    if (!/^(7|30|90)$/.test(rawDays) || !Number.isSafeInteger(days)) {
+      sendJson(response, 400, apiError("invalid_usage_range", "Usage range must be 7, 30, or 90 days"));
+      return;
+    }
+    const timeZone = url.searchParams.get("timeZone")?.trim() || "UTC";
+    if (timeZone.length > 100) {
+      sendJson(response, 400, apiError("invalid_time_zone", "Usage time zone is invalid"));
+      return;
+    }
+    sendJson(response, 200, await this.options.usage.summary(days, timeZone));
   }
 
   private projectsRoot(response: ServerResponse): void {

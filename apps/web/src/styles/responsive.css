@@ -58,6 +58,10 @@
 }
 
 @media (max-width: 900px) {
+  .workspace {
+    --workspace-pane-header-height: 52px;
+  }
+
   .sidebar {
     position: fixed;
     top: 0;

@@ -21,6 +21,10 @@ html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) [data-sideb
   padding-top: calc(var(--ocode-desktop-traffic-lights-row-height) + 6px);
 }
 
+html[data-ocode-desktop="macos"] .workspace {
+  --workspace-pane-header-height: var(--ocode-desktop-topbar-height);
+}
+
 html[data-ocode-desktop="macos"] .session-header {
   min-height: var(--ocode-desktop-topbar-height);
   height: var(--ocode-desktop-topbar-height);
@@ -37,5 +41,41 @@ html[data-ocode-desktop="macos"]:not([data-ocode-fullscreen="true"]) [data-slot=
     padding-left: calc(
       var(--ocode-desktop-traffic-lights-end) + var(--ocode-desktop-titlebar-gap)
     );
+  }
+}
+
+.desktop-update-status {
+  display: flex;
+  min-height: 76px;
+  align-items: flex-start;
+  padding: 14px;
+  gap: 10px;
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.desktop-update-status > [data-slot="spinner"] {
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+}
+
+.desktop-update-status > span {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.desktop-update-status strong { font-size: 12px; font-weight: 620; }
+.desktop-update-status small { color: var(--muted-foreground); font-size: 10px; line-height: 1.45; }
+.desktop-update-status p { max-height: 120px; margin: 7px 0 0; overflow-y: auto; color: var(--muted-foreground); font-size: 10px; line-height: 1.55; white-space: pre-wrap; }
+.desktop-update-installing [data-slot="progress"] { margin-top: 8px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-content-inner {
+    animation: none;
   }
 }

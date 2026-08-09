@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agents tab — shadcn Mira proposal</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --background: #0d0e0f;
+    --foreground: #f0f0ef;
+    --card: #111214;
+    --muted: #191b1e;
+    --muted-2: #15171a;
+    --muted-fg: #96999f;
+    --faint: #676b72;
+    --border: #292c31;
+    --border-soft: #202328;
+    --accent: #d7d7d4;
+    --amber: #d8a44b;
+    --amber-bg: #2a2114;
+    --green: #71b68c;
+    --green-bg: #17251d;
+    --red: #d47777;
+    --blue: #7ca6d8;
+    --radius: 7px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 28px;
+    background: transparent;
+    color: var(--foreground);
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  button { font: inherit; }
+  .artifact {
+    width: min(100%, 980px);
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 238px;
+    gap: 18px;
+    align-items: start;
+  }
+  .pane {
+    min-width: 0;
+    height: 590px;
+    display: grid;
+    grid-template-rows: 63px minmax(0, 1fr);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--background);
+    box-shadow: 0 22px 70px rgba(0,0,0,.42);
+    animation: enter 340ms cubic-bezier(.16,1,.3,1) both;
+  }
+  .tabbar {
+    min-width: 0;
+    display: flex;
+    align-items: end;
+    gap: 2px;
+    padding: 0 8px;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--background) 94%, white 6%);
+  }
+  .tab {
+    position: relative;
+    height: 38px;
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    border: 0;
+    color: var(--muted-fg);
+    background: transparent;
+    font-size: 11px;
+    white-space: nowrap;
+  }
+  .tab .name { overflow: hidden; text-overflow: ellipsis; }
+  .tab.file { max-width: 118px; }
+  .tab.active { color: var(--foreground); }
+  .tab.active::after {
+    content: "";
+    position: absolute;
+    left: 7px; right: 7px; bottom: -1px;
+    height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--accent);
+  }
+  .bot-icon, .file-icon, .x, .toolbar-icon {
+    width: 13px; height: 13px; flex: 0 0 auto;
+  }
+  .bot-icon { color: var(--foreground); }
+  .file-icon { color: var(--faint); }
+  .x { color: var(--faint); margin-left: 1px; }
+  .live-dot {
+    width: 5px; height: 5px; flex: 0 0 auto;
+    border-radius: 99px; background: var(--amber);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--amber) 14%, transparent);
+  }
+  .tabbar-spacer { flex: 1; min-width: 8px; }
+  .icon-button {
+    width: 26px; height: 26px;
+    display: grid; place-items: center;
+    margin-bottom: 6px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--muted-fg);
+    background: transparent;
+  }
+  .document {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: 54px minmax(0, 1fr);
+  }
+  .document-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .heading { min-width: 0; }
+  .heading-row { display: flex; align-items: center; gap: 8px; }
+  h1 { margin: 0; font-size: 13px; line-height: 1.2; font-weight: 620; letter-spacing: -.01em; }
+  .heading p { margin: 3px 0 0; color: var(--muted-fg); font-size: 9.5px; }
+  .summary { display: flex; align-items: center; gap: 6px; }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 20px;
+    padding: 2px 7px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted-fg);
+    background: var(--muted-2);
+    font-size: 9px;
+    font-weight: 560;
+  }
+  .badge.running { color: #e0b769; border-color: #49371d; background: var(--amber-bg); }
+  .badge .dot { width: 5px; height: 5px; border-radius: 99px; background: currentColor; }
+  .list-wrap { min-height: 0; overflow: auto; padding: 8px; }
+  .item {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 9px;
+    padding: 10px;
+    border: 1px solid transparent;
+    border-radius: var(--radius);
+    color: inherit;
+    background: transparent;
+    text-align: left;
+  }
+  .item + .item { border-top-color: var(--border-soft); border-top-left-radius: 0; border-top-right-radius: 0; }
+  .item.selected { border-color: var(--border); background: var(--muted-2); }
+  .status-icon {
+    width: 26px; height: 26px;
+    display: grid; place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--muted);
+  }
+  .status-icon svg { width: 13px; height: 13px; }
+  .status-icon.running { color: var(--amber); }
+  .status-icon.done { color: var(--green); }
+  .status-icon.failed { color: var(--red); }
+  .copy { min-width: 0; display: grid; gap: 4px; }
+  .role-line { display: flex; min-width: 0; align-items: center; gap: 7px; }
+  .role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 610; }
+  .task { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted-fg); font-size: 10px; line-height: 1.4; }
+  .preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font: 9px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .meta { display: grid; justify-items: end; gap: 5px; color: var(--faint); font-size: 8.5px; white-space: nowrap; }
+  .state {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 6px;
+    border-radius: 5px;
+    color: var(--muted-fg);
+    background: var(--muted);
+    font-size: 8px; font-weight: 620;
+  }
+  .state.running { color: #e0b769; background: var(--amber-bg); }
+  .state.done { color: var(--green); background: var(--green-bg); }
+  .notes {
+    display: grid;
+    gap: 9px;
+    animation: enter 420ms 80ms cubic-bezier(.16,1,.3,1) both;
+  }
+  .notes-label { margin: 2px 0 1px; color: var(--faint); font-size: 9px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+  .note {
+    padding: 11px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--card) 94%, transparent);
+  }
+  .note strong { display: block; margin-bottom: 4px; font-size: 10px; font-weight: 620; }
+  .note span { display: block; color: var(--muted-fg); font-size: 9px; line-height: 1.5; }
+  .primitive { color: var(--foreground); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  @keyframes enter { from { opacity: 0; transform: translateY(8px); } }
+  @media (prefers-reduced-motion: reduce) { .pane, .notes { animation: none; } }
+  @media (max-width: 760px) {
+    body { padding: 12px; }
+    .artifact { grid-template-columns: 1fr; }
+    .notes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .pane { height: 560px; }
+    .tab.file:nth-of-type(2) { display: none; }
+  }
+  @media (max-width: 480px) {
+    .notes { grid-template-columns: 1fr; }
+    .document-header { padding-inline: 12px; }
+    .summary .badge:not(.running) { display: none; }
+    .item { grid-template-columns: 28px minmax(0, 1fr); }
+    .meta { grid-column: 2; display: flex; align-items: center; justify-items: initial; }
+  }
+</style>
+</head>
+<body>
+  <main class="artifact">
+    <section class="pane" aria-label="Proposed Agents file tab">
+      <header class="tabbar">
+        <button class="tab file" type="button" aria-label="Open AppShell.tsx">
+          <svg class="file-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3.5 1.8h5l4 4v8.4H3.5z"/><path d="M8.5 1.8v4h4"/></svg>
+          <span class="name">AppShell.tsx</span><svg class="x" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m5 5 6 6m0-6-6 6"/></svg>
+        </button>
+        <button class="tab file" type="button" aria-label="Open workspace.ts">
+          <svg class="file-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3.5 1.8h5l4 4v8.4H3.5z"/><path d="M8.5 1.8v4h4"/></svg>
+          <span class="name">workspace.ts</span><svg class="x" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m5 5 6 6m0-6-6 6"/></svg>
+        </button>
+        <button class="tab active" type="button" aria-current="page">
+          <svg class="bot-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="4.5" width="10" height="8" rx="2"/><path d="M8 2v2.5M5.5 8h.01M10.5 8h.01M6 10.5h4"/></svg>
+          <span class="name">Agents</span><span class="live-dot" aria-label="1 running"></span>
+          <svg class="x" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m5 5 6 6m0-6-6 6"/></svg>
+        </button>
+        <span class="tabbar-spacer"></span>
+        <button class="icon-button" type="button" aria-label="Close side pane">
+          <svg class="toolbar-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m5 5 6 6m0-6-6 6"/></svg>
+        </button>
+      </header>
+
+      <div class="document">
+        <header class="document-header">
+          <div class="heading">
+            <div class="heading-row"><h1>Agents</h1></div>
+            <p>Work delegated from this thread</p>
+          </div>
+          <div class="summary" aria-label="Agent summary">
+            <span class="badge running"><span class="dot"></span>1 running</span>
+            <span class="badge">2 complete</span>
+          </div>
+        </header>
+
+        <div class="list-wrap">
+          <div class="item selected">
+            <span class="status-icon running">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2.5a5.5 5.5 0 1 0 5.5 5.5"/><path d="M8 2.5v3l2-2"/></svg>
+            </span>
+            <span class="copy">
+              <span class="role-line"><span class="role">Builder</span></span>
+              <span class="task">Implement the workspace tab state and preserve file selection</span>
+              <span class="preview">Editing WorkspaceSurfaceState.tsx…</span>
+            </span>
+            <span class="meta"><span class="state running">Running</span><span>1m 42s</span></span>
+          </div>
+
+          <div class="item">
+            <span class="status-icon done">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m3.5 8 3 3 6-6"/></svg>
+            </span>
+            <span class="copy">
+              <span class="role-line"><span class="role">Researcher</span></span>
+              <span class="task">Review official shadcn Mira patterns for compact tabbed tools</span>
+              <span class="preview">Recommended line tabs, Item rows, and small status badges.</span>
+            </span>
+            <span class="meta"><span class="state done">Complete</span><span>48s</span></span>
+          </div>
+
+          <div class="item">
+            <span class="status-icon done">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m3.5 8 3 3 6-6"/></svg>
+            </span>
+            <span class="copy">
+              <span class="role-line"><span class="role">Scout</span></span>
+              <span class="task">Map the existing resource viewer and composer activity flow</span>
+              <span class="preview">Found the smallest integration path through the right workspace slot.</span>
+            </span>
+            <span class="meta"><span class="state done">Complete</span><span>1m 08s</span></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="notes" aria-label="Design rationale">
+      <div class="notes-label">Mira direction</div>
+      <div class="note"><strong>Document, not dashboard</strong><span>Agents lives in the same line-style tab strip as files, with a small bot glyph and live dot.</span></div>
+      <div class="note"><strong>Dense hierarchy</strong><span>One compact header and <span class="primitive">ItemGroup</span> rows—no nested cards or oversized panels.</span></div>
+      <div class="note"><strong>Status stays quiet</strong><span>Use small <span class="primitive">Badge</span> treatments. Amber is reserved for active work; green only confirms completion.</span></div>
+      <div class="note"><strong>Clear interaction</strong><span>Click a row for detail. Keep cancel/open-child actions in the detail view rather than crowding the list.</span></div>
+    </aside>
+  </main>
+</body>
+</html>

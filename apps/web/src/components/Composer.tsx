@@ -1,7 +1,6 @@
 import type {
   ArtifactReference,
   CommandDescriptor,
-  ConnectionState,
   ExtensionWidget,
   ModelDescriptor,
   ProjectWorkspaceKind,
@@ -35,7 +34,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DeliveryMode, WorkspaceFile } from "../lib/anvilClient";
-import type { SubagentActivity, SubagentActivityItem } from "../lib/subagentActivity";
+import type { SubagentActivity } from "../lib/subagentActivity";
 import { SubagentActivityPopover } from "./SubagentActivityPopover";
 
 export interface ComposerAttachment {
@@ -48,7 +47,7 @@ export interface ComposerAttachment {
   error?: string;
 }
 
-interface ComposerProps {
+export interface ComposerProps {
   sessionId: string;
   modelId: string;
   thinkingLevel: ThinkingLevel;
@@ -67,13 +66,11 @@ interface ComposerProps {
   workspaceKind?: ProjectWorkspaceKind;
   subagents: SubagentActivity;
   subagentsLoading?: boolean;
-  connection: ConnectionState;
   attachments: ComposerAttachment[];
   onAttachFiles: (sessionId: string, files: File[]) => void;
   onRemoveAttachment: (sessionId: string, attachmentId: string) => void;
   onSearchFiles: (sessionId: string, query: string) => Promise<WorkspaceFile[]>;
-  onCancelSubagent: (runId: string) => Promise<void>;
-  onOpenSubagentChild: (item: SubagentActivityItem) => Promise<void>;
+  onOpenSubagents: () => void;
   onCancel: () => void;
   onDraftConsumed: (sessionId: string) => void;
   onPromptChange: (sessionId: string, prompt: string) => void;
@@ -226,13 +223,11 @@ export function Composer({
   workspaceKind,
   subagents,
   subagentsLoading,
-  connection,
   attachments,
   onAttachFiles,
   onRemoveAttachment,
   onSearchFiles,
-  onCancelSubagent,
-  onOpenSubagentChild,
+  onOpenSubagents,
   onCancel,
   onDraftConsumed,
   onPromptChange,
@@ -709,10 +704,8 @@ export function Composer({
         </span>
         <SubagentActivityPopover
           activity={subagents}
-          connection={connection}
           loading={subagentsLoading}
-          onCancel={onCancelSubagent}
-          onOpenChild={onOpenSubagentChild}
+          onOpen={onOpenSubagents}
         />
       </div>
     </div>

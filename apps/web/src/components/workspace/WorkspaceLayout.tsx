@@ -20,6 +20,7 @@ export type WorkspaceLayoutSlots = {
 export type WorkspaceLayoutProps = WorkspaceLayoutSlots & {
   isMobile: boolean;
   mobileSurface?: MobileWorkspaceSurface;
+  mobileResourceTitle?: string;
   onMobileSurfaceChange?: (surface: MobileWorkspaceSurface) => void;
 };
 
@@ -90,6 +91,7 @@ function MobileWorkspace({
   bottom,
   right,
   mobileSurface = "conversation",
+  mobileResourceTitle = "Files",
   onMobileSurfaceChange,
 }: Omit<WorkspaceLayoutProps, "isMobile">) {
   const requested = mobileSurface === "terminal"
@@ -99,7 +101,7 @@ function MobileWorkspace({
       : main;
   const activeSurface = requested === undefined || requested === null ? "conversation" : mobileSurface;
   const content = activeSurface === "terminal" ? bottom : activeSurface === "resource" ? right : main;
-  const title = activeSurface === "terminal" ? "Terminal" : "Resource";
+  const title = activeSurface === "terminal" ? "Terminal" : mobileResourceTitle;
 
   return (
     <div

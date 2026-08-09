@@ -32,14 +32,18 @@ describe("FixtureAnvilClient", () => {
     expect(client.getSnapshot().subagentRuns[parentSessionId]?.find((run) => run.id === running.id)?.status).toBe("cancelled");
     expect(client.getSnapshot().sessions.some((session) => session.id === running.childSessionId)).toBe(false);
 
-    await client.openSubagentSession(parentSessionId, running.id);
+    const parentActiveSessionId = client.getSnapshot().activeSessionId;
+    await client.loadSubagentSession(parentSessionId, running.id);
     expect(client.getSnapshot().sessions).toContainEqual(expect.objectContaining({
       id: running.childSessionId,
       internal: true,
       parentSessionId,
     }));
-    expect(client.getSnapshot().activeSessionId).toBe(running.childSessionId);
+    expect(client.getSnapshot().activeSessionId).toBe(parentActiveSessionId);
     expect(client.getSnapshot().timelines[running.childSessionId]).toHaveLength(1);
+
+    await client.openSubagentSession(parentSessionId, running.id);
+    expect(client.getSnapshot().activeSessionId).toBe(running.childSessionId);
   });
 
   it("settles and reopens a thread through protocol state", async () => {

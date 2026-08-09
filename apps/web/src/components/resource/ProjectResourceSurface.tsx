@@ -1,4 +1,5 @@
-import { Cancel01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
+import type { ConnectionState, SessionSummary, TimelineEntry } from "@anvil/protocol";
+import { Cancel01Icon, Folder01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
@@ -6,8 +7,11 @@ import remarkGfm from "remark-gfm";
 
 import { SandboxedHtmlPreview } from "@/components/InlineHtmlArtifact";
 import { Button } from "@/components/ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { useWorkspaceSurfaces } from "@/components/workspace/WorkspaceSurfaceState";
 import type { ProjectResourceTab } from "@/lib/workspace";
+import type { SubagentActivity, SubagentActivityItem } from "@/lib/subagentActivity";
+import { SubagentActivityPanel } from "@/components/SubagentActivityPanel";
 import { ProjectImageViewer } from "./ProjectImageViewer";
 import { isCurrentResourceRequest, revalidateProjectResource, type ResourceReadyState } from "./resourceLoader";
 import { SourceViewer } from "./SourceViewer";
@@ -129,34 +133,96 @@ export function ProjectResource({ tab }: { tab: ProjectResourceTab }) {
   );
 }
 
-export function ProjectResourceSurface({ projectId }: { projectId: string }) {
-  const { state, selectProjectResource, closeProjectResource, setRightVisible } = useWorkspaceSurfaces();
+export function ProjectResourceSurface({
+  projectId,
+  subagents,
+  connection,
+  subagentsLoading = false,
+  childSessions,
+  childTimelines,
+  hydratingChildSessionIds,
+  onCancelSubagent,
+  onLoadSubagentChild,
+}: {
+  projectId: string;
+  subagents: SubagentActivity;
+  connection: ConnectionState;
+  subagentsLoading?: boolean;
+  childSessions: SessionSummary[];
+  childTimelines: Record<string, TimelineEntry[]>;
+  hydratingChildSessionIds: string[];
+  onCancelSubagent: (runId: string) => Promise<void>;
+  onLoadSubagentChild: (item: SubagentActivityItem) => Promise<string>;
+}) {
+  const {
+    state,
+    openSidePage,
+    selectProjectResource,
+    closeProjectResource,
+    closeAgentsTab,
+    setRightVisible,
+  } = useWorkspaceSurfaces();
   const [refreshGeneration, setRefreshGeneration] = useState(0);
   const active = state.resourceTabs.find((tab) => tab.id === state.activeResourceId) ?? state.resourceTabs[0];
-  if (!active) return null;
+  const activeFile = state.sidePage === "files" ? active : undefined;
+  const hasTabs = state.resourceTabs.length > 0 || state.agentsTabOpen;
 
   return (
-    <section className="project-resource-surface" aria-label={`Resources for ${projectId}`}>
+    <section className="project-resource-surface" aria-label={`Open files and Agents for ${projectId}`}>
       <header className="project-resource-header">
-        <nav className="project-resource-tabs" aria-label="Open resources">
+        <nav className="project-resource-tabs" aria-label="Open files and Agents">
           {state.resourceTabs.map((tab) => (
-            <div className={tab.id === active.id ? "project-resource-tab project-resource-tab--active" : "project-resource-tab"} key={tab.id}>
-              <button type="button" aria-current={tab.id === active.id ? "page" : undefined} title={tab.path} onClick={() => selectProjectResource(tab.id)}>{tab.path.split("/").at(-1)}</button>
-              <button type="button" aria-label={`Close ${tab.path}`} onClick={() => closeProjectResource(tab.id)}>
+            <div className={state.sidePage === "files" && tab.id === active?.id ? "project-resource-tab project-resource-tab--active" : "project-resource-tab"} key={tab.id}>
+              <Button variant="ghost" size="sm" className="project-resource-tab-name" aria-current={state.sidePage === "files" && tab.id === active?.id ? "page" : undefined} title={tab.path} onClick={() => selectProjectResource(tab.id)}>{tab.path.split("/").at(-1)}</Button>
+              <Button variant="ghost" size="icon-xs" aria-label={`Close ${tab.path}`} onClick={() => closeProjectResource(tab.id)}>
                 <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
-              </button>
+              </Button>
             </div>
           ))}
+          {state.agentsTabOpen && (
+            <div className={state.sidePage === "agents" ? "project-resource-tab project-resource-tab--active" : "project-resource-tab"}>
+              <Button variant="ghost" size="sm" className="project-resource-tab-name" aria-current={state.sidePage === "agents" ? "page" : undefined} onClick={() => openSidePage("agents")}>Agents</Button>
+              <Button variant="ghost" size="icon-xs" aria-label="Close Agents" onClick={closeAgentsTab}>
+                <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+              </Button>
+            </div>
+          )}
+          {!hasTabs && <h2 className="project-resource-title">Files</h2>}
         </nav>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label={`Refresh ${active.path}`} onClick={() => setRefreshGeneration((value) => value + 1)}>
-          <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-        </Button>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label="Close resource surface" onClick={() => setRightVisible(false)}>
+        {activeFile && (
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={`Refresh ${activeFile.path}`} onClick={() => setRefreshGeneration((value) => value + 1)}>
+            <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+          </Button>
+        )}
+        <Button type="button" variant="ghost" size="icon-sm" aria-label="Close side pane" onClick={() => setRightVisible(false)}>
           <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
         </Button>
       </header>
       <main className="project-resource-viewer">
-        <ProjectResource key={`${active.projectId}:${active.id}:${refreshGeneration}`} tab={active} />
+        {state.sidePage === "agents" ? (
+          <SubagentActivityPanel
+            embedded
+            activity={subagents}
+            connection={connection}
+            loading={subagentsLoading}
+            childSessions={childSessions}
+            childTimelines={childTimelines}
+            hydratingChildSessionIds={hydratingChildSessionIds}
+            onCancel={onCancelSubagent}
+            onClose={() => setRightVisible(false)}
+            onLoadChild={onLoadSubagentChild}
+          />
+        ) : activeFile ? (
+          <ProjectResource key={`${activeFile.projectId}:${activeFile.id}:${refreshGeneration}`} tab={activeFile} />
+        ) : (
+          <Empty className="h-full rounded-none p-6">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><HugeiconsIcon icon={Folder01Icon} strokeWidth={2} aria-hidden="true" /></EmptyMedia>
+              <EmptyTitle>No files open</EmptyTitle>
+              <EmptyDescription>Files opened by Pi will appear here.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
       </main>
     </section>
   );

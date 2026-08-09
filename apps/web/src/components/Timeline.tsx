@@ -79,6 +79,23 @@ function hasVisibleContent(blocks: ContentBlock[]): boolean {
   ));
 }
 
+function isHumanUserMessage(entry: TimelineEntry): entry is MessageEntry {
+  return entry.kind === "message" && entry.role === "user" && entry.origin?.type !== "subagentCompletion";
+}
+
+function subagentCompletionBlocks(entry: MessageEntry): ContentBlock[] {
+  const origin = entry.origin;
+  if (origin?.type !== "subagentCompletion") return entry.content;
+  const prefix = `[ocode ${origin.role} subagent ${origin.runId} ${origin.status}]\nChild session: ${origin.childSessionId}`;
+  return entry.content.map((block) => block.type === "text" && block.text.startsWith(prefix)
+    ? { ...block, text: block.text.slice(prefix.length).replace(/^\n+/, "") }
+    : block);
+}
+
+function titleCase(value: string): string {
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
 const EMPTY_FILE_ATTACHMENT_MARKER = /^<file name="[^"\r\n]*"><\/file>\r?$/gm;
 
 function userVisibleContent(blocks: ContentBlock[]): ContentBlock[] {
@@ -344,6 +361,22 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
 }) {
   const entranceClass = entering ? " timeline-entry--entering" : "";
   if (entry.kind === "message") {
+    if (entry.origin?.type === "subagentCompletion") {
+      const blocks = subagentCompletionBlocks(entry);
+      const successful = entry.origin.status === "completed";
+      return (
+        <article className={`subagent-completion-message subagent-completion-message--${entry.origin.status}${entranceClass}`}>
+          <header className="subagent-completion-message-header">
+            <span className="subagent-completion-message-icon" aria-hidden="true">
+              <HugeiconsIcon icon={successful ? CheckmarkCircle02Icon : AlertCircleIcon} strokeWidth={2} className="size-3.5" />
+            </span>
+            <strong>{titleCase(entry.origin.role)} subagent</strong>
+            <span>{titleCase(entry.origin.status)}</span>
+          </header>
+          {hasVisibleContent(blocks) && <ContentBlocks blocks={blocks} onOpenProjectResource={onOpenProjectResource} />}
+        </article>
+      );
+    }
     const visibleContent = entry.role === "user"
       ? userVisibleContent(entry.content)
       : entry.content.filter((block) => block.type !== "toolCall");
@@ -678,7 +711,7 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
   const enteringRowKeys = new Set(rows.filter((row) => {
     if (seenRowKeys.current!.has(row.key)) return false;
     // The optimistic user row already supplied the visual acknowledgement; do not flash again on server reconciliation.
-    return row.kind !== "entry" || row.entry.kind !== "message" || row.entry.role !== "user" || row.entry.id.startsWith("optimistic-");
+    return row.kind !== "entry" || row.entry.kind !== "message" || !isHumanUserMessage(row.entry) || row.entry.id.startsWith("optimistic-");
   }).map((row) => row.key));
   useLayoutEffect(() => {
     for (const row of rows) seenRowKeys.current!.add(row.key);
@@ -708,7 +741,7 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
     entry.status === "streaming" &&
     hasVisibleContent(entry.content)
   ));
-  const lastUserMessage = [...entries].reverse().find((entry) => entry.kind === "message" && entry.role === "user");
+  const lastUserMessage = [...entries].reverse().find(isHumanUserMessage);
   const showWorkingStatus = session.status === "running" && !activeTool && !activeRetry && !streamingResponse;
   const statusMessage = workingMessage(`${session.id}:${lastUserMessage?.id ?? "start"}`);
   const hasEntries = entries.length > 0;

@@ -162,12 +162,15 @@ describe("ForgeAnvilClient", () => {
     expect(client.getSnapshot().subagentRuns[session.id]?.[0]?.status).toBe("cancelled");
     expect(client.getSnapshot().sessions.some((candidate) => candidate.id === run.childSessionId)).toBe(false);
 
-    await client.openSubagentSession(session.id, run.id);
+    await client.loadSubagentSession(session.id, run.id);
     expect(client.getSnapshot()).toMatchObject({
-      activeSessionId: run.childSessionId,
+      activeSessionId: session.id,
       sessions: expect.arrayContaining([expect.objectContaining({ id: run.childSessionId, internal: true, parentSessionId: session.id })]),
     });
     expect(client.getSnapshot().timelines[run.childSessionId]?.[0]).toMatchObject({ content: [{ text: "Child detail" }] });
+
+    await client.openSubagentSession(session.id, run.id);
+    expect(client.getSnapshot().activeSessionId).toBe(run.childSessionId);
   });
 
   it("polls only an opened live child, performs one final terminal sync, and cleans up", async () => {
@@ -257,12 +260,14 @@ describe("ForgeAnvilClient", () => {
     expect(detailCalls).toBe(0);
     expect(client.getSnapshot().timelines[run.childSessionId]).toBeUndefined();
 
-    await client.openSubagentSession(session.id, run.id);
+    await client.loadSubagentSession(session.id, run.id);
+    expect(client.getSnapshot().activeSessionId).toBe(session.id);
     await waitUntil(() => {
       const entry = client.getSnapshot().timelines[run.childSessionId]?.[0];
       return entry?.kind === "message" && entry.content[0]?.type === "text" && entry.content[0].text === "Updated while open";
     });
 
+    await client.openSubagentSession(session.id, run.id);
     client.selectSession(session.id);
     const afterNavigation = detailCalls;
     await new Promise((resolve) => setTimeout(resolve, 20));

@@ -11,8 +11,9 @@
   display: flex;
   align-items: center;
   min-width: 0;
+  height: var(--workspace-pane-header-height);
+  min-height: var(--workspace-pane-header-height);
   gap: 0.25rem;
-  min-height: 2.5rem;
   padding: 0.25rem;
   border-bottom: 1px solid var(--border);
   background: color-mix(in oklab, var(--background) 94%, var(--muted));
@@ -22,9 +23,17 @@
   display: flex;
   flex: 1;
   min-width: 0;
+  align-items: center;
   gap: 0.125rem;
   overflow-x: auto;
   scrollbar-width: thin;
+}
+
+.project-resource-title {
+  margin: 0;
+  padding-inline: 0.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .project-resource-tab {

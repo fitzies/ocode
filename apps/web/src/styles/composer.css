@@ -505,6 +505,11 @@
   outline-offset: 1px;
 }
 
+.composer-status-subagent-label {
+  color: var(--legacy-text);
+  font-weight: 550;
+}
+
 .composer-status-metric {
   gap: 2px;
 }
@@ -544,9 +549,25 @@
   box-shadow: 0 20px 55px rgba(0, 0, 0, 0.42), inset 0 1px color-mix(in oklab, var(--foreground) 3.5%, transparent);
 }
 
+.subagent-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  grid-row: 1 / -1;
+  flex-direction: column;
+}
+
+.subagent-panel .subagent-popover-scroll {
+  flex: 1 1 auto;
+  height: auto;
+  max-height: none;
+}
+
 .subagent-popover-header {
   display: flex;
-  min-height: 49px;
+  height: var(--workspace-pane-header-height);
+  min-height: var(--workspace-pane-header-height);
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
@@ -562,6 +583,7 @@
 }
 
 .subagent-popover-title {
+  margin: 0;
   color: var(--legacy-text-high);
   font-size: 11px;
   font-weight: 650;
@@ -608,10 +630,10 @@
 .subagent-activity-row {
   display: grid;
   width: 100%;
-  min-height: 76px;
+  min-height: 56px;
   grid-template-columns: 25px minmax(0, 1fr) auto;
-  align-items: start;
-  padding: 10px 9px;
+  align-items: center;
+  padding: 8px 9px;
   gap: 9px;
   color: inherit;
   text-align: left;
@@ -619,6 +641,8 @@
   border: 0;
   border-radius: 7px;
   cursor: pointer;
+  justify-content: stretch;
+  white-space: normal;
   transition: background-color 120ms ease;
 }
 
@@ -707,25 +731,14 @@
 }
 
 .subagent-activity-task {
-  display: -webkit-box;
+  display: block;
   overflow: hidden;
   color: var(--legacy-text-low);
   font-size: 9.5px;
   line-height: 1.45;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.subagent-activity-preview {
-  overflow: hidden;
-  color: var(--legacy-text-faint);
-  font-size: 8.5px;
-  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
-.subagent-activity-preview--error { color: var(--red); }
 
 .subagent-activity-meta {
   display: flex;
@@ -750,11 +763,33 @@
 .subagent-status-label--needs_attention { color: var(--amber); }
 .subagent-status-label--completed { color: var(--green); }
 
+.subagent-status-badge {
+  height: 18px;
+  padding-inline: 6px;
+  border-radius: 5px;
+  font-size: 7.5px;
+  line-height: 1;
+}
+.subagent-status-badge--queued,
+.subagent-status-badge--starting,
+.subagent-status-badge--running,
+.subagent-status-badge--needs_attention { color: var(--amber); background: color-mix(in oklab, var(--amber) 10%, transparent); }
+.subagent-status-badge--completed { color: var(--green); background: color-mix(in oklab, var(--green) 10%, transparent); }
+.subagent-status-badge--failed,
+.subagent-status-badge--cancelled,
+.subagent-status-badge--interrupted { color: var(--red); background: color-mix(in oklab, var(--red) 9%, transparent); }
+
 .subagent-detail-header {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr) 24px;
   gap: 7px;
   padding: 8px 10px;
+}
+
+.subagent-detail-header--embedded {
+  height: 42px;
+  min-height: 42px;
+  border-color: color-mix(in oklab, var(--border) 72%, transparent);
 }
 
 .subagent-detail-header > div {
@@ -910,21 +945,199 @@
   gap: 7px;
 }
 
-.subagent-empty-state {
-  display: flex;
-  min-height: 128px;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  gap: 5px;
-  color: var(--legacy-text-low);
-  text-align: center;
-  flex-direction: column;
+.subagent-chat-view {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  grid-template-rows: 42px minmax(0, 1fr) auto;
 }
 
-.subagent-empty-state > svg { width: 18px; height: 18px; margin-bottom: 3px; }
-.subagent-empty-state strong { color: var(--legacy-text); font-size: 10.5px; font-weight: 600; }
-.subagent-empty-state span { max-width: 230px; font-size: 9px; line-height: 1.45; }
+.subagent-chat-header {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
+}
+
+.subagent-chat-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
+.subagent-chat-heading strong {
+  overflow: hidden;
+  color: var(--legacy-text-high);
+  font-size: 10.5px;
+  font-weight: 620;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-chat-status {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  color: var(--legacy-text-low);
+  font-size: 8px;
+}
+
+.subagent-chat-status::before {
+  width: 5px;
+  height: 5px;
+  content: "";
+  background: currentColor;
+  border-radius: 50%;
+}
+
+.subagent-chat-status--queued,
+.subagent-chat-status--starting,
+.subagent-chat-status--running,
+.subagent-chat-status--needs_attention { color: var(--amber); }
+.subagent-chat-status--completed { color: var(--green); }
+.subagent-chat-status--failed,
+.subagent-chat-status--cancelled,
+.subagent-chat-status--interrupted { color: var(--red); }
+
+.subagent-chat-duration {
+  color: var(--legacy-text-faint);
+  font: 8px "Geist Mono Variable", "Geist Mono", monospace;
+  white-space: nowrap;
+}
+
+.subagent-chat-scroll { min-height: 0; }
+.subagent-chat-stream { display: grid; padding: 13px 14px 20px; }
+
+.subagent-chat-task {
+  min-width: 0;
+  margin-bottom: 8px;
+  padding: 2px 2px 12px;
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 58%, transparent);
+}
+
+.subagent-chat-task > span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--legacy-text-faint);
+  font-size: 7.5px;
+  font-weight: 680;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.subagent-chat-task > p {
+  display: -webkit-box;
+  margin: 0;
+  overflow: hidden;
+  color: var(--legacy-text);
+  font-size: 9.5px;
+  line-height: 1.48;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.subagent-chat-markdown {
+  color: var(--legacy-text);
+  font-size: 9.5px;
+  line-height: 1.58;
+}
+
+.subagent-chat-markdown :is(h1, h2, h3, h4) {
+  margin: 10px 0 4px;
+  font-size: 10px;
+  line-height: 1.35;
+}
+.subagent-chat-markdown :is(p, ul, ol, pre, blockquote) { margin-block: 0 7px; }
+.subagent-chat-markdown > :last-child { margin-bottom: 0; }
+
+.subagent-chat-message {
+  min-width: 0;
+  padding: 11px 2px;
+}
+
+.subagent-chat-message + .subagent-chat-message {
+  border-top: 1px solid color-mix(in oklab, var(--border) 45%, transparent);
+}
+
+.subagent-chat-message strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--legacy-text-low);
+  font-size: 8px;
+  font-weight: 620;
+  text-transform: capitalize;
+}
+
+.subagent-chat-tool {
+  overflow: hidden;
+  border-top: 1px solid color-mix(in oklab, var(--border) 52%, transparent);
+}
+
+.subagent-chat-tool-trigger {
+  width: 100%;
+  min-height: 32px;
+  justify-content: flex-start;
+  padding: 7px 2px;
+  border-radius: 0;
+  color: var(--legacy-text-low);
+  white-space: normal;
+}
+
+.subagent-chat-tool-trigger > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-chat-tool-trigger > small {
+  margin-left: auto;
+  color: var(--legacy-text-faint);
+  font-size: 7.5px;
+  text-transform: capitalize;
+}
+
+.subagent-chat-tool-output {
+  max-height: 15rem;
+  overflow: auto;
+  padding: 8px 2px 10px 20px;
+  border-top: 1px solid color-mix(in oklab, var(--border) 45%, transparent);
+  color: var(--legacy-text-low);
+  font-size: 8.5px;
+  line-height: 1.5;
+}
+
+.subagent-chat-event {
+  padding: 8px 2px 8px 20px;
+  border-top: 1px solid color-mix(in oklab, var(--border) 45%, transparent);
+  color: var(--legacy-text-faint);
+  font-size: 8.5px;
+  line-height: 1.45;
+}
+.subagent-chat-event--error { color: var(--red); }
+.subagent-chat-event--warning { color: var(--amber); }
+
+.subagent-chat-footer {
+  display: flex;
+  min-height: 35px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px 4px 11px;
+  gap: 6px;
+  border-top: 1px solid color-mix(in oklab, var(--border) 72%, transparent);
+  color: var(--legacy-text-faint);
+  font-size: 8px;
+}
+
+.subagent-chat-footer > div { display: flex; align-items: center; gap: 4px; }
+.subagent-chat-footer > p { flex-basis: 100%; margin: 0; }
 
 @media (max-width: 520px) {
   .subagent-popover {

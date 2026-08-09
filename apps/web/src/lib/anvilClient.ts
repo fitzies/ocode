@@ -102,6 +102,7 @@ export interface AnvilClient {
   dispatch(command: AnvilClientCommand): void;
   selectProject(projectId: string): void;
   selectSession(sessionId: string): void;
+  loadSubagentSession(parentSessionId: string, runId: string): Promise<string>;
   openSubagentSession(parentSessionId: string, runId: string): Promise<void>;
   cancelSubagent(parentSessionId: string, runId: string): Promise<void>;
   createProject(name: string): Promise<ProjectCreateResult>;
@@ -243,7 +244,7 @@ function withProvisionalSessionTitle(
   const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
   const alreadyPrompted = Boolean(session?.lastUserMessageAt || session?.lastUserMessageSequence) ||
     (snapshot.timelines[sessionId] ?? []).some(
-      (entry) => entry.kind === "message" && entry.role === "user" && entry.status !== "failed",
+      (entry) => entry.kind === "message" && entry.role === "user" && entry.origin?.type !== "subagentCompletion" && entry.status !== "failed",
     );
   if (delivery !== "prompt" || session?.title !== DEFAULT_SESSION_TITLE || alreadyPrompted) return snapshot;
   const title = provisionalSessionTitleFromPrompt(content);
@@ -613,7 +614,7 @@ export class FixtureAnvilClient implements AnvilClient {
     this.emit();
   };
 
-  openSubagentSession = async (parentSessionId: string, runId: string): Promise<void> => {
+  loadSubagentSession = async (parentSessionId: string, runId: string): Promise<string> => {
     const parent = this.snapshot.sessions.find((session) => session.id === parentSessionId && !session.internal);
     const run = this.snapshot.subagentRuns[parentSessionId]?.find((candidate) => candidate.id === runId);
     if (!parent || !run) throw new Error("Subagent run is no longer available");
@@ -641,7 +642,6 @@ export class FixtureAnvilClient implements AnvilClient {
         ...(run.error ? { error: run.error } : {}),
       }] : []),
     ];
-    this.pauseReplay();
     const sessions = this.snapshot.sessions.some((session) => session.id === child.id)
       ? this.snapshot.sessions.map((session) => session.id === child.id ? child : session)
       : [...this.snapshot.sessions, child];
@@ -654,10 +654,14 @@ export class FixtureAnvilClient implements AnvilClient {
       composerDrafts: { ...this.snapshot.composerDrafts, [child.id]: "" },
       runStates: { ...this.snapshot.runStates, [child.id]: child.status === "running" ? "running" : "idle" },
       subagentRuns: { ...this.snapshot.subagentRuns, [child.id]: [] },
-      workspaceLocation: locationForSession(child),
-      activeSessionId: child.id,
     };
     this.emit();
+    return child.id;
+  };
+
+  openSubagentSession = async (parentSessionId: string, runId: string): Promise<void> => {
+    const childSessionId = await this.loadSubagentSession(parentSessionId, runId);
+    this.selectSession(childSessionId);
   };
 
   cancelSubagent = async (parentSessionId: string, runId: string): Promise<void> => {
@@ -1359,6 +1363,7 @@ export class ForgeAnvilClient implements AnvilClient {
   private internalDetailPollController?: AbortController;
   private internalDetailPollSessionId?: string;
   private internalDetailFinalSessionId?: string;
+  private watchedSubagentSessionId?: string;
   private internalDetailPollInFlight = false;
   private retryTimer?: ReturnType<typeof setTimeout>;
   private retryDelay = 1_000;
@@ -1473,7 +1478,7 @@ export class ForgeAnvilClient implements AnvilClient {
     void this.persistShell();
   };
 
-  openSubagentSession = async (parentSessionId: string, runId: string): Promise<void> => {
+  loadSubagentSession = async (parentSessionId: string, runId: string): Promise<string> => {
     const parent = this.snapshot.sessions.find((session) => session.id === parentSessionId && !session.internal);
     const run = this.snapshot.subagentRuns[parentSessionId]?.find((candidate) => candidate.id === runId);
     if (!parent || !run) throw new Error("Subagent run is no longer available");
@@ -1501,15 +1506,27 @@ export class ForgeAnvilClient implements AnvilClient {
     const sessions = this.snapshot.sessions.some((session) => session.id === child.id)
       ? this.snapshot.sessions.map((session) => session.id === child.id ? child : session)
       : [...this.snapshot.sessions, child];
-    this.snapshot = mergeSessionDetail({
-      ...this.snapshot,
-      sessions,
-      workspaceLocation: locationForSession(child),
-      activeSessionId: child.id,
-    }, value.detail);
+    this.snapshot = mergeSessionDetail({ ...this.snapshot, sessions }, value.detail);
     this.hydratedThrough.set(child.id, value.detail.throughSequence);
+    this.watchedSubagentSessionId = child.id;
     this.touchDetail(child.id);
     this.emit();
+    return child.id;
+  };
+
+  openSubagentSession = async (parentSessionId: string, runId: string): Promise<void> => {
+    const childSessionId = await this.loadSubagentSession(parentSessionId, runId);
+    this.watchedSubagentSessionId = undefined;
+    const child = this.snapshot.sessions.find((session) => session.id === childSessionId);
+    if (!child) throw new Error("Subagent child session is no longer available");
+    this.snapshot = {
+      ...this.snapshot,
+      workspaceLocation: locationForSession(child),
+      activeSessionId: child.id,
+    };
+    this.touchDetail(child.id);
+    this.emit();
+    void this.persistShell();
   };
 
   cancelSubagent = async (parentSessionId: string, runId: string): Promise<void> => {
@@ -2091,10 +2108,16 @@ export class ForgeAnvilClient implements AnvilClient {
 
   private currentInternalSessionId(): string | undefined {
     if (this.listeners.size === 0 || !this.detailApiEnabled || this.snapshot.connection !== "connected") return undefined;
-    const session = this.snapshot.sessions.find((candidate) => (
+    const active = this.snapshot.sessions.find((candidate) => (
       candidate.id === this.snapshot.activeSessionId && candidate.internal && candidate.parentSessionId
     ));
-    return session?.parentSessionId ? session.id : undefined;
+    if (active?.parentSessionId) return active.id;
+    const watched = this.snapshot.sessions.find((candidate) => (
+      candidate.id === this.watchedSubagentSessionId &&
+      candidate.internal &&
+      candidate.parentSessionId === this.snapshot.workspaceLocation?.sessionId
+    ));
+    return watched?.id;
   }
 
   private liveInternalSessionId(): string | undefined {
@@ -2361,10 +2384,13 @@ export class ForgeAnvilClient implements AnvilClient {
         if (event.sessionId && this.hydrationBuffers.has(event.sessionId)) {
           this.hydrationBuffers.get(event.sessionId)!.push(event);
         }
-        const confirmedPrompt = event.type === "message.started" && event.payload.message.role === "user"
+        const humanPrompt = event.type === "message.started" &&
+          event.payload.message.role === "user" &&
+          event.payload.message.origin?.type !== "subagentCompletion";
+        const confirmedPrompt = humanPrompt
           ? event.payload.message.content.find((block) => block.type === "text")?.text
           : undefined;
-        const snapshotForEvent = event.type === "message.started" && event.sessionId && event.payload.message.role === "user"
+        const snapshotForEvent = humanPrompt && event.sessionId
           ? settleOptimisticPrompt(this.snapshot, event.sessionId, undefined, confirmedPrompt)
           : this.snapshot;
         let next = applyAnvilEvent(snapshotForEvent, event);

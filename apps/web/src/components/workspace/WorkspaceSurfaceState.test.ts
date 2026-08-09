@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   activateProjectWorkspaceSurface,
+  closeAgentsTabInState,
   closeProjectResourceInState,
   openProjectResourceInState,
   updateProjectWorkspaceSurfaceState,
@@ -22,6 +23,8 @@ describe("project workspace surface state", () => {
       bottomVisible: true,
       rightVisible: false,
       mobileSurface: "terminal",
+      sidePage: "files",
+      agentsTabOpen: false,
       resourceTabs: [],
       activeResourceId: null,
     });
@@ -29,6 +32,8 @@ describe("project workspace surface state", () => {
       bottomVisible: false,
       rightVisible: true,
       mobileSurface: "resource",
+      sidePage: "files",
+      agentsTabOpen: false,
       resourceTabs: [],
       activeResourceId: null,
     });
@@ -46,8 +51,75 @@ describe("project workspace surface state", () => {
       bottomVisible: true,
       rightVisible: true,
       mobileSurface: "resource",
+      sidePage: "files",
+      agentsTabOpen: false,
       resourceTabs: [],
       activeResourceId: null,
+    });
+  });
+
+  it("returns to the Files page when a project resource opens", () => {
+    const agents = updateProjectWorkspaceSurfaceState({}, "project-a", {
+      sidePage: "agents",
+      rightVisible: true,
+      mobileSurface: "resource",
+    });
+    const files = openProjectResourceInState(agents, {
+      projectId: "project-a",
+      path: "src/main.ts",
+    }, "tool");
+
+    expect(files["project-a"]).toMatchObject({
+      sidePage: "files",
+      rightVisible: true,
+      mobileSurface: "resource",
+      activeResourceId: "src/main.ts",
+    });
+  });
+
+  it("falls back to the active file when the Agents tab closes", () => {
+    let states = openProjectResourceInState({}, {
+      projectId: "project-a",
+      path: "src/main.ts",
+    }, "tool");
+    states = updateProjectWorkspaceSurfaceState(states, "project-a", {
+      agentsTabOpen: true,
+      sidePage: "agents",
+    });
+    states = closeAgentsTabInState(states, "project-a");
+
+    expect(states["project-a"]).toMatchObject({
+      agentsTabOpen: false,
+      sidePage: "files",
+      activeResourceId: "src/main.ts",
+      rightVisible: true,
+      mobileSurface: "resource",
+    });
+  });
+
+  it("falls back between file and Agents tabs when either closes", () => {
+    let states = openProjectResourceInState({}, {
+      projectId: "project-a",
+      path: "src/main.ts",
+    }, "tool");
+    states = updateProjectWorkspaceSurfaceState(states, "project-a", {
+      agentsTabOpen: true,
+      sidePage: "files",
+    });
+    states = closeProjectResourceInState(states, "project-a", "src/main.ts");
+
+    expect(states["project-a"]).toMatchObject({
+      agentsTabOpen: true,
+      sidePage: "agents",
+      rightVisible: true,
+      mobileSurface: "resource",
+    });
+
+    states = closeAgentsTabInState(states, "project-a");
+    expect(states["project-a"]).toMatchObject({
+      agentsTabOpen: false,
+      rightVisible: false,
+      mobileSurface: "conversation",
     });
   });
 

@@ -12,6 +12,7 @@ import {
   Cancel01Icon,
   ComputerIcon,
   ComputerTerminal01Icon,
+  DatabaseSettingIcon,
   Folder01Icon,
   Moon02Icon,
   RefreshIcon,
@@ -49,6 +50,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { anvilClient, type DeliveryMode } from "../lib/anvilClient";
 import {
   isTerminalInputTarget,
@@ -57,20 +59,22 @@ import {
   threadNumberShortcutIndex,
 } from "../lib/keyboardScope";
 import { cycledThreadTarget, numberedThreadTarget } from "../lib/threadNavigation";
-import { shouldAutoOpenProjectResource } from "../lib/workspace";
+import { isWorkspaceSidePaneVisible, projectResourceForCloseShortcut, shouldAutoOpenProjectResource } from "../lib/workspace";
 import { equalAppShellSnapshots, selectAppShellSnapshot } from "../lib/appShellSnapshot";
 import { subagentActivityForSession } from "../lib/subagentActivity";
 import { matchesShortcut } from "../lib/shortcuts";
 import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
-import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
+import { Composer, type ComposerAttachment, type ComposerProps, updateComposerDraft } from "./Composer";
 import { DesktopUpdateDialog, isOcodeDesktop } from "./DesktopUpdateDialog";
 import { InteractionPanel } from "./InteractionDialog";
 import { InternalSessionFooter } from "./InternalSessionFooter";
+import { FilePickerDialog } from "./FilePickerDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { ProjectGitAction } from "./ProjectGitAction";
 import { Sidebar } from "./Sidebar";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { Timeline } from "./Timeline";
+import { UsageDialog } from "./UsageDialog";
 import { ProjectResourceSurface } from "./resource/ProjectResourceSurface";
 import { ProjectTerminalSurface } from "./terminal/ProjectTerminalSurface";
 import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
@@ -192,6 +196,57 @@ function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
   );
 }
 
+function FileSurfaceToggle({ isMobile }: { isMobile: boolean }) {
+  const { state, setRightVisible, openSidePage } = useWorkspaceSurfaces();
+  const active = isWorkspaceSidePaneVisible(state, isMobile);
+  const toggle = () => {
+    if (active) setRightVisible(false);
+    else openSidePage("files");
+  };
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant={active ? "secondary" : "ghost"}
+          size="icon-sm"
+          className="header-outline-control"
+          aria-label={active ? "Close side pane" : "Show files"}
+          aria-pressed={active}
+          onClick={toggle}
+        >
+          <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{active ? "Close side pane" : "Files"}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function WorkspaceComposer(props: Omit<ComposerProps, "onOpenSubagents">) {
+  const { openSidePage } = useWorkspaceSurfaces();
+  return <Composer {...props} onOpenSubagents={() => openSidePage("agents")} />;
+}
+
+function FileCloseShortcut({ isMobile }: { isMobile: boolean }) {
+  const { state, closeProjectResource } = useWorkspaceSurfaces();
+
+  useEffect(() => {
+    const closeActiveFile = (event: KeyboardEvent) => {
+      if (isTerminalInputTarget(event.target) || !matchesShortcut(event, "closeThread")) return;
+      const activeFile = projectResourceForCloseShortcut(state, isMobile);
+      if (!activeFile) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      closeProjectResource(activeFile.id);
+    };
+    window.addEventListener("keydown", closeActiveFile, true);
+    return () => window.removeEventListener("keydown", closeActiveFile, true);
+  }, [closeProjectResource, isMobile, state]);
+
+  return null;
+}
+
 function TerminalShortcut({ isMobile }: { isMobile: boolean }) {
   const { state, setBottomVisible, setMobileSurface } = useWorkspaceSurfaces();
 
@@ -228,6 +283,7 @@ function ProjectWorkspace({
       bottom={state.bottomVisible ? bottom : undefined}
       right={state.rightVisible ? right : undefined}
       mobileSurface={state.mobileSurface}
+      mobileResourceTitle={state.sidePage === "agents" ? "Agents" : "Files"}
       onMobileSurfaceChange={setMobileSurface}
     />
   );
@@ -260,6 +316,8 @@ function AppShellContent() {
   const [manageProjectsDialogOpen, setManageProjectsDialogOpen] = useState(false);
   const [projectsRootDialogOpen, setProjectsRootDialogOpen] = useState(false);
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
+  const [usageDialogOpen, setUsageDialogOpen] = useState(false);
+  const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
@@ -271,6 +329,7 @@ function AppShellContent() {
   const [displayPreferences, setDisplayPreferences] = useState(loadDisplayPreferences);
   const gitIndicatorsByProject = useRef(new Map<string, LiveIndicators["git"]>());
   const terminalSequences = useRef<Map<string, number> | null>(null);
+  const completionSound = useRef<HTMLAudioElement | null>(null);
   const activeSession = snapshot.workspaceLocation?.sessionId
     ? snapshot.sessions.find((session) => session.id === snapshot.workspaceLocation?.sessionId)
     : undefined;
@@ -488,6 +547,8 @@ function AppShellContent() {
     document.title = activeSession?.title ? `${activeSession.title} · ocode` : "ocode";
   }, [activeSession?.title]);
 
+  useEffect(() => setFilePickerOpen(false), [activeProject?.id, activeSession?.id]);
+
   useEffect(() => {
     const current = new Map(snapshot.sessions.map((session) => [
       session.id,
@@ -503,6 +564,15 @@ function AppShellContent() {
         session.lastTerminalOutcome !== "completed" ||
         sequence <= (previous.get(session.id) ?? sequence)
       ) continue;
+
+      try {
+        const audio = completionSound.current ?? new Audio("/sounds/thread-complete.mp3");
+        completionSound.current = audio;
+        audio.currentTime = 0;
+        void audio.play().catch(() => undefined);
+      } catch {
+        // Audio can be unavailable or blocked until the user interacts with the page.
+      }
 
       if (document.visibilityState !== "visible" || !document.hasFocus()) {
         if ("Notification" in window && Notification.permission === "granted") {
@@ -558,6 +628,12 @@ function AppShellContent() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (matchesShortcut(event, "openFile")) {
+        event.preventDefault();
+        if (activeProject && activeSession) setFilePickerOpen(true);
+        else toast.info("Select a thread to browse project files");
+        return;
+      }
       if (matchesShortcut(event, "settings")) {
         event.preventDefault();
         setSettingsOpen(true);
@@ -632,11 +708,33 @@ function AppShellContent() {
       <SidebarInset className="workspace">
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
           <LiveProjectResourceAutoOpen />
+          {activeProject && activeSession && (
+            <FilePickerDialog
+              open={filePickerOpen}
+              projectId={activeProject.id}
+              sessionId={activeSession.id}
+              onOpenChange={setFilePickerOpen}
+              onSearchFiles={anvilClient.searchFiles}
+            />
+          )}
+          {activeProject && <FileCloseShortcut isMobile={isMobile} />}
           {activeProject && <TerminalShortcut isMobile={isMobile} />}
           <ProjectWorkspace
             isMobile={isMobile}
             bottom={activeProject ? <ProjectTerminalSurface key={activeProject.id} projectId={activeProject.id} isMobile={isMobile} /> : undefined}
-            right={activeProject ? <ProjectResourceSurface projectId={activeProject.id} /> : undefined}
+            right={activeProject ? (
+              <ProjectResourceSurface
+                projectId={activeProject.id}
+                subagents={subagents}
+                connection={snapshot.connection}
+                subagentsLoading={activeSession ? snapshot.hydratingSessionIds.includes(activeSession.id) : false}
+                childSessions={activeSession ? snapshot.sessions.filter((session) => session.internal && session.parentSessionId === activeSession.id) : []}
+                childTimelines={snapshot.timelines}
+                hydratingChildSessionIds={activeSession ? snapshot.hydratingSessionIds.filter((id) => id !== activeSession.id) : []}
+                onCancelSubagent={(runId) => activeSession ? anvilClient.cancelSubagent(activeSession.id, runId) : Promise.resolve()}
+                onLoadSubagentChild={(item) => activeSession ? anvilClient.loadSubagentSession(activeSession.id, item.id) : Promise.reject(new Error("No active parent session"))}
+              />
+            ) : undefined}
             main={<div
               className="conversation-surface"
               data-message-font-size={displayPreferences.fontSize}
@@ -665,6 +763,7 @@ function AppShellContent() {
               />
             )}
             {activeProject && <TerminalSurfaceToggle isMobile={isMobile} />}
+            {activeProject && <FileSurfaceToggle isMobile={isMobile} />}
             <DropdownMenu
               open={settingsOpen}
               onOpenChange={(open) => {
@@ -683,17 +782,17 @@ function AppShellContent() {
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     {theme === "dark" ? <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} /> : theme === "light" ? <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} /> : <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />}
-                    Appearance
+                    Display
                   </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-44">
-                    <DropdownMenuLabel className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Theme</DropdownMenuLabel>
+                  <DropdownMenuSubContent className="w-48">
+                    <DropdownMenuLabel>Theme</DropdownMenuLabel>
                     <DropdownMenuRadioGroup value={theme} onValueChange={(value) => setTheme(value as "system" | "light" | "dark")}>
                       <DropdownMenuRadioItem value="system"><HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />System</DropdownMenuRadioItem>
                       <DropdownMenuRadioItem value="light"><HugeiconsIcon icon={Sun03Icon} strokeWidth={2} />Light</DropdownMenuRadioItem>
                       <DropdownMenuRadioItem value="dark"><HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />Dark</DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
                     <DropdownMenuSeparator />
-                    <DropdownMenuLabel className="text-[0.625rem] uppercase tracking-wider text-muted-foreground">Accent</DropdownMenuLabel>
+                    <DropdownMenuLabel>Accent</DropdownMenuLabel>
                     <DropdownMenuRadioGroup value={accent} onValueChange={(value) => setAccent(value as Accent)}>
                       {ACCENT_OPTIONS.map((option) => (
                         <DropdownMenuRadioItem key={option.value} value={option.value}>
@@ -702,14 +801,8 @@ function AppShellContent() {
                         </DropdownMenuRadioItem>
                       ))}
                     </DropdownMenuRadioGroup>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <span className="font-semibold" aria-hidden="true">Aa</span>
-                    Font size
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Text size</DropdownMenuLabel>
                     <DropdownMenuRadioGroup
                       value={displayPreferences.fontSize}
                       onValueChange={(fontSize) => setDisplayPreferences((current) => ({ ...current, fontSize: fontSize as MessageFontSize }))}
@@ -719,14 +812,8 @@ function AppShellContent() {
                       <DropdownMenuRadioItem value="large">Large</DropdownMenuRadioItem>
                       <DropdownMenuRadioItem value="extra-large">Extra large</DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <span className="font-mono" aria-hidden="true">↔</span>
-                    Message width
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Message width</DropdownMenuLabel>
                     <DropdownMenuRadioGroup
                       value={displayPreferences.width}
                       onValueChange={(width) => setDisplayPreferences((current) => ({ ...current, width: width as MessageWidth }))}
@@ -741,27 +828,41 @@ function AppShellContent() {
                   <span className="text-base leading-none" aria-hidden="true">⌨</span>
                   Keyboard shortcuts
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setManageProjectsDialogOpen(true)}>
-                  <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
-                  Manage projects
+                <DropdownMenuItem onSelect={() => setUsageDialogOpen(true)}>
+                  <HugeiconsIcon icon={DatabaseSettingIcon} strokeWidth={2} />
+                  Usage
                 </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setProjectsRootDialogOpen(true)}>
-                  <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
-                  Projects root
-                </DropdownMenuItem>
-                {desktopClient && (
-                  <DropdownMenuItem onSelect={() => setDesktopUpdateDialogOpen(true)}>
-                    <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />
-                    Desktop updates
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuItem
-                  disabled={rebuildState === "rebuilding"}
-                  onSelect={() => setRebuildDialogOpen(true)}
-                >
-                  <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-                  Rebuild web app
-                </DropdownMenuItem>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
+                    Projects
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuItem onSelect={() => setManageProjectsDialogOpen(true)}>Manage projects</DropdownMenuItem>
+                    <DropdownMenuItem onSelect={() => setProjectsRootDialogOpen(true)}>Projects root</DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+                    Maintenance
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
+                    {desktopClient && (
+                      <DropdownMenuItem onSelect={() => setDesktopUpdateDialogOpen(true)}>
+                        <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />
+                        Desktop updates
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem
+                      disabled={rebuildState === "rebuilding"}
+                      onSelect={() => setRebuildDialogOpen(true)}
+                    >
+                      <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+                      Rebuild web app
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -810,7 +911,7 @@ function AppShellContent() {
                 onReturn={activeSession.parentSessionId ? () => anvilClient.selectSession(activeSession.parentSessionId!) : undefined}
               />
             ) : (
-            <Composer
+            <WorkspaceComposer
               sessionId={activeSession.id}
               modelId={activeSession.modelId}
               thinkingLevel={activeSession.thinkingLevel}
@@ -829,13 +930,10 @@ function AppShellContent() {
               workspaceKind={activeProject?.workspaceKind}
               subagents={subagents}
               subagentsLoading={snapshot.hydratingSessionIds.includes(activeSession.id)}
-              connection={snapshot.connection}
               attachments={composerAttachments[activeSession.id] ?? []}
               onAttachFiles={attachFiles}
               onRemoveAttachment={removeAttachment}
               onSearchFiles={anvilClient.searchFiles}
-              onCancelSubagent={(runId) => anvilClient.cancelSubagent(activeSession.id, runId)}
-              onOpenSubagentChild={(item) => anvilClient.openSubagentSession(activeSession.id, item.id)}
               onCancel={anvilClient.cancelActiveRun}
               onDraftConsumed={anvilClient.clearComposerDraft}
               onPromptChange={updateDraft}
@@ -866,6 +964,7 @@ function AppShellContent() {
       </SidebarInset>
 
       <ShortcutsDialog open={shortcutsDialogOpen} onOpenChange={setShortcutsDialogOpen} />
+      <UsageDialog open={usageDialogOpen} onOpenChange={setUsageDialogOpen} />
       {newProjectOpen && (
         <NewProjectDialog
           onClose={() => setNewProjectOpen(false)}

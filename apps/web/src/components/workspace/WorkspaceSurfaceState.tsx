@@ -6,6 +6,7 @@ import {
   type MobileWorkspaceSurface,
   type ProjectResourceOpenSource,
   type ProjectWorkspaceSurfaceState,
+  type WorkspaceSidePage,
 } from "@/lib/workspace";
 
 export type WorkspaceSurfaceStateByProject = Record<string, ProjectWorkspaceSurfaceState>;
@@ -53,6 +54,7 @@ export function openProjectResourceInState(
     resourceTabs,
     activeResourceId: id,
     rightVisible: true,
+    sidePage: "files",
     mobileSurface: "resource",
   });
 }
@@ -69,10 +71,30 @@ export function closeProjectResourceInState(
   const activeResourceId = current.activeResourceId === resourceId
     ? resourceTabs[Math.min(index, resourceTabs.length - 1)]?.id ?? null
     : current.activeResourceId;
+  const showAgents = !resourceTabs.length && current.agentsTabOpen;
   return updateProjectWorkspaceSurfaceState(states, projectId, {
     resourceTabs,
     activeResourceId,
-    ...(!resourceTabs.length ? { rightVisible: false, mobileSurface: "conversation" as const } : {}),
+    ...(showAgents
+      ? { sidePage: "agents" as const, rightVisible: true, mobileSurface: "resource" as const }
+      : !resourceTabs.length
+        ? { rightVisible: false, mobileSurface: "conversation" as const }
+        : {}),
+  });
+}
+
+export function closeAgentsTabInState(
+  states: WorkspaceSurfaceStateByProject,
+  projectId: string,
+): WorkspaceSurfaceStateByProject {
+  const current = states[projectId] ?? DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE;
+  if (!current.agentsTabOpen) return states;
+  const fallbackToFiles = current.sidePage === "agents" && current.resourceTabs.length > 0;
+  const closeSurface = current.sidePage === "agents" && !current.resourceTabs.length;
+  return updateProjectWorkspaceSurfaceState(states, projectId, {
+    agentsTabOpen: false,
+    ...(fallbackToFiles ? { sidePage: "files" as const } : {}),
+    ...(closeSurface ? { rightVisible: false, mobileSurface: "conversation" as const } : {}),
   });
 }
 
@@ -82,9 +104,11 @@ type WorkspaceSurfaceContextValue = {
   setBottomVisible(visible: boolean): void;
   setRightVisible(visible: boolean): void;
   setMobileSurface(surface: MobileWorkspaceSurface): void;
+  openSidePage(page: WorkspaceSidePage): void;
   openProjectResource(reference: ProjectResourceReference, source: ProjectResourceOpenSource): void;
   selectProjectResource(resourceId: string): void;
   closeProjectResource(resourceId: string): void;
+  closeAgentsTab(): void;
 };
 
 const WorkspaceSurfaceContext = createContext<WorkspaceSurfaceContextValue | null>(null);
@@ -120,17 +144,28 @@ export function WorkspaceSurfaceProvider({
       ...(!visible && state.mobileSurface === "resource" ? { mobileSurface: "conversation" as const } : {}),
     }),
     setMobileSurface: activate,
+    openSidePage: (sidePage) => update({
+      sidePage,
+      ...(sidePage === "agents" ? { agentsTabOpen: true } : {}),
+      rightVisible: true,
+      mobileSurface: "resource",
+    }),
     openProjectResource: (reference, source) => {
       setStates((current) => openProjectResourceInState(current, reference, source));
     },
     selectProjectResource: (resourceId) => update({
       activeResourceId: resourceId,
+      sidePage: "files",
       rightVisible: true,
       mobileSurface: "resource",
     }),
     closeProjectResource: (resourceId) => {
       if (!projectId) return;
       setStates((current) => closeProjectResourceInState(current, projectId, resourceId));
+    },
+    closeAgentsTab: () => {
+      if (!projectId) return;
+      setStates((current) => closeAgentsTabInState(current, projectId));
     },
   }), [activate, projectId, state, update]);
 

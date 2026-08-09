@@ -75,7 +75,9 @@ export function restoreLegacyUserActivity(snapshot: AnvilSnapshot): AnvilSnapsho
   const sessions = snapshot.sessions.map((session) => {
     if (session.lastUserMessageAt) return session;
     const latestUserMessageAt = (snapshot.timelines[session.id] ?? [])
-      .filter((entry): entry is MessageEntry => entry.kind === "message" && entry.role === "user")
+      .filter((entry): entry is MessageEntry =>
+        entry.kind === "message" && entry.role === "user" && entry.origin?.type !== "subagentCompletion"
+      )
       .map((entry) => entry.createdAt)
       .filter((createdAt) => Number.isFinite(Date.parse(createdAt)))
       .sort((left, right) => Date.parse(right) - Date.parse(left))[0];

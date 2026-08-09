@@ -23,6 +23,7 @@ import { acquireForgeInstanceLock, ForgeInstanceLockedError } from "./store/inst
 import { removeRetiredSpeechCredential } from "./store/retiredFeatureCleanup.ts";
 import { TerminalHistoryStore } from "./terminal/historyStore.ts";
 import { TerminalManager } from "./terminal/terminalManager.ts";
+import { UsageService } from "./usage/usageService.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -63,6 +64,7 @@ async function main(): Promise<void> {
     subagents = new SubagentCoordinator(database, events, sessions);
     subagentApi = new SubagentInternalApi(subagents, subagentEndpoint(config.host, config.port));
     const indicators = new LiveIndicatorsService(sessions);
+    const usage = new UsageService({ additionalSessionRoots: [config.sessionDir] });
     let shutdownPromise: Promise<void> | undefined;
     let server: ForgeHttpServer;
     const shutdown = (exitCode = 0): Promise<void> => {
@@ -93,6 +95,7 @@ async function main(): Promise<void> {
       projectFiles,
       projectGit,
       terminals,
+      usage,
       subagentApi,
       searchFiles: sessions.searchFiles,
       listGitHubRepositories: githubRepositories.list,

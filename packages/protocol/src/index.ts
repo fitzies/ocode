@@ -8,13 +8,19 @@ import {
   type ImageContentBlock,
   type JsonValue,
 } from "./content.js";
-import { isSubagentRun, type SubagentRun } from "./subagents.js";
+import {
+  isSubagentRun,
+  type SubagentRole,
+  type SubagentRun,
+  type SubagentRunStatus,
+} from "./subagents.js";
 
 export * from "@anvil/protocol/content";
 export * from "./askUserQuestion.js";
 export * from "@anvil/protocol/resources";
 export * from "@anvil/protocol/terminal";
 export * from "./subagents.js";
+export * from "./usage.js";
 
 export const ANVIL_PROTOCOL_VERSION = 11 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
@@ -278,9 +284,27 @@ interface TimelineEntryBase {
   raw?: JsonValue;
 }
 
+export type SubagentCompletionStatus = Extract<
+  SubagentRunStatus,
+  "completed" | "failed" | "cancelled" | "interrupted"
+>;
+
+export interface SubagentCompletionMessageOrigin {
+  type: "subagentCompletion";
+  runId: string;
+  childSessionId: string;
+  deliveryId: string;
+  role: SubagentRole;
+  status: SubagentCompletionStatus;
+}
+
+export type MessageOrigin = SubagentCompletionMessageOrigin;
+
 export interface MessageEntry extends TimelineEntryBase {
   kind: "message";
+  /** Pi transcript role. A user-role message may still have a non-human origin. */
   role: "user" | "assistant" | "system" | "extension";
+  origin?: MessageOrigin;
   content: ContentBlock[];
   status: EntryStatus;
   modelId?: string;
@@ -834,6 +858,14 @@ function isInteractionRequest(value: unknown): boolean {
   return true;
 }
 
+function isMessageOrigin(value: unknown): value is MessageOrigin {
+  return isRecord(value) &&
+    value.type === "subagentCompletion" &&
+    hasStrings(value, "runId", "childSessionId", "deliveryId", "role", "status") &&
+    ["builder", "scout", "researcher", "reviewer"].includes(String(value.role)) &&
+    ["completed", "failed", "cancelled", "interrupted"].includes(String(value.status));
+}
+
 function isTimelineEntry(value: unknown): boolean {
   if (!isRecord(value) || !hasStrings(value, "id", "kind", "createdAt")) return false;
   if (value.raw !== undefined && !isJsonValue(value.raw)) return false;
@@ -843,6 +875,7 @@ function isTimelineEntry(value: unknown): boolean {
         ["user", "assistant", "system", "extension"].includes(String(value.role)) &&
         ["streaming", "complete", "failed", "cancelled"].includes(String(value.status)) &&
         Array.isArray(value.content) && value.content.every(isContentBlock) &&
+        (value.origin === undefined || isMessageOrigin(value.origin)) &&
         (value.error === undefined || typeof value.error === "string");
     case "reasoning":
       return hasStrings(value, "messageId", "content", "status") &&
@@ -953,9 +986,8 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
       return ["idle", "running", "failed"].includes(String(value.status)) &&
         (value.outcome === undefined || ["completed", "failed", "cancelled"].includes(String(value.outcome)));
     case "message.started":
-      return isRecord(value.message) && value.message.kind === "message" &&
-        hasStrings(value.message, "id", "role", "status", "createdAt") &&
-        Array.isArray(value.message.content) && value.message.content.every(isContentBlock);
+      return isTimelineEntry(value.message) &&
+        isRecord(value.message) && value.message.kind === "message";
     case "message.delta":
       return hasStrings(value, "messageId", "blockId", "delta") &&
         (value.artifact === undefined || (

@@ -17,7 +17,7 @@ import type { ForgeConfig } from "../config.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { ProjectCloneError } from "../projects/projectCloneService.ts";
 import { ForgeDatabase } from "../store/database.ts";
-import { SubagentCoordinator } from "../subagents/subagentCoordinator.ts";
+import { SubagentCoordinator, subagentCompletionContent } from "../subagents/subagentCoordinator.ts";
 import { SessionManager } from "./sessionManager.ts";
 
 let directory: string;
@@ -939,23 +939,56 @@ describe("SessionManager", () => {
     }
     const promptedBefore = database.readEventsAfter(0).filter((event) => event.type === "session.prompted").length;
     const activityBefore = database.getSession(sessionId)?.session.lastUserMessageAt;
+    const timestamp = new Date().toISOString();
+    const admitted = database.subagents.admit({
+      parentSessionId: sessionId,
+      parentToolCallId: `tool-delivery-${state}`,
+      childSessionId: `child-delivery-${state}`,
+      role: "reviewer",
+      taskPreview: "Review delivery",
+      timestamp,
+    });
+    events.acceptSubagentEvents(admitted.events);
+    const transition = database.subagents.updateStatus(admitted.run.id, "completed", timestamp, {
+      resultPreview: "The child found the issue.",
+    })!;
+    events.acceptSubagentEvents(transition.events);
+    const completed = transition.run;
+    const completion = subagentCompletionContent(completed);
+    const deliveryId = completed.notification!.id;
 
     const [delivered, duplicate] = await Promise.all([
-      manager.deliverSubagentCompletion("subagent-completion:test", sessionId, "Child session: child-1"),
-      manager.deliverSubagentCompletion("subagent-completion:test", sessionId, "different content"),
+      manager.deliverSubagentCompletion(deliveryId, sessionId, completion),
+      manager.deliverSubagentCompletion(deliveryId, sessionId, "different content"),
     ]);
 
     expect(delivered.success).toBe(true);
     expect(duplicate).toEqual(delivered);
     const requests = readFileSync(join(config.sessionDir, sessionId, "rpc-requests.jsonl"), "utf8")
       .trim().split("\n").map((line) => JSON.parse(line) as { type: string; message?: string });
-    expect(requests.filter((request) => request.message === "Child session: child-1")).toEqual([
+    expect(requests.filter((request) => request.message === completion)).toEqual([
       expect.objectContaining({ type: expectedRpcType }),
     ]);
     expect(requests.some((request) => request.message === "different content")).toBe(false);
     expect(database.readEventsAfter(0).filter((event) => event.type === "session.prompted")).toHaveLength(promptedBefore);
     expect(database.getSession(sessionId)?.session.lastUserMessageAt).toBe(activityBefore);
-    if (state === "idle/settled") expect(database.getSession(sessionId)?.session.settled).toBe(false);
+    if (state === "idle/settled") {
+      expect(database.getSession(sessionId)?.session.settled).toBe(false);
+      const injected = events.timelineForSession(sessionId).find((entry) =>
+        entry.kind === "message" && entry.origin?.type === "subagentCompletion"
+      );
+      expect(injected).toMatchObject({
+        role: "user",
+        origin: {
+          type: "subagentCompletion",
+          runId: completed.id,
+          childSessionId: completed.childSessionId,
+          deliveryId,
+          role: "reviewer",
+          status: "completed",
+        },
+      });
+    }
   });
 
   it.each(["session", "project"] as const)("stops and deletes owned child runtimes before %s deletion", async (scope) => {

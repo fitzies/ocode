@@ -86,6 +86,35 @@ describe("app shell snapshot selection", () => {
     expect(equalAppShellSnapshots(backgroundSelection, selectAppShellSnapshot(activeUpdated))).toBe(false);
   });
 
+  it("retains loaded child timelines for the selected parent without selecting the child", () => {
+    const child: SessionSummary = {
+      ...sessions[0]!,
+      id: "child-active",
+      title: "Builder child",
+      internal: true,
+      parentSessionId: "session-active",
+    };
+    const initial = {
+      ...snapshot(),
+      sessions: [...sessions, child],
+      timelines: { "child-active": [] },
+    } as AnvilClientSnapshot;
+    const selected = selectAppShellSnapshot(initial);
+    const childUpdated = {
+      ...applyAnvilEvent(initial, event(1, child.id, "message.delta", {
+        messageId: "assistant-child",
+        blockId: "assistant-child-text-0",
+        delta: "visible in the side pane",
+      })),
+      replay: initial.replay,
+      hydratingSessionIds: initial.hydratingSessionIds,
+    } as AnvilClientSnapshot;
+
+    expect(selected.timelines[child.id]).toEqual([]);
+    expect(equalAppShellSnapshots(selected, selectAppShellSnapshot(childUpdated))).toBe(false);
+    expect(childUpdated.activeSessionId).toBe("session-active");
+  });
+
   it("reacts to the selected durable subagent projection but ignores background runs", () => {
     const initial = snapshot();
     const run = {

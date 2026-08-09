@@ -6,8 +6,9 @@ export type WorkspaceLocation = {
 };
 
 export type MobileWorkspaceSurface = "conversation" | "terminal" | "resource";
+export type WorkspaceSidePage = "files" | "agents";
 
-export type ProjectResourceOpenSource = "tool" | "timeline" | "terminal";
+export type ProjectResourceOpenSource = "picker" | "tool" | "timeline" | "terminal";
 
 export type ProjectResourceTab = ProjectResourceReference & {
   id: string;
@@ -18,6 +19,8 @@ export type ProjectWorkspaceSurfaceState = {
   bottomVisible: boolean;
   rightVisible: boolean;
   mobileSurface: MobileWorkspaceSurface;
+  sidePage: WorkspaceSidePage;
+  agentsTabOpen: boolean;
   resourceTabs: ProjectResourceTab[];
   activeResourceId: string | null;
 };
@@ -26,9 +29,26 @@ export const DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE: ProjectWorkspaceSurfaceSta
   bottomVisible: false,
   rightVisible: false,
   mobileSurface: "conversation",
+  sidePage: "files",
+  agentsTabOpen: false,
   resourceTabs: [],
   activeResourceId: null,
 };
+
+export function isWorkspaceSidePaneVisible(
+  state: ProjectWorkspaceSurfaceState,
+  isMobile: boolean,
+): boolean {
+  return isMobile ? state.mobileSurface === "resource" : state.rightVisible;
+}
+
+export function projectResourceForCloseShortcut(
+  state: ProjectWorkspaceSurfaceState,
+  isMobile: boolean,
+): ProjectResourceTab | undefined {
+  if (!isWorkspaceSidePaneVisible(state, isMobile) || state.sidePage !== "files") return undefined;
+  return state.resourceTabs.find((tab) => tab.id === state.activeResourceId) ?? state.resourceTabs[0];
+}
 
 export function shouldAutoOpenProjectResource(
   completionSessionId: string,

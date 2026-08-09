@@ -4,6 +4,7 @@ import {
   ANVIL_PROTOCOL_VERSION,
   SUBAGENT_COMPLETION_MAX_BYTES,
   type AnvilCommandResponse,
+  type MessageEntry,
   type SessionSummary,
   type SubagentRun,
 } from "@anvil/protocol";
@@ -12,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ForgeEventService } from "../events/eventService.ts";
 import { ForgeDatabase } from "../store/database.ts";
 import { RETAINED_TERMINAL_RUNS_PER_PARENT } from "../store/subagentStore.ts";
+import { subagentCompletionOrigin } from "./completionMessage.ts";
 import { boundedUtf8, SubagentCoordinator, subagentCompletionContent } from "./subagentCoordinator.ts";
 
 function response(commandId: string, success = true): AnvilCommandResponse {
@@ -360,6 +362,31 @@ describe("SubagentCoordinator", () => {
     expect(database.subagents.resumeMetadata(admission.run.id)).toEqual({
       childSessionId: "child-preserved", role: "researcher", task: "preserved task metadata",
     });
+  });
+
+  it("recognizes a durable subagent envelope without changing its Pi user role", () => {
+    const timestamp = new Date().toISOString();
+    const run: SubagentRun = {
+      id: "run-origin", parentSessionId: "parent", parentToolCallId: "tool", childSessionId: "child",
+      role: "reviewer", status: "completed", taskPreview: "Review", resultPreview: "Found the issue.",
+      createdAt: timestamp, updatedAt: timestamp,
+      notification: { id: "subagent-completion:run-origin", status: "delivering", updatedAt: timestamp },
+    };
+    const message: MessageEntry = {
+      id: "message-origin", kind: "message", role: "user", status: "streaming", createdAt: timestamp,
+      content: [{ id: "text-origin", type: "text", text: subagentCompletionContent(run) }],
+    };
+
+    expect(subagentCompletionOrigin("parent", message, [run])).toEqual({
+      type: "subagentCompletion",
+      runId: "run-origin",
+      childSessionId: "child",
+      deliveryId: "subagent-completion:run-origin",
+      role: "reviewer",
+      status: "completed",
+    });
+    expect(message.role).toBe("user");
+    expect(subagentCompletionOrigin("other-parent", message, [run])).toBeUndefined();
   });
 
   it("bounds UTF-8 completion content", () => {

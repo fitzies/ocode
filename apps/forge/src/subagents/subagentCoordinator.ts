@@ -13,6 +13,7 @@ import {
 
 import { ForgeEventService } from "../events/eventService.ts";
 import { ForgeDatabase } from "../store/database.ts";
+import { subagentCompletionHeading } from "./completionMessage.ts";
 import { buildSubagentPrompt } from "./roleCatalog.ts";
 
 interface SubagentSessionRuntime {
@@ -44,7 +45,7 @@ export function boundedUtf8(value: string, maxBytes: number): string {
 }
 
 export function subagentCompletionContent(run: SubagentRun, richBytes = SUBAGENT_COMPLETION_MAX_BYTES): string {
-  const heading = `[ocode ${run.role} subagent ${run.id} ${run.status}]`;
+  const heading = subagentCompletionHeading(run);
   const reference = `Child session: ${run.childSessionId}`;
   if (richBytes <= 0) return `${heading}\n${reference}\nCompletion preview budget exhausted; inspect the linked child session.`;
   const body = run.resultPreview || run.error || "No result preview was available.";

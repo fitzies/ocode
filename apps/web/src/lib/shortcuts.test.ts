@@ -10,6 +10,13 @@ const unmodified = {
   shiftKey: false,
 };
 
+describe("file picker shortcut", () => {
+  it("defaults to Cmd+P on Apple platforms", () => {
+    expect(DEFAULT_SHORTCUTS.openFile).toBe("Mod+KeyP");
+    expect(matchesShortcut({ ...unmodified, code: "KeyP", metaKey: true }, "openFile", "MacIntel")).toBe(true);
+  });
+});
+
 describe("settings shortcut", () => {
   it("defaults to Cmd+, on Apple platforms", () => {
     expect(DEFAULT_SHORTCUTS.settings).toBe("Mod+Comma");

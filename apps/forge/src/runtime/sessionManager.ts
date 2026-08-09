@@ -38,6 +38,7 @@ import { EventProjectResolver, type ProjectResolver } from "../projects/projectR
 import { canonicalizeProjectsRoot, ProjectsRootValidationError } from "../projects/projectsRoot.ts";
 import { detectProjectWorkspaceKind } from "../projects/workspaceKind.ts";
 import { ForgeDatabase, type RuntimeSessionRecord } from "../store/database.ts";
+import { subagentCompletionOrigin } from "../subagents/completionMessage.ts";
 import type { PreparedProjectTerminalRemoval, ProjectTerminalCleanup } from "../terminal/terminalManager.ts";
 import { createPiRpcProcess, type RpcRecord, type RpcSubprocess } from "../rpc/subprocess.ts";
 import { WorkspaceFileIndex } from "./workspaceFiles.ts";
@@ -1628,6 +1629,7 @@ export class SessionManager {
     runtime: ManagedSession,
     events: UnsequencedAnvilEvent[],
   ): void {
+    events = this.annotateMessageOrigins(sessionId, events);
     const [event] = events;
     if (events.length === 1 && event && this.isStreamDeltaEvent(event)) {
       const pending = runtime.pendingStreamEvent;
@@ -1662,6 +1664,26 @@ export class SessionManager {
 
     this.flushPendingStreamEvent(runtime);
     if (events.length > 0) this.events.append(events);
+  }
+
+  private annotateMessageOrigins(
+    sessionId: string,
+    events: UnsequencedAnvilEvent[],
+  ): UnsequencedAnvilEvent[] {
+    if (!events.some((event) => event.type === "message.started" && event.payload.message.role === "user")) {
+      return events;
+    }
+    const runs = this.database.subagents.list(sessionId);
+    if (runs.length === 0) return events;
+    return events.map((event) => {
+      if (event.type !== "message.started" || event.payload.message.role !== "user" || event.payload.message.origin) {
+        return event;
+      }
+      const origin = subagentCompletionOrigin(sessionId, event.payload.message, runs);
+      return origin
+        ? { ...event, payload: { message: { ...event.payload.message, origin } } }
+        : event;
+    });
   }
 
   private isStreamDeltaEvent(event: UnsequencedAnvilEvent): event is StreamDeltaEvent {

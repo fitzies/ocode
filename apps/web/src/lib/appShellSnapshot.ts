@@ -31,14 +31,26 @@ function selectedSessionId(snapshot: Pick<AnvilClientSnapshot, "sessions" | "wor
     : undefined;
 }
 
+function detailSessionIds(snapshot: Pick<AnvilClientSnapshot, "sessions" | "workspaceLocation">): string[] {
+  const sessionId = selectedSessionId(snapshot);
+  if (!sessionId) return [];
+  return [
+    sessionId,
+    ...snapshot.sessions
+      .filter((session) => session.internal && session.parentSessionId === sessionId)
+      .map((session) => session.id),
+  ];
+}
+
 export function selectAppShellSnapshot(snapshot: AnvilClientSnapshot): AppShellSnapshot {
   const sessionId = selectedSessionId(snapshot);
+  const detailIds = detailSessionIds(snapshot);
   return {
     projects: snapshot.projects,
     sessions: snapshot.sessions,
     activeSessionId: snapshot.activeSessionId,
     workspaceLocation: snapshot.workspaceLocation,
-    timelines: sessionId ? { [sessionId]: snapshot.timelines[sessionId] ?? EMPTY_TIMELINE } : {},
+    timelines: Object.fromEntries(detailIds.map((id) => [id, snapshot.timelines[id] ?? EMPTY_TIMELINE])),
     catalogs: sessionId ? { [sessionId]: snapshot.catalogs[sessionId] ?? EMPTY_CATALOG } : {},
     pendingInteractions: sessionId
       ? snapshot.pendingInteractions.filter((request) => request.sessionId === sessionId)
@@ -55,7 +67,7 @@ export function selectAppShellSnapshot(snapshot: AnvilClientSnapshot): AppShellS
     connection: snapshot.connection,
     sequenceGap: snapshot.sequenceGap,
     clientError: snapshot.clientError,
-    hydratingSessionIds: sessionId && snapshot.hydratingSessionIds.includes(sessionId) ? [sessionId] : [],
+    hydratingSessionIds: snapshot.hydratingSessionIds.filter((id) => detailIds.includes(id)),
   };
 }
 
@@ -81,7 +93,11 @@ export function equalAppShellSnapshots(left: AppShellSnapshot, right: AppShellSn
   if (leftSessionId !== rightSessionId) return false;
   if (!leftSessionId) return true;
 
-  return left.timelines[leftSessionId] === right.timelines[rightSessionId!] &&
+  const leftDetailIds = detailSessionIds(left);
+  const rightDetailIds = detailSessionIds(right);
+  if (!sameItems(leftDetailIds, rightDetailIds)) return false;
+
+  return leftDetailIds.every((id) => left.timelines[id] === right.timelines[id]) &&
     left.catalogs[leftSessionId] === right.catalogs[rightSessionId!] &&
     left.queues[leftSessionId] === right.queues[rightSessionId!] &&
     left.composerDrafts[leftSessionId] === right.composerDrafts[rightSessionId!] &&

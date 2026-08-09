@@ -331,6 +331,40 @@ describe("protocol runtime guards", () => {
     expect(isAnvilEvent({ ...event, payload: { readThroughSequence: -1 } })).toBe(false);
   });
 
+  it("validates subagent provenance on user-role messages", () => {
+    const event = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-subagent-origin",
+      sequence: 1,
+      sessionId: "session-1",
+      timestamp: "2026-07-21T08:00:00.000Z",
+      type: "message.started",
+      payload: {
+        message: {
+          id: "message-subagent",
+          kind: "message",
+          role: "user",
+          origin: {
+            type: "subagentCompletion",
+            runId: "run-1",
+            childSessionId: "child-1",
+            deliveryId: "subagent-completion:run-1",
+            role: "reviewer",
+            status: "completed",
+          },
+          status: "complete",
+          createdAt: "2026-07-21T08:00:00.000Z",
+          content: [{ id: "text-1", type: "text", text: "Result" }],
+        },
+      },
+    };
+    expect(isAnvilEvent(event)).toBe(true);
+    expect(isAnvilEvent({
+      ...event,
+      payload: { message: { ...event.payload.message, origin: { ...event.payload.message.origin, status: "running" } } },
+    })).toBe(false);
+  });
+
   it("validates externalized artifact content blocks", () => {
     const base = {
       protocolVersion: ANVIL_PROTOCOL_VERSION,

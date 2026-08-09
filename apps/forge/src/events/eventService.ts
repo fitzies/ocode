@@ -18,6 +18,20 @@ import { applyAnvilEvents, createEmptySnapshot, restoreLegacyUserActivity } from
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import { detectProjectWorkspaceKind } from "../projects/workspaceKind.ts";
 import { ForgeDatabase } from "../store/database.ts";
+import { subagentCompletionOrigin } from "../subagents/completionMessage.ts";
+
+function restoreSubagentMessageOrigins(snapshot: AnvilSnapshot, database: ForgeDatabase): AnvilSnapshot {
+  const timelines = Object.fromEntries(Object.entries(snapshot.timelines).map(([sessionId, entries]) => {
+    const runs = database.subagents.list(sessionId);
+    if (runs.length === 0) return [sessionId, entries];
+    return [sessionId, entries.map((entry) => {
+      if (entry.kind !== "message" || entry.origin) return entry;
+      const origin = subagentCompletionOrigin(sessionId, entry, runs);
+      return origin ? { ...entry, origin } : entry;
+    })];
+  }));
+  return { ...snapshot, timelines };
+}
 
 export class ForgeEventService extends EventEmitter {
   private snapshot: AnvilSnapshot;
@@ -52,6 +66,7 @@ export class ForgeEventService extends EventEmitter {
       restored = applyAnvilEvents(restored, tail);
       if (tail.length < 10_000) break;
     }
+    restored = restoreSubagentMessageOrigins(restored, database);
     restored = restoreLegacyUserActivity(restored);
     restored = {
       ...restored,

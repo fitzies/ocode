@@ -14,6 +14,7 @@ const groups: { title: string; items: [ShortcutId, string, string][] }[] = [
     ["previousThread", "Previous thread", "Move to the previous thread in this project."],
   ] },
   { title: "Navigation", items: [
+    ["openFile", "Open file", "Fuzzy-search project files and open one in the side pane."],
     ["search", "Search threads", "Open thread search."],
     ["settings", "Open settings", "Open the Forge settings menu."],
     ["toggleSidebar", "Toggle sidebar", "Open or collapse the app sidebar."],

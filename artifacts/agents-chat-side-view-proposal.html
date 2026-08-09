@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent chat side view — Mira proposal</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0d0e10;
+    --surface: #101114;
+    --surface-2: #15171a;
+    --hover: #191b1f;
+    --text: #ececea;
+    --muted: #92959b;
+    --faint: #656970;
+    --border: #292c31;
+    --border-soft: #202329;
+    --amber: #d5a34d;
+    --green: #72b48b;
+    --radius: 7px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: transparent;
+    color: var(--text);
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  button { color: inherit; font: inherit; }
+  .artifact { width: min(100%, 1120px); }
+  .workspace {
+    height: 650px;
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) 5px minmax(340px, .8fr);
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg);
+    box-shadow: 0 24px 80px rgba(0,0,0,.45);
+    animation: enter 340ms cubic-bezier(.16,1,.3,1) both;
+  }
+  .main, .side { min-width: 0; min-height: 0; }
+  .main { display: grid; grid-template-rows: 62px minmax(0,1fr) auto; }
+  .main-header, .tabbar {
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg) 94%, white 6%);
+  }
+  .main-header { display: flex; align-items: center; justify-content: space-between; padding: 0 18px; }
+  .thread-title { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 12px; }
+  .thread-title span { color: var(--muted); }
+  .thread-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 590; }
+  .main-actions { display: flex; gap: 7px; }
+  .outline-button, .icon-button {
+    display: inline-flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    color: var(--muted); background: transparent;
+  }
+  .outline-button { height: 28px; gap: 6px; padding: 0 9px; font-size: 9px; }
+  .icon-button { width: 28px; height: 28px; padding: 0; }
+  .icon-button.ghost { border-color: transparent; }
+  svg { width: 14px; height: 14px; }
+  .thread {
+    min-height: 0; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: flex-end;
+    padding: 28px clamp(24px, 7%, 68px) 16px;
+  }
+  .messages { display: grid; gap: 24px; width: min(100%, 670px); margin: 0 auto; }
+  .message { display: grid; grid-template-columns: 28px minmax(0,1fr); gap: 10px; }
+  .avatar {
+    width: 26px; height: 26px; display: grid; place-items: center;
+    border: 1px solid var(--border); border-radius: 7px;
+    color: var(--muted); background: var(--surface-2);
+    font-size: 9px; font-weight: 650;
+  }
+  .message-copy { color: #cfd0cf; font-size: 11px; line-height: 1.62; }
+  .message-copy strong { display: block; margin-bottom: 4px; color: var(--text); font-size: 10px; font-weight: 620; }
+  .tool-line {
+    display: flex; align-items: center; gap: 7px;
+    width: fit-content; margin-top: 9px; padding: 5px 8px;
+    border: 1px solid var(--border-soft); border-radius: 6px;
+    color: var(--muted); background: var(--surface); font-size: 9px;
+  }
+  .tool-line svg { width: 12px; height: 12px; color: var(--green); }
+  .composer {
+    width: min(calc(100% - 40px), 710px); min-height: 70px;
+    margin: 0 auto 16px; padding: 12px;
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface);
+  }
+  .placeholder { color: var(--faint); font-size: 11px; }
+  .composer-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; color: var(--faint); font-size: 8px; }
+  .send { width: 25px; height: 25px; display: grid; place-items: center; border: 0; border-radius: 6px; color: var(--bg); background: var(--text); }
+  .resize { position: relative; background: var(--border-soft); }
+  .resize::after { content: ""; position: absolute; top: 50%; left: 1px; width: 3px; height: 28px; transform: translateY(-50%); border-radius: 4px; background: #3b3e44; }
+
+  .side { display: grid; grid-template-rows: 62px minmax(0,1fr); background: var(--bg); }
+  .tabbar { min-width: 0; display: flex; align-items: end; gap: 2px; padding: 0 7px; }
+  .tab {
+    position: relative; height: 37px; max-width: 112px;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 0 8px; border: 0; color: var(--muted); background: transparent;
+    font-size: 10px; white-space: nowrap;
+  }
+  .tab span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .tab.active { color: var(--text); }
+  .tab.active::after { content: ""; position: absolute; left: 7px; right: 7px; bottom: -1px; height: 2px; border-radius: 2px 2px 0 0; background: var(--text); }
+  .tab svg { width: 12px; height: 12px; flex: 0 0 auto; color: var(--faint); }
+  .tab.active .agent-icon { color: var(--text); }
+  .live-dot { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--amber); }
+  .tab-spacer { flex: 1; }
+  .tab-close { width: 26px; height: 26px; display: grid; place-items: center; margin-bottom: 5px; border: 0; border-radius: 6px; color: var(--muted); background: transparent; }
+  .agent-document { min-height: 0; display: grid; grid-template-rows: 43px minmax(0,1fr) 35px; }
+  .agent-header {
+    min-width: 0; display: grid; grid-template-columns: 28px minmax(0,1fr) auto;
+    align-items: center; gap: 7px; padding: 0 9px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .back { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; color: var(--muted); background: transparent; }
+  .agent-name { min-width: 0; display: flex; align-items: center; gap: 7px; }
+  .agent-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; font-weight: 620; }
+  .status { display: inline-flex; align-items: center; gap: 5px; color: var(--amber); font-size: 8.5px; white-space: nowrap; }
+  .status::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+  .elapsed { color: var(--faint); font: 8px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .agent-chat { min-height: 0; overflow: auto; padding: 14px 13px 22px; }
+  .task {
+    padding: 9px 10px; border: 1px solid var(--border-soft); border-radius: 7px;
+    color: #c3c5c4; background: var(--surface); font-size: 9.5px; line-height: 1.5;
+  }
+  .task-label { display: block; margin-bottom: 4px; color: var(--faint); font-size: 7.5px; font-weight: 680; letter-spacing: .08em; text-transform: uppercase; }
+  .chat-stream { display: grid; gap: 16px; margin-top: 18px; }
+  .chat-row { display: grid; grid-template-columns: 20px minmax(0,1fr); gap: 8px; }
+  .chat-mark { width: 19px; height: 19px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 5px; color: var(--muted); background: var(--surface-2); font-size: 7px; font-weight: 680; }
+  .chat-copy { color: #c5c6c5; font-size: 9.5px; line-height: 1.58; }
+  .chat-copy strong { display: block; margin-bottom: 3px; color: var(--muted); font-size: 8px; font-weight: 620; }
+  .agent-tool {
+    display: flex; align-items: center; gap: 7px; min-height: 30px;
+    padding: 6px 8px; border: 1px solid var(--border-soft); border-radius: 6px;
+    color: var(--muted); background: var(--surface); font-size: 8.5px;
+  }
+  .agent-tool svg { width: 12px; height: 12px; color: var(--green); }
+  .agent-tool span:last-child { margin-left: auto; color: var(--faint); }
+  .typing { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 8.5px; }
+  .typing i { width: 4px; height: 4px; border-radius: 50%; background: var(--amber); opacity: .55; animation: pulse 1.2s infinite; }
+  .typing i:nth-child(2) { animation-delay: .15s; }.typing i:nth-child(3) { animation-delay: .3s; }
+  .agent-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 11px; border-top: 1px solid var(--border-soft); color: var(--faint); font-size: 8px;
+  }
+  .footer-action { display: inline-flex; align-items: center; gap: 5px; border: 0; color: var(--muted); background: transparent; font-size: 8px; }
+  .footer-action svg { width: 11px; height: 11px; }
+  .caption { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 3px 0; color: var(--muted); font-size: 9px; line-height: 1.5; }
+  .caption strong { color: var(--text); font-weight: 600; }
+  .primitive { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #bfc1c0; }
+  @keyframes enter { from { opacity: 0; transform: translateY(8px); } }
+  @keyframes pulse { 0%,100% { opacity: .3; transform: translateY(0); } 50% { opacity: 1; transform: translateY(-1px); } }
+  @media (prefers-reduced-motion: reduce) { .workspace { animation: none; } .typing i { animation: none; } }
+  @media (max-width: 760px) {
+    body { padding: 12px; }
+    .workspace { height: 620px; grid-template-columns: 1fr; }
+    .main, .resize { display: none; }
+    .side { display: grid; }
+    .caption { display: block; }
+  }
+</style>
+</head>
+<body>
+<main class="artifact">
+  <section class="workspace" aria-label="Main thread with agent chat open in the side pane">
+    <section class="main" aria-label="Main thread remains open">
+      <header class="main-header">
+        <div class="thread-title"><span>ocode /</span><strong>Agents side-view UI</strong></div>
+        <div class="main-actions">
+          <button class="icon-button" aria-label="Terminal"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="3" width="11" height="10" rx="1.5"/><path d="m5 6 2 2-2 2m3.5 0H11"/></svg></button>
+          <button class="outline-button"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 4.5h4l1.2 1.5h5.8v6.5h-11z"/></svg>Files</button>
+        </div>
+      </header>
+      <div class="thread">
+        <div class="messages">
+          <div class="message"><span class="avatar">U</span><div class="message-copy"><strong>You</strong>Make Agents behave like an open file tab.</div></div>
+          <div class="message"><span class="avatar">Pi</span><div class="message-copy"><strong>Pi</strong>I’ll update the shared workspace state and keep the main conversation in place.<div class="tool-line"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m3.5 8 3 3 6-6"/></svg>Builder agent started</div></div></div>
+        </div>
+      </div>
+      <div class="composer"><span class="placeholder">Message Pi…</span><div class="composer-foot"><span>main workspace</span><button class="send" aria-label="Send"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M8 12.5v-9m-3 3 3-3 3 3"/></svg></button></div></div>
+    </section>
+
+    <div class="resize" aria-hidden="true"></div>
+
+    <aside class="side" aria-label="Agent child chat side view">
+      <header class="tabbar">
+        <button class="tab"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3.5 2h5l4 4v8h-9z"/><path d="M8.5 2v4h4"/></svg><span>AppShell.tsx</span></button>
+        <button class="tab active" aria-current="page"><svg class="agent-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="4.5" width="10" height="8" rx="2"/><path d="M8 2v2.5M5.5 8h.01M10.5 8h.01M6 10.5h4"/></svg><span>Agents</span><i class="live-dot"></i></button>
+        <span class="tab-spacer"></span>
+        <button class="tab-close" aria-label="Close side pane"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m5 5 6 6m0-6-6 6"/></svg></button>
+      </header>
+
+      <section class="agent-document">
+        <header class="agent-header">
+          <button class="back" aria-label="Back to Agents"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m10 3-5 5 5 5"/></svg></button>
+          <div class="agent-name"><strong>Builder</strong><span class="status">Running</span></div>
+          <span class="elapsed">1m 42s</span>
+        </header>
+
+        <div class="agent-chat">
+          <div class="task"><span class="task-label">Task</span>Move Agents into the resource tab strip and preserve open files.</div>
+          <div class="chat-stream">
+            <div class="chat-row"><span class="chat-mark">A</span><div class="chat-copy"><strong>Builder</strong>I found the active resource state. I’m adding Agents as a sibling tab rather than another workspace mode.</div></div>
+            <div class="agent-tool"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="m3.5 8 3 3 6-6"/></svg><span>Edited 3 files</span><span>done</span></div>
+            <div class="chat-row"><span class="chat-mark">A</span><div class="chat-copy"><strong>Builder</strong>The tab now falls back cleanly when either Agents or the final file closes.</div></div>
+            <div class="typing"><i></i><i></i><i></i><span>Running tests</span></div>
+          </div>
+        </div>
+
+        <footer class="agent-footer"><span>Read-only child session</span><button class="footer-action"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5.5 3H3v10h10v-2.5M8 3h5v5M12.5 3.5 7 9"/></svg>Open full thread</button></footer>
+      </section>
+    </aside>
+  </section>
+  <div class="caption"><span><strong>Clicked state:</strong> the agent transcript opens inside the Agents document while the parent thread remains visible and interactive.</span><span><span class="primitive">Tabs</span> · <span class="primitive">ScrollArea</span> · <span class="primitive">Button</span> · <span class="primitive">Collapsible</span></span></div>
+</main>
+</body>
+</html>

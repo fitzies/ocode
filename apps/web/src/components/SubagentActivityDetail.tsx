@@ -1,9 +1,8 @@
-import { ArrowLeft01Icon, ArrowRight01Icon, Cancel01Icon, Copy01Icon, Loading03Icon, Tick02Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeft01Icon, Cancel01Icon, Copy01Icon, Loading03Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { RefObject } from "react";
 
 import { Button } from "@/components/ui/button";
-import { PopoverTitle } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { canCancelSubagentStatus, isActiveSubagentStatus, type SubagentActivityItem } from "../lib/subagentActivity";
 import {
@@ -17,19 +16,18 @@ import {
 import { MarkdownText } from "./MarkdownText";
 import { SubagentStatusIcon } from "./SubagentStatusIcon";
 
-export function SubagentActivityDetail({ item, now, copied, cancelling, actionError, openingChild, backButtonRef, onBack, onClose, onCopy, onCancel, onOpenChild }: {
+export function SubagentActivityDetail({ item, now, copied, cancelling, actionError, backButtonRef, onBack, onClose, onCopy, onCancel, embedded = false }: {
   item: SubagentActivityItem;
   now: number;
   copied: boolean;
   cancelling: boolean;
   actionError?: string;
-  openingChild: boolean;
   backButtonRef: RefObject<HTMLButtonElement | null>;
   onBack: () => void;
   onClose: () => void;
   onCopy: () => void;
   onCancel: () => void;
-  onOpenChild: () => void;
+  embedded?: boolean;
 }) {
   const duration = formatSubagentDuration(item, now);
   const response = item.error ?? item.result;
@@ -37,17 +35,19 @@ export function SubagentActivityDetail({ item, now, copied, cancelling, actionEr
 
   return (
     <>
-      <header className="subagent-popover-header subagent-detail-header">
-        <Button ref={backButtonRef} type="button" variant="ghost" size="icon-sm" onClick={onBack} aria-label="Back to subagent activity">
+      <header className={`subagent-popover-header subagent-detail-header${embedded ? " subagent-detail-header--embedded" : ""}`}>
+        <Button ref={backButtonRef} type="button" variant="ghost" size="icon-sm" onClick={onBack} aria-label="Back to Agents">
           <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
         </Button>
         <div>
-          <PopoverTitle className="subagent-popover-title">{subagentRoleLabel(item.role)}</PopoverTitle>
+          <h2 className="subagent-popover-title">{subagentRoleLabel(item.role)}</h2>
           {duration && <span className="subagent-detail-duration">{duration}</span>}
         </div>
-        <Button type="button" variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close subagent activity">
-          <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
-        </Button>
+        {!embedded && (
+          <Button type="button" variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close Agents">
+            <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+          </Button>
+        )}
       </header>
       <ScrollArea className="subagent-popover-scroll subagent-detail-scroll">
         <div className="subagent-detail-body">
@@ -94,12 +94,6 @@ export function SubagentActivityDetail({ item, now, copied, cancelling, actionEr
             <section className="subagent-detail-actions">
               {actionError && <p className="subagent-cancel-error" role="alert">{actionError}</p>}
               <div>
-                {item.childSessionId && (
-                  <Button type="button" variant="outline" size="sm" onClick={onOpenChild} disabled={openingChild}>
-                    {openingChild ? <HugeiconsIcon icon={Loading03Icon} className="subagent-activity-icon-spin" /> : <HugeiconsIcon icon={ArrowRight01Icon} />}
-                    {openingChild ? "Opening…" : "Open child session"}
-                  </Button>
-                )}
                 {canCancelSubagentStatus(item.status) && (
                   <Button type="button" variant="destructive" size="sm" onClick={onCancel} disabled={cancelling}>
                     {cancelling ? <HugeiconsIcon icon={Loading03Icon} className="subagent-activity-icon-spin" /> : <HugeiconsIcon icon={Cancel01Icon} />}

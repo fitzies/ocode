@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { locationForSession, reconcileWorkspaceLocation, shouldAutoOpenProjectResource } from "./workspace";
+import {
+  DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE,
+  isWorkspaceSidePaneVisible,
+  locationForSession,
+  projectResourceForCloseShortcut,
+  reconcileWorkspaceLocation,
+  shouldAutoOpenProjectResource,
+} from "./workspace";
 
 const projects = [
   { id: "project-a", name: "A", path: "/a" },
@@ -51,6 +58,39 @@ describe("workspace location", () => {
       sessions,
       "session-a",
     )).toEqual({ projectId: "project-b", sessionId: "session-b" });
+  });
+
+  it("treats every open right-side page as visible for the header toggle", () => {
+    const agents = {
+      ...DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE,
+      rightVisible: true,
+      mobileSurface: "resource" as const,
+      sidePage: "agents" as const,
+    };
+
+    expect(isWorkspaceSidePaneVisible(agents, false)).toBe(true);
+    expect(isWorkspaceSidePaneVisible(agents, true)).toBe(true);
+    expect(isWorkspaceSidePaneVisible({ ...agents, mobileSurface: "conversation" }, true)).toBe(false);
+  });
+
+  it("targets the active file before the thread for the close shortcut", () => {
+    const file = {
+      id: "README.md",
+      projectId: "project-a",
+      path: "README.md",
+      openedFrom: "picker" as const,
+    };
+    const files = {
+      ...DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE,
+      rightVisible: true,
+      sidePage: "files" as const,
+      resourceTabs: [file],
+      activeResourceId: file.id,
+    };
+
+    expect(projectResourceForCloseShortcut(files, false)).toBe(file);
+    expect(projectResourceForCloseShortcut({ ...files, rightVisible: false }, false)).toBeUndefined();
+    expect(projectResourceForCloseShortcut({ ...files, sidePage: "agents" }, false)).toBeUndefined();
   });
 
   it("checks live auto-open eligibility against the current location atomically", () => {

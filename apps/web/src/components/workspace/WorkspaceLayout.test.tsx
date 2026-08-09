@@ -73,4 +73,19 @@ describe("WorkspaceLayout", () => {
     expect(missingResource).toContain('data-mobile-surface="conversation"');
     expect(missingResource).toContain("<main>Conversation</main>");
   });
+
+  it("labels the mobile right surface for its active page", () => {
+    const agents = renderToStaticMarkup(
+      <WorkspaceLayout
+        isMobile
+        mobileSurface="resource"
+        mobileResourceTitle="Agents"
+        main={<main>Conversation</main>}
+        right={<div>Agent activity</div>}
+      />,
+    );
+
+    expect(agents).toContain("<strong>Agents</strong>");
+    expect(agents).not.toContain("<strong>Resource</strong>");
+  });
 });

@@ -221,6 +221,28 @@ describe("Anvil event reducer", () => {
       .toBe("2026-07-21T09:00:00.000Z");
   });
 
+  it("does not restore human activity from a user-role subagent completion", () => {
+    const legacy = createEmptySnapshot({ sessions: [{ ...session, updatedAt: "2026-07-21T09:30:00.000Z" }] });
+    legacy.timelines[session.id] = [{
+      id: "subagent-legacy",
+      kind: "message",
+      role: "user",
+      origin: {
+        type: "subagentCompletion",
+        runId: "run-1",
+        childSessionId: "child-1",
+        deliveryId: "subagent-completion:run-1",
+        role: "scout",
+        status: "completed",
+      },
+      content: [],
+      status: "complete",
+      createdAt: "2026-07-21T09:00:00.000Z",
+    }];
+
+    expect(restoreLegacyUserActivity(legacy).sessions[0]?.lastUserMessageAt).toBeUndefined();
+  });
+
   it("does not reorder or reset user activity for background run progress", () => {
     const background = {
       ...session,

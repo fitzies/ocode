@@ -71,6 +71,41 @@ describe("Timeline message actions", () => {
   });
 });
 
+describe("Timeline subagent completions", () => {
+  it("renders a parsed completion event instead of a user bubble", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          role: "user",
+          origin: {
+            type: "subagentCompletion",
+            runId: "run-review",
+            childSessionId: "child-review",
+            deliveryId: "subagent-completion:run-review",
+            role: "reviewer",
+            status: "completed",
+          },
+          content: [{
+            id: "subagent-result",
+            type: "text",
+            text: "[ocode reviewer subagent run-review completed]\nChild session: child-review\n\nFound **two race conditions**.",
+          }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("subagent-completion-message");
+    expect(html).toContain("Reviewer subagent");
+    expect(html).toContain("Found <strong>two race conditions</strong>.");
+    expect(html).not.toContain("user-message");
+    expect(html).not.toContain("[ocode reviewer subagent");
+    expect(html).not.toContain("Child session: child-review");
+  });
+});
+
 describe("Timeline markdown", () => {
   it("renders assistant Markdown as semantic HTML", () => {
     const html = renderToStaticMarkup(

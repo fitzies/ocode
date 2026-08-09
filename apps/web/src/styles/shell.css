@@ -1,4 +1,5 @@
 .workspace {
+  --workspace-pane-header-height: 63px;
   position: relative;
   display: flex;
   min-width: 0;

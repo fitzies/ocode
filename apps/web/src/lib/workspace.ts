@@ -6,6 +6,7 @@ export type WorkspaceLocation = {
 };
 
 export type MobileWorkspaceSurface = "conversation" | "terminal" | "resource";
+export type RightWorkspaceSurface = "agents" | "resource";
 
 export type ProjectResourceOpenSource = "tool" | "timeline" | "terminal";
 
@@ -20,6 +21,7 @@ export type ProjectWorkspaceSurfaceState = {
   mobileSurface: MobileWorkspaceSurface;
   resourceTabs: ProjectResourceTab[];
   activeResourceId: string | null;
+  activeRightSurface: RightWorkspaceSurface;
 };
 
 export const DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE: ProjectWorkspaceSurfaceState = {
@@ -28,6 +30,7 @@ export const DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE: ProjectWorkspaceSurfaceSta
   mobileSurface: "conversation",
   resourceTabs: [],
   activeResourceId: null,
+  activeRightSurface: "resource",
 };
 
 export function shouldAutoOpenProjectResource(

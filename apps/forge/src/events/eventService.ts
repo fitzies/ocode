@@ -164,6 +164,7 @@ export class ForgeEventService extends EventEmitter {
       queue: structuredClone(this.snapshot.queues[sessionId] ?? { steering: [], followUp: [] }),
       composerDraft: this.snapshot.composerDrafts[sessionId] ?? "",
       runState: this.snapshot.runStates[sessionId] ?? "idle",
+      subagents: structuredClone(this.snapshot.subagents[sessionId] ?? []),
     };
   }
 

@@ -109,6 +109,37 @@ describe("protocol runtime guards", () => {
     ).toBe(true);
   });
 
+  it("rejects invalid subagent usage at the event boundary", () => {
+    const base = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-subagent",
+      sequence: 1,
+      sessionId: "session-1",
+      timestamp: "2026-07-21T08:00:00.000Z",
+      type: "subagent.upserted",
+      payload: {
+        run: {
+          id: "workflow-1:0",
+          provider: "pi-subagents",
+          workflowId: "workflow-1",
+          index: 0,
+          key: "research",
+          agent: "researcher",
+          status: "completed",
+          startedAt: "2026-07-21T08:00:00.000Z",
+          updatedAt: "2026-07-21T08:00:01.000Z",
+          transcript: [],
+          receipts: [],
+          capabilities: { steer: false, interrupt: false, stop: false, resume: true },
+        },
+      },
+    };
+    expect(isAnvilEvent({ ...base, payload: { run: { ...base.payload.run, usage: { input: 1, output: 2, total: 3, cost: 0.01, turns: 1 } } } })).toBe(true);
+    expect(isAnvilEvent({ ...base, payload: { run: { ...base.payload.run, usage: { input: -1, output: 2, total: 1 } } } })).toBe(false);
+    expect(isAnvilEvent({ ...base, payload: { run: { ...base.payload.run, usage: { input: 1, output: 2, total: 3, cost: "free" } } } })).toBe(false);
+    expect(isAnvilEvent({ ...base, payload: { run: { ...base.payload.run, usage: { input: 1, output: 2, total: Number.POSITIVE_INFINITY } } } })).toBe(false);
+  });
+
   it("accepts durable project removal only at project scope", () => {
     const event = {
       protocolVersion: ANVIL_PROTOCOL_VERSION,
@@ -425,6 +456,7 @@ describe("protocol runtime guards", () => {
       queues: {},
       composerDrafts: {},
       runStates: {},
+      subagents: {},
       lastSequence: 0,
       sequenceGap: null,
     };
@@ -487,6 +519,7 @@ describe("protocol runtime guards", () => {
         queue: { steering: [], followUp: [] },
         composerDraft: "",
         runState: "idle",
+        subagents: [],
       },
     })).toBe(true);
     expect(isAnvilSummaryBootstrap({

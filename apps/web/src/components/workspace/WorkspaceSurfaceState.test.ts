@@ -24,6 +24,7 @@ describe("project workspace surface state", () => {
       mobileSurface: "terminal",
       resourceTabs: [],
       activeResourceId: null,
+      activeRightSurface: "resource",
     });
     expect(both["project-b"]).toEqual({
       bottomVisible: false,
@@ -31,6 +32,7 @@ describe("project workspace surface state", () => {
       mobileSurface: "resource",
       resourceTabs: [],
       activeResourceId: null,
+      activeRightSurface: "resource",
     });
   });
 
@@ -48,6 +50,7 @@ describe("project workspace surface state", () => {
       mobileSurface: "resource",
       resourceTabs: [],
       activeResourceId: null,
+      activeRightSurface: "resource",
     });
   });
 
@@ -79,5 +82,22 @@ describe("project workspace surface state", () => {
       mobileSurface: "conversation",
     });
     expect(states["project-b"]?.resourceTabs).toHaveLength(1);
+  });
+
+  it("keeps the shared right panel open when the agents surface owns it", () => {
+    let states = openProjectResourceInState({}, {
+      projectId: "project-a",
+      path: "src/main.ts",
+    }, "timeline");
+    states = updateProjectWorkspaceSurfaceState(states, "project-a", { activeRightSurface: "agents" });
+
+    states = closeProjectResourceInState(states, "project-a", "src/main.ts");
+
+    expect(states["project-a"]).toMatchObject({
+      resourceTabs: [],
+      activeRightSurface: "agents",
+      rightVisible: true,
+      mobileSurface: "resource",
+    });
   });
 });

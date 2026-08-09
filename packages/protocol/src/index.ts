@@ -14,7 +14,7 @@ export * from "./askUserQuestion.js";
 export * from "@anvil/protocol/resources";
 export * from "@anvil/protocol/terminal";
 
-export const ANVIL_PROTOCOL_VERSION = 10 as const;
+export const ANVIL_PROTOCOL_VERSION = 11 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
 
 export type ConnectionState = "connected" | "reconnecting" | "offline";
@@ -459,6 +459,72 @@ export interface SessionQueue {
   followUp: string[];
 }
 
+export type SubagentRunStatus = "queued" | "running" | "paused" | "completed" | "failed" | "cancelled" | "rejected";
+export type SubagentRunMode = "single" | "parallel" | "chain" | "workflow";
+export type SubagentCommandKind = "steer" | "interrupt" | "stop" | "resume";
+export type SubagentCommandState = "requested" | "scheduled" | "pending" | "delivered" | "partial" | "recovered" | "failed";
+
+export interface SubagentUsage {
+  input: number;
+  output: number;
+  total: number;
+  cost?: number;
+  turns?: number;
+}
+
+export interface SubagentTranscriptEntry {
+  id: string;
+  timestamp: string;
+  type: "message" | "tool" | "status";
+  role?: "assistant" | "user" | "system";
+  text?: string;
+  toolName?: string;
+  toolCallId?: string;
+  status?: "running" | "completed" | "failed";
+}
+
+export interface SubagentCommandReceipt {
+  id: string;
+  kind: SubagentCommandKind;
+  state: SubagentCommandState;
+  requestedAt: string;
+  updatedAt: string;
+  message?: string;
+  error?: string;
+  providerRequestId?: string;
+}
+
+export interface SubagentRun {
+  id: string;
+  provider: "pi-subagents";
+  workflowId: string;
+  providerRunId?: string;
+  mode?: SubagentRunMode;
+  index: number;
+  key: string;
+  agent: string;
+  role?: string;
+  task?: string;
+  status: SubagentRunStatus;
+  startedAt: string;
+  updatedAt: string;
+  endedAt?: string;
+  model?: string;
+  thinking?: string;
+  usage?: SubagentUsage;
+  currentActivity?: string;
+  response?: string;
+  error?: string;
+  transcript: SubagentTranscriptEntry[];
+  receipts: SubagentCommandReceipt[];
+  capabilities: {
+    steer: boolean;
+    interrupt: boolean;
+    stop: boolean;
+    resume: boolean;
+  };
+}
+
 export interface SequenceGap {
   expected: number;
   received: number;
@@ -482,6 +548,7 @@ export interface AnvilSnapshot {
   queues: Record<string, SessionQueue>;
   composerDrafts: Record<string, string>;
   runStates: Record<string, DurableRunState>;
+  subagents: Record<string, SubagentRun[]>;
   lastSequence: number;
   sequenceGap: SequenceGap | null;
 }
@@ -515,6 +582,7 @@ export interface AnvilSessionDetail {
   queue: SessionQueue;
   composerDraft: string;
   runState: DurableRunState;
+  subagents: SubagentRun[];
 }
 
 export type AnvilSessionDetailSync =
@@ -640,6 +708,8 @@ export type AnvilEvent =
     >
   | AnvilEventBase<"composer.prefill", { text: string }>
   | AnvilEventBase<"queue.updated", SessionQueue>
+  | AnvilEventBase<"subagent.upserted", { run: SubagentRun }>
+  | AnvilEventBase<"subagent.command.updated", { runId: string; receipt: SubagentCommandReceipt }>
   | AnvilEventBase<"unknown", { eventType: string; payload: JsonValue }>;
 
 export type PromptDelivery = "prompt" | "steer" | "followUp";
@@ -704,7 +774,12 @@ export type AnvilClientCommand =
   | AnvilCommandBase<"run.cancel", Record<string, never>>
   | AnvilCommandBase<"model.set", { modelId: string }>
   | AnvilCommandBase<"thinking.set", { level: ThinkingLevel }>
-  | AnvilCommandBase<"interaction.respond", InteractionResponse>;
+  | AnvilCommandBase<"interaction.respond", InteractionResponse>
+  | AnvilCommandBase<"subagent.refresh", Record<string, never>>
+  | AnvilCommandBase<"subagent.steer", { runId: string; message: string }>
+  | AnvilCommandBase<"subagent.interrupt", { runId: string }>
+  | AnvilCommandBase<"subagent.stop", { runId: string }>
+  | AnvilCommandBase<"subagent.resume", { runId: string; message: string }>;
 
 export interface AnvilCommandResponse {
   protocolVersion: ProtocolVersion;
@@ -747,6 +822,8 @@ const ANVIL_EVENT_TYPES = new Set<AnvilEvent["type"]>([
   "extension.widget",
   "composer.prefill",
   "queue.updated",
+  "subagent.upserted",
+  "subagent.command.updated",
   "unknown",
 ]);
 
@@ -864,6 +941,57 @@ function isExtensionWidget(value: unknown): boolean {
 
 function isSessionQueue(value: unknown): boolean {
   return isRecord(value) && isStringArray(value.steering) && isStringArray(value.followUp);
+}
+
+function isSubagentCommandReceipt(value: unknown): boolean {
+  return isRecord(value) &&
+    hasStrings(value, "id", "kind", "state", "requestedAt", "updatedAt") &&
+    ["steer", "interrupt", "stop", "resume"].includes(String(value.kind)) &&
+    ["requested", "scheduled", "pending", "delivered", "partial", "recovered", "failed"].includes(String(value.state)) &&
+    (value.message === undefined || typeof value.message === "string") &&
+    (value.error === undefined || typeof value.error === "string") &&
+    (value.providerRequestId === undefined || typeof value.providerRequestId === "string");
+}
+
+function isSubagentTranscriptEntry(value: unknown): boolean {
+  return isRecord(value) &&
+    hasStrings(value, "id", "timestamp", "type") &&
+    ["message", "tool", "status"].includes(String(value.type)) &&
+    (value.role === undefined || ["assistant", "user", "system"].includes(String(value.role))) &&
+    (value.text === undefined || typeof value.text === "string") &&
+    (value.toolName === undefined || typeof value.toolName === "string") &&
+    (value.toolCallId === undefined || typeof value.toolCallId === "string") &&
+    (value.status === undefined || ["running", "completed", "failed"].includes(String(value.status)));
+}
+
+function isSubagentUsage(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const nonNegativeNumber = (candidate: unknown) => typeof candidate === "number" && Number.isFinite(candidate) && candidate >= 0;
+  return ["input", "output", "total"].every((key) => nonNegativeNumber(value[key])) &&
+    (value.cost === undefined || nonNegativeNumber(value.cost)) &&
+    (value.turns === undefined || (Number.isSafeInteger(value.turns) && Number(value.turns) >= 0));
+}
+
+function isSubagentRun(value: unknown): value is SubagentRun {
+  return isRecord(value) &&
+    value.provider === "pi-subagents" &&
+    hasStrings(value, "id", "workflowId", "key", "agent", "status", "startedAt", "updatedAt") &&
+    Number.isSafeInteger(value.index) && Number(value.index) >= 0 &&
+    ["queued", "running", "paused", "completed", "failed", "cancelled", "rejected"].includes(String(value.status)) &&
+    (value.providerRunId === undefined || typeof value.providerRunId === "string") &&
+    (value.mode === undefined || ["single", "parallel", "chain", "workflow"].includes(String(value.mode))) &&
+    (value.role === undefined || typeof value.role === "string") &&
+    (value.task === undefined || typeof value.task === "string") &&
+    (value.endedAt === undefined || typeof value.endedAt === "string") &&
+    (value.model === undefined || typeof value.model === "string") &&
+    (value.thinking === undefined || typeof value.thinking === "string") &&
+    (value.currentActivity === undefined || typeof value.currentActivity === "string") &&
+    (value.response === undefined || typeof value.response === "string") &&
+    (value.error === undefined || typeof value.error === "string") &&
+    (value.usage === undefined || isSubagentUsage(value.usage)) &&
+    Array.isArray(value.transcript) && value.transcript.every(isSubagentTranscriptEntry) &&
+    Array.isArray(value.receipts) && value.receipts.every(isSubagentCommandReceipt) &&
+    isRecord(value.capabilities) && ["steer", "interrupt", "stop", "resume"].every((key) => typeof (value.capabilities as Record<string, unknown>)[key] === "boolean");
 }
 
 function isProjectSummary(value: unknown): value is ProjectSummary {
@@ -985,6 +1113,10 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
       return hasStrings(value, "text");
     case "queue.updated":
       return Array.isArray(value.steering) && Array.isArray(value.followUp);
+    case "subagent.upserted":
+      return isSubagentRun(value.run);
+    case "subagent.command.updated":
+      return hasStrings(value, "runId") && isSubagentCommandReceipt(value.receipt);
     case "unknown":
       return hasStrings(value, "eventType") && isJsonValue(value.payload);
   }
@@ -1095,6 +1227,14 @@ export function isAnvilClientCommand(value: unknown): value is AnvilClientComman
         (payload.value === undefined || isJsonValue(payload.value)) &&
         (payload.confirmed === undefined || typeof payload.confirmed === "boolean") &&
         (payload.cancelled === undefined || typeof payload.cancelled === "boolean");
+    case "subagent.refresh":
+      return typeof value.sessionId === "string" && Object.keys(payload).length === 0;
+    case "subagent.steer":
+    case "subagent.resume":
+      return typeof value.sessionId === "string" && hasStrings(payload, "runId", "message") && Boolean(String(payload.message).trim());
+    case "subagent.interrupt":
+    case "subagent.stop":
+      return typeof value.sessionId === "string" && hasStrings(payload, "runId");
     default:
       return false;
   }
@@ -1121,6 +1261,9 @@ export function isAnvilSnapshot(value: unknown): value is AnvilSnapshot {
     isRecord(value.composerDrafts) && Object.values(value.composerDrafts).every((draft) => typeof draft === "string") &&
     isRecord(value.runStates) && Object.values(value.runStates).every(
       (state) => ["idle", "running", "failed"].includes(String(state))
+    ) &&
+    isRecord(value.subagents) && Object.values(value.subagents).every(
+      (runs) => Array.isArray(runs) && runs.every(isSubagentRun)
     ) &&
     Number.isSafeInteger(value.lastSequence) && Number(value.lastSequence) >= 0 &&
     (value.sequenceGap === null ||
@@ -1179,7 +1322,8 @@ export function isAnvilSessionDetail(value: unknown): value is AnvilSessionDetai
     ) &&
     isSessionQueue(value.queue) &&
     typeof value.composerDraft === "string" &&
-    ["idle", "running", "failed"].includes(String(value.runState));
+    ["idle", "running", "failed"].includes(String(value.runState)) &&
+    Array.isArray(value.subagents) && value.subagents.every(isSubagentRun);
 }
 
 export function isAnvilSessionDetailSync(value: unknown): value is AnvilSessionDetailSync {

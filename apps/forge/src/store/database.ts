@@ -55,18 +55,20 @@ function upgradeStoredResourceBlocks(value: unknown): unknown {
 
 function upgradeStoredSnapshotProtocol(value: unknown): unknown {
   if (
-    Number(ANVIL_PROTOCOL_VERSION) === 10 &&
+    Number(ANVIL_PROTOCOL_VERSION) === 11 &&
     typeof value === "object" &&
     value !== null &&
     !Array.isArray(value) &&
-    [5, 6, 7, 8, 9].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
+    [5, 6, 7, 8, 9, 10].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
   ) {
-    // Protocols 7–10 add strict session-relative project resources, Forge-owned
-    // read cursors, root-owned project creation, and project removal. Snapshots upgrade structurally.
-    return upgradeStoredResourceBlocks({
+    // Protocols 7–11 add strict session-relative project resources, Forge-owned
+    // read cursors, root-owned project creation/removal, and durable subagent projections.
+    const upgraded = upgradeStoredResourceBlocks({
       ...(value as Record<string, unknown>),
       protocolVersion: ANVIL_PROTOCOL_VERSION,
-    });
+    }) as Record<string, unknown>;
+    if (upgraded.subagents === undefined) upgraded.subagents = {};
+    return upgraded;
   }
   return value;
 }

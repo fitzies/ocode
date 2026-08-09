@@ -5,8 +5,11 @@ import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { SandboxedHtmlPreview } from "@/components/InlineHtmlArtifact";
+import { SubagentActivityPanel } from "@/components/SubagentActivityPanel";
 import { Button } from "@/components/ui/button";
 import { useWorkspaceSurfaces } from "@/components/workspace/WorkspaceSurfaceState";
+import type { SubagentActivity } from "@/lib/subagentActivity";
+import type { SubagentCommandReceipt } from "@anvil/protocol";
 import type { ProjectResourceTab } from "@/lib/workspace";
 import { ProjectImageViewer } from "./ProjectImageViewer";
 import { isCurrentResourceRequest, revalidateProjectResource, type ResourceReadyState } from "./resourceLoader";
@@ -129,34 +132,84 @@ export function ProjectResource({ tab }: { tab: ProjectResourceTab }) {
   );
 }
 
-export function ProjectResourceSurface({ projectId }: { projectId: string }) {
-  const { state, selectProjectResource, closeProjectResource, setRightVisible } = useWorkspaceSurfaces();
+export function ProjectResourceSurface({
+  projectId,
+  sessionId,
+  subagents,
+  onRefreshSubagents,
+  onSteerSubagent,
+  onInterruptSubagent,
+  onStopSubagent,
+  onResumeSubagent,
+}: {
+  projectId: string;
+  sessionId: string | null;
+  subagents: SubagentActivity;
+  onRefreshSubagents(sessionId: string): Promise<void>;
+  onSteerSubagent(sessionId: string, runId: string, message: string): Promise<SubagentCommandReceipt | undefined>;
+  onInterruptSubagent(sessionId: string, runId: string): Promise<SubagentCommandReceipt | undefined>;
+  onStopSubagent(sessionId: string, runId: string): Promise<SubagentCommandReceipt | undefined>;
+  onResumeSubagent(sessionId: string, runId: string, message: string): Promise<SubagentCommandReceipt | undefined>;
+}) {
+  const {
+    state,
+    openSubagents,
+    selectProjectResource,
+    closeProjectResource,
+    setRightVisible,
+  } = useWorkspaceSurfaces();
   const [refreshGeneration, setRefreshGeneration] = useState(0);
-  const active = state.resourceTabs.find((tab) => tab.id === state.activeResourceId) ?? state.resourceTabs[0];
-  if (!active) return null;
+  const activeResource = state.resourceTabs.find((tab) => tab.id === state.activeResourceId) ?? state.resourceTabs[0];
+  const showingAgents = state.activeRightSurface === "agents";
+  if (!showingAgents && !activeResource) return null;
 
   return (
-    <section className="project-resource-surface" aria-label={`Resources for ${projectId}`}>
+    <section className="project-resource-surface" aria-label={`Workspace panel for ${projectId}`}>
       <header className="project-resource-header">
-        <nav className="project-resource-tabs" aria-label="Open resources">
-          {state.resourceTabs.map((tab) => (
-            <div className={tab.id === active.id ? "project-resource-tab project-resource-tab--active" : "project-resource-tab"} key={tab.id}>
-              <button type="button" aria-current={tab.id === active.id ? "page" : undefined} title={tab.path} onClick={() => selectProjectResource(tab.id)}>{tab.path.split("/").at(-1)}</button>
-              <button type="button" aria-label={`Close ${tab.path}`} onClick={() => closeProjectResource(tab.id)}>
-                <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+        <nav className="project-resource-tabs" aria-label="Open workspace panels">
+          {(subagents.items.length > 0 || showingAgents) && (
+            <div className={showingAgents ? "project-resource-tab project-resource-tab--active project-resource-tab--agents" : "project-resource-tab project-resource-tab--agents"}>
+              <button type="button" aria-current={showingAgents ? "page" : undefined} onClick={openSubagents}>
+                <span className={subagents.active > 0 ? "project-resource-agent-dot project-resource-agent-dot--active" : "project-resource-agent-dot"} aria-hidden="true" />
+                Agents{subagents.items.length > 0 && <small>{subagents.items.length}</small>}
               </button>
             </div>
-          ))}
+          )}
+          {state.resourceTabs.map((tab) => {
+            const selected = !showingAgents && tab.id === activeResource?.id;
+            return (
+              <div className={selected ? "project-resource-tab project-resource-tab--active" : "project-resource-tab"} key={tab.id}>
+                <button type="button" aria-current={selected ? "page" : undefined} title={tab.path} onClick={() => selectProjectResource(tab.id)}>{tab.path.split("/").at(-1)}</button>
+                <button type="button" aria-label={`Close ${tab.path}`} onClick={() => closeProjectResource(tab.id)}>
+                  <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+                </button>
+              </div>
+            );
+          })}
         </nav>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label={`Refresh ${active.path}`} onClick={() => setRefreshGeneration((value) => value + 1)}>
-          <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-        </Button>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label="Close resource surface" onClick={() => setRightVisible(false)}>
+        {showingAgents && sessionId && (
+          <Button type="button" variant="ghost" size="icon-sm" aria-label="Refresh agents" onClick={() => void onRefreshSubagents(sessionId)}>
+            <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+          </Button>
+        )}
+        {!showingAgents && activeResource && (
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={`Refresh ${activeResource.path}`} onClick={() => setRefreshGeneration((value) => value + 1)}>
+            <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+          </Button>
+        )}
+        <Button type="button" variant="ghost" size="icon-sm" aria-label="Close workspace panel" onClick={() => setRightVisible(false)}>
           <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
         </Button>
       </header>
       <main className="project-resource-viewer">
-        <ProjectResource key={`${active.projectId}:${active.id}:${refreshGeneration}`} tab={active} />
+        {showingAgents
+          ? <SubagentActivityPanel activity={subagents} controls={{
+              onSteer: (runId, message) => sessionId ? onSteerSubagent(sessionId, runId, message) : Promise.resolve(undefined),
+              onInterrupt: (runId) => sessionId ? onInterruptSubagent(sessionId, runId) : Promise.resolve(undefined),
+              onStop: (runId) => sessionId ? onStopSubagent(sessionId, runId) : Promise.resolve(undefined),
+              onResume: (runId, message) => sessionId ? onResumeSubagent(sessionId, runId, message) : Promise.resolve(undefined),
+            }} />
+          : activeResource && <ProjectResource key={`${activeResource.projectId}:${activeResource.id}:${refreshGeneration}`} tab={activeResource} />}
       </main>
     </section>
   );

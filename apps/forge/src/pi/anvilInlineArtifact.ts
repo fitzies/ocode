@@ -14,6 +14,7 @@ import {
 import { Type } from "typebox";
 
 import { secureOpenProjectPath } from "../files/secureProjectPath.ts";
+import { registerPiSubagentsBridge, type PiSubagentsBridgeApi } from "./piSubagentsBridge.ts";
 
 const MAX_INLINE_HTML_BYTES = 192 * 1024;
 const MAX_OPEN_FILE_BYTES = 20 * 1024 * 1024;
@@ -54,7 +55,7 @@ interface ToolDefinition {
   }>;
 }
 
-interface ExtensionApi {
+interface ExtensionApi extends PiSubagentsBridgeApi {
   registerTool(definition: ToolDefinition): void;
   on(event: "session_start", handler: () => void): void;
 }
@@ -237,6 +238,7 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 export default function anvilInlineArtifact(pi: ExtensionApi): void {
+  registerPiSubagentsBridge(pi);
   pi.registerTool({
     name: TOOL_NAME,
     label: "Render HTML artifact",

@@ -11,19 +11,41 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 
 import anvilInlineArtifact from "./anvilInlineArtifact.ts";
+import { OCODE_SUBAGENT_RPC_COMMAND, OCODE_SUBAGENT_RPC_REPLY_ENTRY } from "./piSubagentsBridge.ts";
 
-type Tool = Parameters<Parameters<typeof anvilInlineArtifact>[0]["registerTool"]>[0];
+type Extension = Parameters<typeof anvilInlineArtifact>[0];
+type Tool = Parameters<Extension["registerTool"]>[0];
+type Command = Parameters<Extension["registerCommand"]>[1];
 let directory: string | undefined;
 
 function toolHarness() {
   const registered = new Map<string, Tool>();
+  const commands = new Map<string, Command>();
+  const appended: Array<{ customType: string; data?: unknown }> = [];
+  const eventHandlers = new Map<string, Set<(data: unknown) => void>>();
   const sessionStartHandlers: Array<() => void> = [];
+  const onEvent = (event: string, handler: (data: unknown) => void) => {
+    const handlers = eventHandlers.get(event) ?? new Set();
+    handlers.add(handler);
+    eventHandlers.set(event, handlers);
+    return () => handlers.delete(handler);
+  };
+  const emitEvent = (event: string, data: unknown) => {
+    for (const handler of eventHandlers.get(event) ?? []) handler(data);
+  };
   anvilInlineArtifact({
     registerTool: (definition) => registered.set(definition.name, definition),
+    registerCommand: (name, definition) => commands.set(name, definition),
+    appendEntry: (customType, data) => appended.push({ customType, data }),
+    events: { on: onEvent, emit: emitEvent },
     on: (_event, handler) => sessionStartHandlers.push(handler),
   });
   return {
     registered,
+    commands,
+    appended,
+    onEvent,
+    emitEvent,
     startSession: () => sessionStartHandlers.forEach((handler) => handler()),
   };
 }
@@ -40,6 +62,50 @@ afterEach(() => {
 });
 
 describe("bundled ocode Pi extension", () => {
+  it("bridges bounded extension commands to the pi-subagents event RPC without involving the model", async () => {
+    const harness = toolHarness();
+    harness.onEvent("subagents:rpc:v1:request", (payload) => {
+      const request = payload as { requestId: string; source?: unknown };
+      expect(request.source).toEqual({ extension: "ocode" });
+      queueMicrotask(() => harness.emitEvent(`subagents:rpc:v1:reply:${request.requestId}`, {
+        version: 1,
+        requestId: request.requestId,
+        method: "ping",
+        success: true,
+        data: { version: 1 },
+      }));
+    });
+
+    const request = { version: 1, requestId: "request-1", method: "ping", params: {} };
+    const encoded = Buffer.from(JSON.stringify(request)).toString("base64url");
+    const command = harness.commands.get(OCODE_SUBAGENT_RPC_COMMAND);
+    expect(command).toBeDefined();
+    await command!.handler(encoded);
+
+    expect(harness.appended).toEqual([{
+      customType: OCODE_SUBAGENT_RPC_REPLY_ENTRY,
+      data: { version: 1, requestId: "request-1", method: "ping", success: true, data: { version: 1 } },
+    }]);
+  });
+
+  it("rejects malformed subagent bridge commands before emitting package RPC", async () => {
+    const harness = toolHarness();
+    let requests = 0;
+    harness.onEvent("subagents:rpc:v1:request", () => requests++);
+
+    await harness.commands.get(OCODE_SUBAGENT_RPC_COMMAND)!.handler("not valid base64url!");
+
+    expect(requests).toBe(0);
+    expect(harness.appended).toEqual([{
+      customType: OCODE_SUBAGENT_RPC_REPLY_ENTRY,
+      data: expect.objectContaining({
+        requestId: "unknown",
+        success: false,
+        error: expect.objectContaining({ code: "invalid_request" }),
+      }),
+    }]);
+  });
+
   it("defers the ask_user_question override until session start", () => {
     const harness = toolHarness();
     expect([...harness.registered.keys()]).toEqual(["ocode_render_html_file", "ocode_open_file"]);

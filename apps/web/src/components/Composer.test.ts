@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { WorkspaceSurfaceProvider } from "@/components/workspace/WorkspaceSurfaceState";
 import type { SubagentActivity } from "../lib/subagentActivity";
 import { Composer, activeFileMention, isFileDrag, nextThinkingLevel, selectAnvilModels, updateComposerDraft } from "./Composer";
 
@@ -23,7 +24,9 @@ function renderComposer(modelsReady: boolean, options: {
   creationError?: string;
   subagents?: SubagentActivity;
 } = {}): string {
-  return renderToStaticMarkup(createElement(TooltipProvider, null, createElement(Composer, {
+  return renderToStaticMarkup(createElement(TooltipProvider, null, createElement(WorkspaceSurfaceProvider, {
+    projectId: "project-1",
+    children: createElement(Composer, {
     sessionId: "session-1",
     modelId: "unknown",
     thinkingLevel: "off",
@@ -49,6 +52,7 @@ function renderComposer(modelsReady: boolean, options: {
     onModelChange: () => undefined,
     onThinkingLevelChange: () => undefined,
     onSend: () => undefined,
+  }),
   })));
 }
 

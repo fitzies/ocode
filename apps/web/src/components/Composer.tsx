@@ -35,7 +35,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DeliveryMode, WorkspaceFile } from "../lib/anvilClient";
 import type { SubagentActivity } from "../lib/subagentActivity";
-import { SubagentActivityPopover } from "./SubagentActivityPopover";
+import { SubagentActivityTrigger } from "./SubagentActivityTrigger";
 
 export interface ComposerAttachment {
   id: string;
@@ -698,7 +698,7 @@ export function Composer({
         <span className="composer-status-workspace">
           {workspaceKind === "general" ? "home workspace" : workspaceKind === "worktree" ? "worktree" : "main workspace"}
         </span>
-        <SubagentActivityPopover activity={subagents} />
+        <SubagentActivityTrigger activity={subagents} />
       </div>
     </div>
   );

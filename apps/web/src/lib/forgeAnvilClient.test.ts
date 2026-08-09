@@ -135,6 +135,7 @@ describe("ForgeAnvilClient", () => {
             queue: { steering: [], followUp: [] },
             composerDraft: "",
             runState: "running",
+            subagents: [],
           },
         }));
       }
@@ -209,6 +210,7 @@ describe("ForgeAnvilClient", () => {
         queue: { steering: [], followUp: [] },
         composerDraft: "",
         runState: "idle",
+        subagents: [],
       },
     }));
     const fetcher = async (input: RequestInfo | URL) => {

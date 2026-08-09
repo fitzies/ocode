@@ -102,6 +102,42 @@ describe("Anvil event reducer", () => {
     expect(isAnvilSnapshot(snapshot)).toBe(true);
   });
 
+  it("persists normalized subagent runs and correlated command receipts", () => {
+    let snapshot = createEmptySnapshot({ sessions: [session] });
+    const run = {
+      id: "workflow-1:0",
+      provider: "pi-subagents" as const,
+      workflowId: "workflow-1",
+      index: 0,
+      key: "research",
+      agent: "researcher",
+      status: "running" as const,
+      startedAt: "2026-07-21T09:00:01.000Z",
+      updatedAt: "2026-07-21T09:00:01.000Z",
+      transcript: [],
+      receipts: [],
+      capabilities: { steer: true, interrupt: true, stop: true, resume: false },
+    };
+    snapshot = applyAnvilEvent(snapshot, event(1, "subagent.upserted", { run }));
+    snapshot = applyAnvilEvent(snapshot, event(2, "subagent.command.updated", {
+      runId: run.id,
+      receipt: {
+        id: "command-1",
+        kind: "steer",
+        state: "scheduled",
+        requestedAt: "2026-07-21T09:00:02.000Z",
+        updatedAt: "2026-07-21T09:00:02.000Z",
+        message: "Focus on reconnect behavior",
+      },
+    }));
+
+    expect(snapshot.subagents[session.id]?.[0]).toMatchObject({
+      id: run.id,
+      receipts: [{ id: "command-1", state: "scheduled" }],
+    });
+    expect(isAnvilSnapshot(snapshot)).toBe(true);
+  });
+
   it("signals sequence gaps instead of discarding late events", () => {
     let snapshot = createEmptySnapshot({ sessions: [session] });
     const delta = event(2, "message.delta", { messageId: "assistant-1", blockId: "text-1", delta: "late" });

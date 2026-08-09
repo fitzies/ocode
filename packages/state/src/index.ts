@@ -45,6 +45,7 @@ export function createEmptySnapshot(input?: {
         session.status === "running" ? "running" : session.status === "failed" ? "failed" : "idle",
       ]),
     ),
+    subagents: Object.fromEntries(sessions.map((session) => [session.id, []])),
     lastSequence: 0,
     sequenceGap: null,
   };
@@ -126,6 +127,7 @@ export function removeProjectFromSnapshot(snapshot: AnvilSnapshot, projectId: st
     queues: withoutKeys(snapshot.queues, sessionIds),
     composerDrafts: withoutKeys(snapshot.composerDrafts, sessionIds),
     runStates: withoutKeys(snapshot.runStates, sessionIds),
+    subagents: withoutKeys(snapshot.subagents, sessionIds),
   };
 }
 
@@ -258,6 +260,7 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
           [session.id]: snapshot.catalogs[session.id] ?? EMPTY_CATALOG,
         },
         runStates: { ...snapshot.runStates, [session.id]: runState },
+        subagents: { ...snapshot.subagents, [session.id]: snapshot.subagents[session.id] ?? [] },
       };
     }
     case "session.deleted": {
@@ -281,6 +284,7 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
         queues: withoutKey(snapshot.queues, sessionId),
         composerDrafts: withoutKey(snapshot.composerDrafts, sessionId),
         runStates: withoutKey(snapshot.runStates, sessionId),
+        subagents: withoutKey(snapshot.subagents, sessionId),
       };
     }
     case "session.settled": {
@@ -679,6 +683,40 @@ export function applyAnvilEvent(snapshot: AnvilSnapshot, event: AnvilEvent): Anv
         queues: { ...snapshot.queues, [event.sessionId]: event.payload },
       };
     }
+    case "subagent.upserted": {
+      if (!event.sessionId) return next;
+      const runs = snapshot.subagents[event.sessionId] ?? [];
+      const exists = runs.some((run) => run.id === event.payload.run.id);
+      return {
+        ...next,
+        subagents: {
+          ...snapshot.subagents,
+          [event.sessionId]: exists
+            ? runs.map((run) => run.id === event.payload.run.id ? event.payload.run : run)
+            : [...runs, event.payload.run],
+        },
+      };
+    }
+    case "subagent.command.updated": {
+      if (!event.sessionId) return next;
+      const runs = snapshot.subagents[event.sessionId] ?? [];
+      return {
+        ...next,
+        subagents: {
+          ...snapshot.subagents,
+          [event.sessionId]: runs.map((run) => {
+            if (run.id !== event.payload.runId) return run;
+            const exists = run.receipts.some((receipt) => receipt.id === event.payload.receipt.id);
+            return {
+              ...run,
+              receipts: exists
+                ? run.receipts.map((receipt) => receipt.id === event.payload.receipt.id ? event.payload.receipt : receipt)
+                : [...run.receipts, event.payload.receipt],
+            };
+          }),
+        },
+      };
+    }
     case "unknown": {
       if (!event.sessionId) return next;
       return {
@@ -727,6 +765,7 @@ export function resetSessionState(snapshot: AnvilSnapshot, sessionId: string): A
     queues: { ...snapshot.queues, [sessionId]: { steering: [], followUp: [] } },
     composerDrafts: { ...snapshot.composerDrafts, [sessionId]: "" },
     runStates: { ...snapshot.runStates, [sessionId]: "idle" },
+    subagents: { ...snapshot.subagents, [sessionId]: [] },
   };
 }
 
@@ -752,6 +791,9 @@ export function reconcileSnapshotAndTail(
     pendingInteractions: [...incoming.pendingInteractions],
     extensionStatuses: [...incoming.extensionStatuses],
     widgets: [...incoming.widgets],
+    subagents: Object.fromEntries(
+      Object.entries(incoming.subagents).map(([sessionId, runs]) => [sessionId, structuredClone(runs)]),
+    ),
     sequenceGap: null,
   };
   return applyAnvilEvents(restored, tail);

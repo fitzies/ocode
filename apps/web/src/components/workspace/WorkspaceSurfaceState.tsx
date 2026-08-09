@@ -52,6 +52,7 @@ export function openProjectResourceInState(
   return updateProjectWorkspaceSurfaceState(states, reference.projectId, {
     resourceTabs,
     activeResourceId: id,
+    activeRightSurface: "resource",
     rightVisible: true,
     mobileSurface: "resource",
   });
@@ -69,10 +70,11 @@ export function closeProjectResourceInState(
   const activeResourceId = current.activeResourceId === resourceId
     ? resourceTabs[Math.min(index, resourceTabs.length - 1)]?.id ?? null
     : current.activeResourceId;
+  const closeSurface = !resourceTabs.length && current.activeRightSurface === "resource";
   return updateProjectWorkspaceSurfaceState(states, projectId, {
     resourceTabs,
     activeResourceId,
-    ...(!resourceTabs.length ? { rightVisible: false, mobileSurface: "conversation" as const } : {}),
+    ...(closeSurface ? { rightVisible: false, mobileSurface: "conversation" as const } : {}),
   });
 }
 
@@ -83,6 +85,7 @@ type WorkspaceSurfaceContextValue = {
   setRightVisible(visible: boolean): void;
   setMobileSurface(surface: MobileWorkspaceSurface): void;
   openProjectResource(reference: ProjectResourceReference, source: ProjectResourceOpenSource): void;
+  openSubagents(): void;
   selectProjectResource(resourceId: string): void;
   closeProjectResource(resourceId: string): void;
 };
@@ -123,8 +126,14 @@ export function WorkspaceSurfaceProvider({
     openProjectResource: (reference, source) => {
       setStates((current) => openProjectResourceInState(current, reference, source));
     },
+    openSubagents: () => update({
+      activeRightSurface: "agents",
+      rightVisible: true,
+      mobileSurface: "resource",
+    }),
     selectProjectResource: (resourceId) => update({
       activeResourceId: resourceId,
+      activeRightSurface: "resource",
       rightVisible: true,
       mobileSurface: "resource",
     }),

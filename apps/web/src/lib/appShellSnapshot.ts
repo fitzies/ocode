@@ -13,6 +13,7 @@ export type AppShellSnapshot = Pick<
   | "widgets"
   | "queues"
   | "composerDrafts"
+  | "subagents"
   | "connection"
   | "sequenceGap"
   | "clientError"
@@ -50,6 +51,7 @@ export function selectAppShellSnapshot(snapshot: AnvilClientSnapshot): AppShellS
       : [],
     queues: sessionId ? { [sessionId]: snapshot.queues[sessionId] ?? EMPTY_QUEUE } : {},
     composerDrafts: sessionId ? { [sessionId]: snapshot.composerDrafts[sessionId] ?? "" } : {},
+    subagents: sessionId ? { [sessionId]: snapshot.subagents[sessionId] ?? [] } : {},
     connection: snapshot.connection,
     sequenceGap: snapshot.sequenceGap,
     clientError: snapshot.clientError,
@@ -83,6 +85,7 @@ export function equalAppShellSnapshots(left: AppShellSnapshot, right: AppShellSn
     left.catalogs[leftSessionId] === right.catalogs[rightSessionId!] &&
     left.queues[leftSessionId] === right.queues[rightSessionId!] &&
     left.composerDrafts[leftSessionId] === right.composerDrafts[rightSessionId!] &&
+    left.subagents[leftSessionId] === right.subagents[rightSessionId!] &&
     sameItems(left.pendingInteractions, right.pendingInteractions) &&
     sameItems(left.extensionStatuses, right.extensionStatuses) &&
     sameItems(left.widgets, right.widgets) &&

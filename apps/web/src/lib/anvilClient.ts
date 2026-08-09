@@ -22,6 +22,7 @@ import {
   type JsonValue,
   type ProjectResourceContentBlock,
   type SessionSummary,
+  type SubagentCommandReceipt,
   type ThinkingLevel,
   type TimelineEntry,
 } from "@anvil/protocol";
@@ -119,6 +120,11 @@ export interface AnvilClient {
   setModel(sessionId: string, modelId: string): void;
   setThinkingLevel(sessionId: string, level: ThinkingLevel): void;
   respondToInteraction(response: InteractionResponse): void;
+  refreshSubagents(sessionId: string): Promise<void>;
+  steerSubagent(sessionId: string, runId: string, message: string): Promise<SubagentCommandReceipt | undefined>;
+  interruptSubagent(sessionId: string, runId: string): Promise<SubagentCommandReceipt | undefined>;
+  stopSubagent(sessionId: string, runId: string): Promise<SubagentCommandReceipt | undefined>;
+  resumeSubagent(sessionId: string, runId: string, message: string): Promise<SubagentCommandReceipt | undefined>;
   clearClientError(): void;
   clearComposerDraft(sessionId: string): void;
   isSessionPending(sessionId: string): boolean;
@@ -218,6 +224,7 @@ function addOptimisticSession<TSnapshot extends AnvilSnapshot>(
       [session.id]: snapshot.queues[session.id] ?? { steering: [], followUp: [] },
     },
     runStates: { ...snapshot.runStates, [session.id]: snapshot.runStates[session.id] ?? "idle" },
+    subagents: { ...snapshot.subagents, [session.id]: snapshot.subagents[session.id] ?? [] },
   } as TSnapshot;
 }
 
@@ -327,6 +334,7 @@ function removeOptimisticSession(
     queues: withoutSessionKey(snapshot.queues, sessionId),
     composerDrafts: withoutSessionKey(snapshot.composerDrafts, sessionId),
     runStates: withoutSessionKey(snapshot.runStates, sessionId),
+    subagents: withoutSessionKey(snapshot.subagents, sessionId),
   };
 }
 
@@ -353,6 +361,7 @@ function mergeSessionDetail<TSnapshot extends AnvilSnapshot>(
     queues: { ...snapshot.queues, [detail.sessionId]: detail.queue },
     composerDrafts: { ...snapshot.composerDrafts, [detail.sessionId]: detail.composerDraft },
     runStates: { ...snapshot.runStates, [detail.sessionId]: detail.runState },
+    subagents: { ...snapshot.subagents, [detail.sessionId]: detail.subagents },
   } as TSnapshot;
 }
 
@@ -369,6 +378,7 @@ function withoutSessionDetail<TSnapshot extends AnvilSnapshot>(
     widgets: snapshot.widgets.filter((widget) => widget.sessionId !== sessionId),
     queues: withoutSessionKey(snapshot.queues, sessionId),
     composerDrafts: withoutSessionKey(snapshot.composerDrafts, sessionId),
+    subagents: withoutSessionKey(snapshot.subagents, sessionId),
   } as TSnapshot;
 }
 
@@ -389,6 +399,7 @@ function detailFromSnapshot(
     queue: snapshot.queues[sessionId] ?? { steering: [], followUp: [] },
     composerDraft: snapshot.composerDrafts[sessionId] ?? "",
     runState: snapshot.runStates[sessionId] ?? "idle",
+    subagents: snapshot.subagents[sessionId] ?? [],
   };
 }
 
@@ -542,6 +553,21 @@ export class FixtureAnvilClient implements AnvilClient {
       case "interaction.respond":
         this.respondToInteraction(command.payload);
         break;
+      case "subagent.refresh":
+        void this.refreshSubagents(command.sessionId!);
+        break;
+      case "subagent.steer":
+        void this.steerSubagent(command.sessionId!, command.payload.runId, command.payload.message);
+        break;
+      case "subagent.interrupt":
+        void this.interruptSubagent(command.sessionId!, command.payload.runId);
+        break;
+      case "subagent.stop":
+        void this.stopSubagent(command.sessionId!, command.payload.runId);
+        break;
+      case "subagent.resume":
+        void this.resumeSubagent(command.sessionId!, command.payload.runId, command.payload.message);
+        break;
     }
   };
 
@@ -655,6 +681,7 @@ export class FixtureAnvilClient implements AnvilClient {
       queues: { ...this.snapshot.queues, [id]: { steering: [], followUp: [] } },
       catalogs: { ...this.snapshot.catalogs, [id]: fixtureCatalog },
       runStates: { ...this.snapshot.runStates, [id]: "idle" },
+      subagents: { ...this.snapshot.subagents, [id]: [] },
     };
     this.emit();
   };
@@ -968,6 +995,12 @@ export class FixtureAnvilClient implements AnvilClient {
       request.sessionId,
     );
   };
+
+  refreshSubagents = async (_sessionId: string) => undefined;
+  steerSubagent = async (_sessionId: string, _runId: string, _message: string) => undefined;
+  interruptSubagent = async (_sessionId: string, _runId: string) => undefined;
+  stopSubagent = async (_sessionId: string, _runId: string) => undefined;
+  resumeSubagent = async (_sessionId: string, _runId: string, _message: string) => undefined;
 
   isSessionPending = () => false;
   getSessionCreationError = () => undefined;
@@ -1696,6 +1729,30 @@ export class ForgeAnvilClient implements AnvilClient {
     void this.sendCommand(this.command("interaction.respond", request.sessionId, response));
   };
 
+  refreshSubagents = async (sessionId: string): Promise<void> => {
+    await this.sendCommand(this.command("subagent.refresh", sessionId, {}), true);
+  };
+
+  steerSubagent = (sessionId: string, runId: string, message: string) =>
+    this.sendSubagentCommand(this.command("subagent.steer", sessionId, { runId, message: message.trim() }));
+
+  interruptSubagent = (sessionId: string, runId: string) =>
+    this.sendSubagentCommand(this.command("subagent.interrupt", sessionId, { runId }));
+
+  stopSubagent = (sessionId: string, runId: string) =>
+    this.sendSubagentCommand(this.command("subagent.stop", sessionId, { runId }));
+
+  resumeSubagent = (sessionId: string, runId: string, message: string) =>
+    this.sendSubagentCommand(this.command("subagent.resume", sessionId, { runId, message: message.trim() }));
+
+  private async sendSubagentCommand(command: AnvilClientCommand): Promise<SubagentCommandReceipt | undefined> {
+    const response = await this.sendCommand(command, true);
+    const data = response?.data;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return undefined;
+    const receipt = data as unknown as SubagentCommandReceipt;
+    return typeof receipt.id === "string" && typeof receipt.state === "string" ? receipt : undefined;
+  }
+
   clearClientError = () => {
     if (!this.snapshot.clientError) return;
     this.snapshot = { ...this.snapshot, clientError: undefined };
@@ -1808,6 +1865,7 @@ export class ForgeAnvilClient implements AnvilClient {
           queues: Object.fromEntries(Object.entries(this.snapshot.queues).filter(([id]) => sessionIds.has(id))),
           composerDrafts: Object.fromEntries(Object.entries(this.snapshot.composerDrafts).filter(([id]) => sessionIds.has(id))),
           runStates: Object.fromEntries(Object.entries(this.snapshot.runStates).filter(([id]) => sessionIds.has(id))),
+          subagents: Object.fromEntries(Object.entries(this.snapshot.subagents).filter(([id]) => sessionIds.has(id))),
           lastSequence: cursor,
           sequenceGap: null,
           hydratingSessionIds: [],

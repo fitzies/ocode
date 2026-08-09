@@ -8,6 +8,7 @@ import {
   createOcodeAskUserQuestionResponse,
   GENERAL_PROJECT_NAME,
   type AnvilClientCommand,
+  type SubagentRun,
 } from "@anvil/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -210,6 +211,45 @@ afterEach(async () => {
 });
 
 describe("SessionManager", () => {
+  it("routes workflow stops through the package command and records a pending receipt", async () => {
+    await manager.handleCommand(command("create-stop", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+    await waitUntil(() => (events.currentSnapshot().catalogs[requestedSessionId]?.models.length ?? 0) > 0);
+    const workflowId = "11111111-1111-4111-8111-111111111111";
+    const run: SubagentRun = {
+      id: `${workflowId}:0`,
+      provider: "pi-subagents",
+      workflowId,
+      mode: "workflow",
+      index: 0,
+      key: "stop-probe",
+      agent: "scout",
+      status: "running",
+      startedAt: "2026-07-23T01:00:00.000Z",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      transcript: [],
+      receipts: [],
+      capabilities: { steer: false, interrupt: false, stop: true, resume: false },
+    };
+    events.append([{
+      type: "subagent.upserted",
+      payload: { run },
+      sessionId: requestedSessionId,
+      timestamp: "2026-07-23T01:00:00.000Z",
+    } as UnsequencedAnvilEvent]);
+
+    const response = await manager.handleCommand(command("stop-workflow", "subagent.stop", requestedSessionId, {
+      runId: run.id,
+    }));
+
+    expect(response).toMatchObject({ success: true, data: { kind: "stop", state: "pending" } });
+    expect(events.currentSnapshot().subagents[requestedSessionId]?.[0]?.receipts).toMatchObject([
+      { id: "stop-workflow", kind: "stop", state: "pending" },
+    ]);
+  });
+
   it("does not remove an adopted General home workspace", async () => {
     const generalHome = join(directory, "general-home");
     mkdirSync(generalHome);

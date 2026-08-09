@@ -27,6 +27,7 @@ const detail: AnvilSessionDetail = {
   queue: { steering: [], followUp: [] },
   composerDraft: "",
   runState: "idle",
+  subagents: [],
 };
 
 const summary: AnvilSummaryBootstrap = {

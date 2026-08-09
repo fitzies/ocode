@@ -285,7 +285,8 @@ function AppShellContent() {
     ? anvilClient.getSessionCreationError(activeSession.id)
     : undefined;
   const timeline = activeSession ? snapshot.timelines[activeSession.id] ?? [] : [];
-  const subagents = useMemo(() => subagentActivityForSession(timeline), [timeline]);
+  const sessionSubagents = activeSession ? snapshot.subagents[activeSession.id] ?? [] : [];
+  const subagents = useMemo(() => subagentActivityForSession(sessionSubagents), [sessionSubagents]);
   const pendingInteractions = activeSession
     ? snapshot.pendingInteractions.filter((request) => request.sessionId === activeSession.id)
     : [];
@@ -628,7 +629,16 @@ function AppShellContent() {
           <ProjectWorkspace
             isMobile={isMobile}
             bottom={activeProject ? <ProjectTerminalSurface key={activeProject.id} projectId={activeProject.id} isMobile={isMobile} /> : undefined}
-            right={activeProject ? <ProjectResourceSurface projectId={activeProject.id} /> : undefined}
+            right={activeProject ? <ProjectResourceSurface
+              projectId={activeProject.id}
+              sessionId={activeSession?.id ?? null}
+              subagents={subagents}
+              onRefreshSubagents={anvilClient.refreshSubagents}
+              onSteerSubagent={anvilClient.steerSubagent}
+              onInterruptSubagent={anvilClient.interruptSubagent}
+              onStopSubagent={anvilClient.stopSubagent}
+              onResumeSubagent={anvilClient.resumeSubagent}
+            /> : undefined}
             main={<div
               className="conversation-surface"
               data-message-font-size={displayPreferences.fontSize}

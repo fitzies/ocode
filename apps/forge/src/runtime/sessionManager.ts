@@ -26,6 +26,9 @@ import {
   type JsonValue,
   type ProjectSummary,
   type SessionSummary,
+  type SubagentCommandKind,
+  type SubagentCommandReceipt,
+  type SubagentCommandState,
   type ToolEntry,
 } from "@anvil/protocol";
 
@@ -39,6 +42,8 @@ import { detectProjectWorkspaceKind } from "../projects/workspaceKind.ts";
 import { ForgeDatabase, type RuntimeSessionRecord } from "../store/database.ts";
 import type { PreparedProjectTerminalRemoval, ProjectTerminalCleanup } from "../terminal/terminalManager.ts";
 import { createPiRpcProcess, type RpcRecord, type RpcSubprocess } from "../rpc/subprocess.ts";
+import { PiSubagentArtifactTracker } from "./piSubagentArtifacts.ts";
+import { PiSubagentsClient } from "./piSubagentsClient.ts";
 import { WorkspaceFileIndex } from "./workspaceFiles.ts";
 
 interface SessionManagerOptions {
@@ -54,6 +59,7 @@ type StreamDeltaEvent = Extract<UnsequencedAnvilEvent, { type: "message.delta" |
 
 interface ManagedSession {
   rpc: RpcSubprocess;
+  subagents: PiSubagentsClient;
   adapter: PiRpcAdapterState;
   baseTimestamp: number;
   stopping: boolean;
@@ -106,6 +112,42 @@ function rpcData(record: RpcRecord): Record<string, unknown> {
   return record.type === "response" && record.data && typeof record.data === "object" && !Array.isArray(record.data)
     ? record.data as Record<string, unknown>
     : {};
+}
+
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function subagentReceiptState(kind: SubagentCommandKind, data: unknown): {
+  state: SubagentCommandState;
+  providerRequestId?: string;
+} {
+  if (kind === "resume") return { state: "delivered" };
+  if (kind !== "steer") return { state: "pending" };
+  const steering = recordOf(recordOf(data)?.details)?.steering;
+  const receipt = recordOf(steering);
+  const state = typeof receipt?.state === "string" && [
+    "scheduled", "pending", "delivered", "partial", "recovered", "failed",
+  ].includes(receipt.state)
+    ? receipt.state as SubagentCommandState
+    : "pending";
+  return {
+    state,
+    ...(typeof receipt?.requestId === "string" ? { providerRequestId: receipt.requestId } : {}),
+  };
+}
+
+function resumedWorkflow(data: unknown): { workflowId: string; asyncDir: string } | undefined {
+  const details = recordOf(recordOf(data)?.details);
+  const workflowId = typeof details?.asyncId === "string" ? details.asyncId : undefined;
+  const asyncDir = typeof details?.asyncDir === "string" ? details.asyncDir : undefined;
+  return workflowId && asyncDir ? { workflowId, asyncDir } : undefined;
+}
+
+function unresolvedSubagentReceipt(receipt: SubagentCommandReceipt): boolean {
+  return receipt.state === "requested" || receipt.state === "scheduled" || receipt.state === "pending";
 }
 
 function escapeFileAttribute(value: string): string {
@@ -176,6 +218,7 @@ export class SessionManager {
   private readonly deletingProjects = new Set<string>();
   private readonly cloneReservations = new Set<string>();
   private readonly workspaceFiles = new WorkspaceFileIndex();
+  private readonly subagentArtifacts: PiSubagentArtifactTracker;
   private projectsRoot: string;
   private shuttingDown = false;
 
@@ -187,6 +230,15 @@ export class SessionManager {
   ) {
     this.projectResolver = options.projectResolver ?? new EventProjectResolver(events);
     this.projectCloner = options.projectCloner ?? new GhProjectCloner();
+    this.subagentArtifacts = new PiSubagentArtifactTracker({
+      sessionDir: config.sessionDir,
+      currentRuns: (sessionId) => events.currentSnapshot().subagents[sessionId] ?? [],
+      publish: (sessionId, runs) => events.append(runs.map((run) => domainEvent(
+        "subagent.upserted",
+        { run },
+        sessionId,
+      ))),
+    });
     const persistedProjectsRoot = database.runtimeMetadata("projects_root");
     this.projectsRoot = canonicalizeProjectsRoot(persistedProjectsRoot ?? config.projectsRoot);
     this.projectCloner.cleanupStale?.(this.projectsRoot);
@@ -196,6 +248,15 @@ export class SessionManager {
     const restored = events.currentSnapshot();
     for (const project of restored.projects) this.refreshProjectBranch(project.id);
     this.cleanupOrphanSessionDirectories(new Set(restored.sessions.map((session) => session.id)));
+    this.subagentArtifacts.restore(
+      Object.fromEntries(
+        Object.entries(restored.timelines).map(([sessionId, timeline]) => [
+          sessionId,
+          timeline.filter((entry): entry is ToolEntry => entry.kind === "tool"),
+        ]),
+      ),
+      restored.subagents,
+    );
     const staleInteractions = restored.pendingInteractions;
     const interruptedSessionIds = new Set(
       restored.sessions
@@ -309,6 +370,7 @@ export class SessionManager {
     }));
     this.runtimes.clear();
     this.starting.clear();
+    this.subagentArtifacts.close();
     for (const timer of this.interactionTimers.values()) clearTimeout(timer);
     this.interactionTimers.clear();
     this.events.off("event", this.onEvent);
@@ -379,7 +441,8 @@ export class SessionManager {
         error: `Thread title must be non-empty and at most ${SESSION_TITLE_MAX_LENGTH} characters`,
       });
     }
-    if (stored.session.settled && command.type !== "prompt.send" && command.type !== "session.rename") {
+    const subagentCommand = command.type.startsWith("subagent.");
+    if (stored.session.settled && command.type !== "prompt.send" && command.type !== "session.rename" && !subagentCommand) {
       return commandResponse(command, false, { error: "Send a prompt to resume this settled thread" });
     }
     if (command.type === "model.set" || command.type === "thinking.set") {
@@ -485,6 +548,113 @@ export class SessionManager {
     }
 
     return this.enqueue(runtime, async () => {
+      if (command.type === "subagent.refresh") {
+        await this.subagentArtifacts.refresh(sessionId);
+        return commandResponse(command, true);
+      }
+      if (
+        command.type === "subagent.steer" ||
+        command.type === "subagent.interrupt" ||
+        command.type === "subagent.stop" ||
+        command.type === "subagent.resume"
+      ) {
+        const run = this.events.currentSnapshot().subagents[sessionId]?.find(
+          (candidate) => candidate.id === command.payload.runId,
+        );
+        if (!run) return commandResponse(command, false, { error: "Subagent run not found" });
+        const kind = command.type.slice("subagent.".length) as SubagentCommandKind;
+        if (!run.capabilities[kind]) {
+          return commandResponse(command, false, { error: `This subagent cannot ${kind} in its current state` });
+        }
+        const receiptScope = kind === "stop"
+          ? (this.events.currentSnapshot().subagents[sessionId] ?? []).filter((candidate) => candidate.workflowId === run.workflowId)
+          : [run];
+        if (receiptScope.some((candidate) => candidate.receipts.some(
+          (receipt) => receipt.kind === kind && unresolvedSubagentReceipt(receipt),
+        ))) {
+          return commandResponse(command, false, { error: `A ${kind} request is already pending for this subagent` });
+        }
+        const requestedAt = new Date().toISOString();
+        const receiptId = command.id;
+        const message = "message" in command.payload ? command.payload.message.trim() : undefined;
+        const requested: SubagentCommandReceipt = {
+          id: receiptId,
+          kind,
+          state: "requested",
+          requestedAt,
+          updatedAt: requestedAt,
+          ...(message ? { message } : {}),
+        };
+        this.events.append([domainEvent(
+          "subagent.command.updated",
+          { runId: run.id, receipt: requested },
+          sessionId,
+        )]);
+        const params = {
+          id: run.workflowId,
+          index: run.index,
+          ...(message ? { message } : {}),
+        };
+        try {
+          if (kind === "resume" && !await this.subagentArtifacts.prepareResume(sessionId, run)) {
+            throw new Error("The persisted child session is unavailable for resume");
+          }
+          let delivery: ReturnType<typeof subagentReceiptState>;
+          if (kind === "stop" && run.mode === "workflow") {
+            await runtime.subagents.stopWorkflow(run.workflowId);
+            delivery = { state: "pending" };
+          } else {
+            const reply = await runtime.subagents.request(kind, params);
+            if (!reply.success) {
+              const failed: SubagentCommandReceipt = {
+                ...requested,
+                state: "failed",
+                updatedAt: new Date().toISOString(),
+                error: reply.error.message,
+              };
+              this.events.append([domainEvent(
+                "subagent.command.updated",
+                { runId: run.id, receipt: failed },
+                sessionId,
+              )]);
+              return commandResponse(command, false, { error: reply.error.message });
+            }
+            if (kind === "resume") {
+              const replacement = resumedWorkflow(reply.data);
+              if (!replacement || !this.subagentArtifacts.trackWorkflow(sessionId, replacement.workflowId, replacement.asyncDir)) {
+                throw new Error("pi-subagents did not return a trackable resumed run");
+              }
+            }
+            delivery = subagentReceiptState(kind, reply.data);
+          }
+          const updated: SubagentCommandReceipt = {
+            ...requested,
+            ...delivery,
+            updatedAt: new Date().toISOString(),
+          };
+          this.events.append([domainEvent(
+            "subagent.command.updated",
+            { runId: run.id, receipt: updated },
+            sessionId,
+          )]);
+          await this.subagentArtifacts.refresh(sessionId);
+          return commandResponse(command, true, { data: updated as unknown as JsonValue });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const failed: SubagentCommandReceipt = {
+            ...requested,
+            state: "failed",
+            updatedAt: new Date().toISOString(),
+            error: message,
+          };
+          this.events.append([domainEvent(
+            "subagent.command.updated",
+            { runId: run.id, receipt: failed },
+            sessionId,
+          )]);
+          return commandResponse(command, false, { error: message });
+        }
+      }
       if (command.type === "prompt.send") {
         const images = command.payload.images?.map((image) => {
           if (!image.data) throw new Error("Live Pi prompts require inline image data");
@@ -628,6 +798,16 @@ export class SessionManager {
   }
 
   private readonly onEvent = (event: AnvilEvent): void => {
+    if (event.type === "session.deleted") {
+      this.subagentArtifacts.removeSession(event.payload.sessionId);
+      return;
+    }
+    if (event.type === "tool.completed" && event.sessionId) {
+      const tool = this.events.timelineForSession(event.sessionId).find(
+        (entry): entry is ToolEntry => entry.kind === "tool" && entry.toolCallId === event.payload.toolCallId,
+      );
+      if (tool) this.subagentArtifacts.track(event.sessionId, tool);
+    }
     if (event.type === "interaction.resolved") {
       const timer = this.interactionTimers.get(event.payload.requestId);
       if (timer) clearTimeout(timer);
@@ -1184,6 +1364,7 @@ export class SessionManager {
 
   private async stopRuntime(runtime: ManagedSession): Promise<void> {
     runtime.stopping = true;
+    runtime.subagents.close();
     this.clearIdleTimer(runtime);
     this.flushPendingStreamEvent(runtime);
     this.clearToolTimers(runtime);
@@ -1272,6 +1453,7 @@ export class SessionManager {
     });
     const runtime: ManagedSession = {
       rpc,
+      subagents: new PiSubagentsClient(rpc),
       adapter,
       baseTimestamp,
       stopping: false,
@@ -1348,6 +1530,7 @@ export class SessionManager {
 
   private onRecord(sessionId: string, runtime: ManagedSession, record: RpcRecord): void {
     if (this.deleting.has(sessionId)) return;
+    if (runtime.subagents.handleRecord(record)) return;
     if (record.type === "response" && typeof record.id === "string" && runtime.suppressedResponseIds.delete(record.id)) {
       return;
     }
@@ -1385,6 +1568,7 @@ export class SessionManager {
   }
 
   private onExit(sessionId: string, runtime: ManagedSession): void {
+    runtime.subagents.close("Pi subprocess exited");
     let flushError: unknown;
     try {
       this.flushPendingStreamEvent(runtime);

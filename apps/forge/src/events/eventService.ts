@@ -37,6 +37,13 @@ export class ForgeEventService extends EventEmitter {
       workspaceKind: detectProjectWorkspaceKind(project.path),
     }));
     const stored = database.latestSnapshot();
+    const compactedThrough = database.compactedThrough();
+    if (compactedThrough > 0 && (!stored || stored.cursor < compactedThrough)) {
+      const available = stored ? `latest compatible snapshot is at sequence ${stored.cursor}` : "no compatible snapshot is available";
+      throw new Error(
+        `Cannot restore compacted event journal through sequence ${compactedThrough}: ${available}`,
+      );
+    }
     let restored = stored?.snapshot ?? createEmptySnapshot({ projects: persistedProjects });
     while (true) {
       const tail = database.readEventsAfter(restored.lastSequence, 10_000);

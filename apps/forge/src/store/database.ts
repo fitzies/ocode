@@ -54,17 +54,26 @@ function upgradeStoredResourceBlocks(value: unknown): unknown {
 }
 
 function upgradeStoredSnapshotProtocol(value: unknown): unknown {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return value;
+  const stored = value as Record<string, unknown>;
+  const storedVersion = Number(stored.protocolVersion);
+
+  if (Number(ANVIL_PROTOCOL_VERSION) === 10 && stored.protocolVersion === 11) {
+    // Protocol 11 only added the WIP durable subagent projection. Allow main to
+    // reopen databases written by that branch while deliberately discarding
+    // the unsupported projection and preserving all protocol-10 state.
+    const { subagents: _unsupportedSubagents, ...supported } = stored;
+    return { ...supported, protocolVersion: ANVIL_PROTOCOL_VERSION };
+  }
+
   if (
     Number(ANVIL_PROTOCOL_VERSION) === 10 &&
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    [5, 6, 7, 8, 9].includes(Number((value as { protocolVersion?: unknown }).protocolVersion))
+    [5, 6, 7, 8, 9].includes(storedVersion)
   ) {
     // Protocols 7–10 add strict session-relative project resources, Forge-owned
     // read cursors, root-owned project creation, and project removal. Snapshots upgrade structurally.
     return upgradeStoredResourceBlocks({
-      ...(value as Record<string, unknown>),
+      ...stored,
       protocolVersion: ANVIL_PROTOCOL_VERSION,
     });
   }
@@ -796,7 +805,8 @@ export class ForgeDatabase {
     for (const row of rows) {
       try {
         const snapshot = upgradeStoredSnapshotProtocol(parseJson(row.snapshot_json));
-        if (isAnvilSnapshot(snapshot)) return { snapshot, cursor: Number(row.cursor) };
+        const cursor = Number(row.cursor);
+        if (isAnvilSnapshot(snapshot) && snapshot.lastSequence === cursor) return { snapshot, cursor };
       } catch {
         // Ignore corrupt or obsolete snapshots and continue toward a full journal replay.
       }

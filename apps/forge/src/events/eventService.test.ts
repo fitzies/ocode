@@ -116,6 +116,122 @@ describe("ForgeEventService", () => {
     }
   });
 
+  it("fails fast when an incompatible snapshot is the only recovery point for a compacted journal", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-compacted-incompatible-snapshot-"));
+    const path = join(directory, "forge.sqlite");
+    try {
+      const first = new ForgeDatabase(path);
+      first.appendEvents([{
+        sessionId: null,
+        timestamp: "2026-07-23T01:00:00.000Z",
+        type: "connection.changed",
+        payload: { connection: "reconnecting" },
+      }]);
+      first.saveSnapshot({
+        ...new ForgeEventService(first, []).currentSnapshot(),
+        lastSequence: 1,
+      }, { retainedEventCount: 0, maxCompactionRows: 10 });
+      first.close();
+
+      const raw = new DatabaseSync(path);
+      raw.prepare("UPDATE snapshots SET snapshot_json = ?").run(JSON.stringify({
+        protocolVersion: 999,
+        lastSequence: 1,
+      }));
+      raw.close();
+
+      const reopened = new ForgeDatabase(path);
+      expect(() => new ForgeEventService(reopened, [])).toThrow(
+        "Cannot restore compacted event journal through sequence 1: no compatible snapshot is available",
+      );
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a compatible snapshot that predates the compacted journal boundary", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-stale-compatible-snapshot-"));
+    const path = join(directory, "forge.sqlite");
+    try {
+      const first = new ForgeDatabase(path);
+      const service = new ForgeEventService(first, []);
+      service.append([{
+        sessionId: null,
+        timestamp: "2026-07-23T01:00:00.000Z",
+        type: "connection.changed",
+        payload: { connection: "reconnecting" },
+      }]);
+      first.saveSnapshot(service.currentSnapshot());
+      service.append([{
+        sessionId: null,
+        timestamp: "2026-07-23T01:00:01.000Z",
+        type: "connection.changed",
+        payload: { connection: "connected" },
+      }]);
+      first.saveSnapshot(service.currentSnapshot(), { retainedEventCount: 0, maxCompactionRows: 10 });
+      first.close();
+
+      const raw = new DatabaseSync(path);
+      raw.prepare("UPDATE snapshots SET snapshot_json = ? WHERE cursor = 2").run(JSON.stringify({
+        protocolVersion: 999,
+        lastSequence: 2,
+      }));
+      raw.close();
+
+      const reopened = new ForgeDatabase(path);
+      expect(() => new ForgeEventService(reopened, [])).toThrow(
+        "Cannot restore compacted event journal through sequence 2: latest compatible snapshot is at sequence 1",
+      );
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("restores a compacted protocol 11 snapshot on main and replays its retained protocol 10 tail", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-compacted-v11-snapshot-"));
+    const path = join(directory, "forge.sqlite");
+    try {
+      const first = new ForgeDatabase(path);
+      const service = new ForgeEventService(first, []);
+      service.append([{
+        sessionId: null,
+        timestamp: "2026-07-23T01:00:00.000Z",
+        type: "connection.changed",
+        payload: { connection: "reconnecting" },
+      }]);
+      first.saveSnapshot(service.currentSnapshot(), { retainedEventCount: 0, maxCompactionRows: 10 });
+      service.append([{
+        sessionId: null,
+        timestamp: "2026-07-23T01:00:01.000Z",
+        type: "connection.changed",
+        payload: { connection: "connected" },
+      }]);
+      first.close();
+
+      const raw = new DatabaseSync(path);
+      const row = raw.prepare("SELECT snapshot_json FROM snapshots WHERE cursor = 1").get() as { snapshot_json: string };
+      const snapshot = JSON.parse(row.snapshot_json) as Record<string, unknown>;
+      snapshot.protocolVersion = 11;
+      snapshot.subagents = { "session-1": [{ id: "unsupported-wip-state" }] };
+      raw.prepare("UPDATE snapshots SET snapshot_json = ? WHERE cursor = 1").run(JSON.stringify(snapshot));
+      raw.close();
+
+      const reopened = new ForgeDatabase(path);
+      const restored = new ForgeEventService(reopened, []);
+      expect(restored.currentSnapshot()).toMatchObject({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        connection: "connected",
+        lastSequence: 2,
+      });
+      expect(restored.currentSnapshot()).not.toHaveProperty("subagents");
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("falls back to full journal replay when the stored snapshot is obsolete", () => {
     const directory = mkdtempSync(join(tmpdir(), "anvil-snapshot-fallback-"));
     const path = join(directory, "forge.sqlite");

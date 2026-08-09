@@ -310,6 +310,38 @@ describe("ForgeDatabase event journal", () => {
     }
   });
 
+  it("reopens protocol 11 snapshots without the unsupported WIP subagent projection", () => {
+    const directory = mkdtempSync(join(tmpdir(), "anvil-store-v11-snapshot-"));
+    const path = join(directory, "forge.sqlite");
+    try {
+      const first = new ForgeDatabase(path);
+      first.saveSnapshot({ ...createEmptySnapshot(), connection: "offline" });
+      first.close();
+
+      const raw = new DatabaseSync(path);
+      const row = raw.prepare("SELECT snapshot_json FROM snapshots WHERE cursor = 0").get() as { snapshot_json: string };
+      const snapshot = JSON.parse(row.snapshot_json) as Record<string, unknown>;
+      snapshot.protocolVersion = 11;
+      snapshot.subagents = {
+        "session-1": [{ id: "wip-subagent-state" }],
+      };
+      raw.prepare("UPDATE snapshots SET snapshot_json = ? WHERE cursor = 0").run(JSON.stringify(snapshot));
+      raw.close();
+
+      const reopened = new ForgeDatabase(path);
+      const restored = reopened.latestSnapshot()?.snapshot;
+      expect(restored).toMatchObject({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        connection: "offline",
+        lastSequence: 0,
+      });
+      expect(restored).not.toHaveProperty("subagents");
+      reopened.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it("upgrades legacy project resource blocks in persisted journal events", () => {
     const directory = mkdtempSync(join(tmpdir(), "anvil-store-resource-event-"));
     const path = join(directory, "forge.sqlite");

@@ -48,9 +48,8 @@ import {
 import { ProjectFavicon } from "@/components/ProjectFavicon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
-function projectRepositoryName(project: { id: string; name: string; path: string }): string {
-  if (isGeneralProject(project)) return project.name;
-  return project.path.split(/[\\/]/).filter(Boolean).at(-1) || project.name;
+function projectDisplayName(project: { name: string }): string {
+  return project.name;
 }
 import {
   Sidebar as SidebarPrimitive,
@@ -284,7 +283,7 @@ export const Sidebar = memo(function Sidebar({
     if (isMobile) setOpenMobile(false);
   };
 
-  const sortedSessions = sortSessionsByActivity(snapshot.sessions);
+  const sortedSessions = sortSessionsByActivity(snapshot.sessions.filter((session) => !session.internal));
   const generalProject = snapshot.projects.find(isGeneralProject);
   const regularProjects = snapshot.projects.filter((project) => !isGeneralProject(project));
   const selectedProject = snapshot.projects.find((project) => project.id === projectFilter);
@@ -315,7 +314,7 @@ export const Sidebar = memo(function Sidebar({
     const active = session.id === snapshot.activeSessionId;
     const settling = settlementPending.has(session.id);
     const displayTitle = capitalizeTitle(session.title);
-    const projectName = project ? projectRepositoryName(project) : "unknown";
+    const projectName = project ? projectDisplayName(project) : "unknown";
     const branch = session.branch ?? "unknown";
     const projectContext = isGeneralProject(project) ? "General · ~/" : `${projectName}/${branch}`;
 
@@ -449,7 +448,7 @@ export const Sidebar = memo(function Sidebar({
                 {selectedProject ? (
                   <>
                     <ProjectFavicon projectId={selectedProject.id} projectName={selectedProject.name} workspaceKind={selectedProject.workspaceKind} />
-                    <span className="truncate">{projectRepositoryName(selectedProject)}</span>
+                    <span className="truncate">{projectDisplayName(selectedProject)}</span>
                   </>
                 ) : (
                   <>
@@ -470,7 +469,7 @@ export const Sidebar = memo(function Sidebar({
                 {regularProjects.map((project) => (
                   <SelectItem value={project.id} key={project.id} title={project.path}>
                     <ProjectFavicon projectId={project.id} projectName={project.name} workspaceKind={project.workspaceKind} />
-                    <span className="truncate">{projectRepositoryName(project)}</span>
+                    <span className="truncate">{projectDisplayName(project)}</span>
                   </SelectItem>
                 ))}
               </SelectGroup>
@@ -562,7 +561,7 @@ export const Sidebar = memo(function Sidebar({
                 {regularProjects.map((project) => (
                   <CommandItem
                     key={project.id}
-                    value={`${projectRepositoryName(project)} ${project.name} ${project.path}`}
+                    value={`${projectDisplayName(project)} ${project.path}`}
                     onSelect={() => {
                       onCreateSession(project.id);
                       setNewThreadOpen(false);
@@ -571,7 +570,7 @@ export const Sidebar = memo(function Sidebar({
                     }}
                   >
                     <ProjectFavicon projectId={project.id} projectName={project.name} workspaceKind={project.workspaceKind} />
-                    <span className="min-w-0 flex-1 truncate">{projectRepositoryName(project)}</span>
+                    <span className="min-w-0 flex-1 truncate">{projectDisplayName(project)}</span>
                   </CommandItem>
                 ))}
               </CommandGroup>

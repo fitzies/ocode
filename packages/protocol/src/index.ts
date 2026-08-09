@@ -8,13 +8,15 @@ import {
   type ImageContentBlock,
   type JsonValue,
 } from "./content.js";
+import { isSubagentRun, type SubagentRun } from "./subagents.js";
 
 export * from "@anvil/protocol/content";
 export * from "./askUserQuestion.js";
 export * from "@anvil/protocol/resources";
 export * from "@anvil/protocol/terminal";
+export * from "./subagents.js";
 
-export const ANVIL_PROTOCOL_VERSION = 10 as const;
+export const ANVIL_PROTOCOL_VERSION = 11 as const;
 export type ProtocolVersion = typeof ANVIL_PROTOCOL_VERSION;
 
 export type ConnectionState = "connected" | "reconnecting" | "offline";
@@ -231,6 +233,9 @@ export interface SessionSummary {
   lastTerminalOutcome?: RunOutcome;
   /** Latest terminal event sequence the user has read. Forge owns this durable cursor; missing only on legacy recordings. */
   readThroughSequence?: number;
+  /** Forge-owned sessions used by asynchronous workers are not ordinary user threads. */
+  internal?: boolean;
+  parentSessionId?: string;
 }
 
 export interface ModelDescriptor {
@@ -482,6 +487,7 @@ export interface AnvilSnapshot {
   queues: Record<string, SessionQueue>;
   composerDrafts: Record<string, string>;
   runStates: Record<string, DurableRunState>;
+  subagentRuns: Record<string, SubagentRun[]>;
   lastSequence: number;
   sequenceGap: SequenceGap | null;
 }
@@ -515,6 +521,7 @@ export interface AnvilSessionDetail {
   queue: SessionQueue;
   composerDraft: string;
   runState: DurableRunState;
+  subagentRuns: SubagentRun[];
 }
 
 export type AnvilSessionDetailSync =
@@ -530,6 +537,8 @@ export type AnvilSessionDetailSync =
       fromSequence: number;
       throughSequence: number;
       events: AnvilEvent[];
+      /** Current bounded projection, independent of the timeline delta cursor. */
+      subagentRuns?: SubagentRun[];
     };
 
 export interface AnvilStreamReset {
@@ -640,6 +649,8 @@ export type AnvilEvent =
     >
   | AnvilEventBase<"composer.prefill", { text: string }>
   | AnvilEventBase<"queue.updated", SessionQueue>
+  | AnvilEventBase<"subagent.updated", { run: SubagentRun }>
+  | AnvilEventBase<"subagent.deleted", { runId: string; parentSessionId: string }>
   | AnvilEventBase<"unknown", { eventType: string; payload: JsonValue }>;
 
 export type PromptDelivery = "prompt" | "steer" | "followUp";
@@ -704,7 +715,8 @@ export type AnvilClientCommand =
   | AnvilCommandBase<"run.cancel", Record<string, never>>
   | AnvilCommandBase<"model.set", { modelId: string }>
   | AnvilCommandBase<"thinking.set", { level: ThinkingLevel }>
-  | AnvilCommandBase<"interaction.respond", InteractionResponse>;
+  | AnvilCommandBase<"interaction.respond", InteractionResponse>
+  | AnvilCommandBase<"subagent.cancel", { runId: string }>;
 
 export interface AnvilCommandResponse {
   protocolVersion: ProtocolVersion;
@@ -747,6 +759,8 @@ const ANVIL_EVENT_TYPES = new Set<AnvilEvent["type"]>([
   "extension.widget",
   "composer.prefill",
   "queue.updated",
+  "subagent.updated",
+  "subagent.deleted",
   "unknown",
 ]);
 
@@ -792,7 +806,9 @@ function isSessionSummary(value: unknown): boolean {
     (value.lastTerminalSequence === undefined || (Number.isSafeInteger(value.lastTerminalSequence) && Number(value.lastTerminalSequence) > 0)) &&
     (value.lastTerminalOutcome === undefined || ["completed", "failed", "cancelled"].includes(String(value.lastTerminalOutcome))) &&
     (value.readThroughSequence === undefined ||
-      (Number.isSafeInteger(value.readThroughSequence) && Number(value.readThroughSequence) >= 0));
+      (Number.isSafeInteger(value.readThroughSequence) && Number(value.readThroughSequence) >= 0)) &&
+    (value.internal === undefined || typeof value.internal === "boolean") &&
+    (value.parentSessionId === undefined || typeof value.parentSessionId === "string");
 }
 
 function isInteractionOption(value: unknown): boolean {
@@ -985,6 +1001,10 @@ function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {
       return hasStrings(value, "text");
     case "queue.updated":
       return Array.isArray(value.steering) && Array.isArray(value.followUp);
+    case "subagent.updated":
+      return isSubagentRun(value.run);
+    case "subagent.deleted":
+      return hasStrings(value, "runId", "parentSessionId");
     case "unknown":
       return hasStrings(value, "eventType") && isJsonValue(value.payload);
   }
@@ -1010,6 +1030,13 @@ export function isAnvilEvent(value: unknown): value is AnvilEvent {
   if (value.raw !== undefined && !isJsonValue(value.raw)) return false;
   if (value.type === "catalog.updated" && typeof value.sessionId !== "string") return false;
   if ((value.type === "project.upserted" || value.type === "project.deleted") && value.sessionId !== null) return false;
+  if ((value.type === "subagent.updated" || value.type === "subagent.deleted") && (
+    typeof value.sessionId !== "string" ||
+    !isRecord(value.payload) ||
+    (value.type === "subagent.updated"
+      ? !isRecord(value.payload.run) || value.payload.run.parentSessionId !== value.sessionId
+      : value.payload.parentSessionId !== value.sessionId)
+  )) return false;
   return isEventPayload(value.type as AnvilEvent["type"], value.payload);
 }
 
@@ -1095,6 +1122,8 @@ export function isAnvilClientCommand(value: unknown): value is AnvilClientComman
         (payload.value === undefined || isJsonValue(payload.value)) &&
         (payload.confirmed === undefined || typeof payload.confirmed === "boolean") &&
         (payload.cancelled === undefined || typeof payload.cancelled === "boolean");
+    case "subagent.cancel":
+      return typeof value.sessionId === "string" && hasStrings(payload, "runId");
     default:
       return false;
   }
@@ -1121,6 +1150,9 @@ export function isAnvilSnapshot(value: unknown): value is AnvilSnapshot {
     isRecord(value.composerDrafts) && Object.values(value.composerDrafts).every((draft) => typeof draft === "string") &&
     isRecord(value.runStates) && Object.values(value.runStates).every(
       (state) => ["idle", "running", "failed"].includes(String(state))
+    ) &&
+    isRecord(value.subagentRuns) && Object.values(value.subagentRuns).every(
+      (runs) => Array.isArray(runs) && runs.every(isSubagentRun)
     ) &&
     Number.isSafeInteger(value.lastSequence) && Number(value.lastSequence) >= 0 &&
     (value.sequenceGap === null ||
@@ -1179,7 +1211,8 @@ export function isAnvilSessionDetail(value: unknown): value is AnvilSessionDetai
     ) &&
     isSessionQueue(value.queue) &&
     typeof value.composerDraft === "string" &&
-    ["idle", "running", "failed"].includes(String(value.runState));
+    ["idle", "running", "failed"].includes(String(value.runState)) &&
+    Array.isArray(value.subagentRuns) && value.subagentRuns.every(isSubagentRun);
 }
 
 export function isAnvilSessionDetailSync(value: unknown): value is AnvilSessionDetailSync {
@@ -1190,5 +1223,8 @@ export function isAnvilSessionDetailSync(value: unknown): value is AnvilSessionD
     Number.isSafeInteger(value.fromSequence) && Number(value.fromSequence) >= 0 &&
     Number.isSafeInteger(value.throughSequence) && Number(value.throughSequence) >= Number(value.fromSequence) &&
     Array.isArray(value.events) && value.events.every(isAnvilEvent) &&
+    (value.subagentRuns === undefined || (
+      Array.isArray(value.subagentRuns) && value.subagentRuns.every(isSubagentRun)
+    )) &&
     value.events.every((event) => event.sessionId === value.sessionId && event.sequence > Number(value.fromSequence) && event.sequence <= Number(value.throughSequence));
 }

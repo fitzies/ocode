@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { terminalClient } from "@/lib/terminalClient";
 
 export function projectThreadCount(projectId: string, sessions: readonly SessionSummary[]): number {
-  return sessions.filter((session) => session.projectId === projectId).length;
+  return sessions.filter((session) => session.projectId === projectId && !session.internal).length;
 }
 
 export function projectRemovalConfirmationMatches(projectName: string, threadCount: number, confirmation: string): boolean {

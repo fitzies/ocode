@@ -38,11 +38,14 @@ function renderComposer(modelsReady: boolean, options: {
     creationError: options.creationError,
     widgets: [],
     workspaceKind: "workspaceKind" in options ? options.workspaceKind : "worktree",
-    subagents: options.subagents ?? { active: 0, finished: 3, items: [] },
+    subagents: options.subagents ?? { active: 0, finished: 3, failed: 0, needsAttention: 0, items: [] },
+    connection: "connected",
     attachments: [],
     onAttachFiles: () => undefined,
     onRemoveAttachment: () => undefined,
     onSearchFiles: async () => [],
+    onCancelSubagent: async () => undefined,
+    onOpenSubagentChild: async () => undefined,
     onCancel: () => undefined,
     onDraftConsumed: () => undefined,
     onPromptChange: () => undefined,
@@ -82,7 +85,7 @@ describe("Composer workspace status", () => {
   });
 
   it("shows and spins the activity icon while subagents are active", () => {
-    const html = renderComposer(true, { subagents: { active: 2, finished: 1, items: [] } });
+    const html = renderComposer(true, { subagents: { active: 2, finished: 1, failed: 0, needsAttention: 0, items: [] } });
 
     expect(html).toContain("composer-status-icon--active composer-status-icon--spinning");
     expect(html).toContain('class="sr-only"> active');

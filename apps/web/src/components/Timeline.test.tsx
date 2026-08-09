@@ -254,13 +254,55 @@ describe("Timeline markdown", () => {
       <Timeline session={session} entries={[reasoning]} onSuggestion={() => undefined} />,
     );
 
-    expect(html).toContain('<div class="thinking-event thinking-event--complete">');
-    expect(html).toContain('<span class="thinking-label">Thinking:</span>');
+    expect(html).toContain("thinking-event thinking-event--complete");
+    expect(html).toContain("Thought process");
     expect(html).toContain("<strong>Checking:</strong>");
     expect(html).toContain("<ol>");
     expect(html).toContain("<li>Types</li>");
-    expect(html).not.toContain("<details");
+    expect(html).toContain('data-slot="collapsible-trigger"');
+    expect(html).not.toContain("Thinking:");
     expect(html).not.toContain("**Checking:**");
+  });
+
+  it("formats the active reasoning line as Markdown", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={{ ...session, status: "running" }}
+        entries={[{ ...reasoning, status: "streaming", content: "**Investigating** app name source" }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("thinking-event--streaming");
+    expect(html).toContain("<strong>Investigating</strong> app name source");
+    expect(html).not.toContain("**Investigating**");
+  });
+
+  it("consolidates reasoning segments for one assistant turn", () => {
+    const html = renderToStaticMarkup(
+      <Timeline session={session} entries={[
+        reasoning,
+        tool({ id: "between-reasoning", status: "completed" }),
+        { ...reasoning, id: "reasoning-2", messageId: "message-2", content: "Running tests" },
+      ]} onSuggestion={() => undefined} />,
+    );
+
+    expect(html.match(/Thought process/g)).toHaveLength(1);
+    expect(html).toContain("2 steps");
+    expect(html).toContain("Running tests");
+  });
+
+  it("starts a new reasoning disclosure at the next user turn", () => {
+    const html = renderToStaticMarkup(
+      <Timeline session={session} entries={[
+        { ...message, id: "user-1", role: "user" },
+        reasoning,
+        { ...message, id: "user-2", role: "user" },
+        { ...reasoning, id: "reasoning-2", messageId: "message-2", content: "Second turn" },
+      ]} onSuggestion={() => undefined} />,
+    );
+
+    expect(html.match(/Thought process/g)).toHaveLength(2);
   });
 });
 

@@ -1,9 +1,12 @@
 import type { RecordedRpcItem } from "@anvil/pi-rpc";
+import { isSubagentRun } from "@anvil/protocol";
 import type {
   CapabilityCatalog,
   ProjectSummary,
   SessionSummary,
+  SubagentRun,
 } from "@anvil/protocol";
+import asyncSubagents from "./async-subagents.json";
 import dialogQueue from "./dialog-queue.json";
 import failureUnknown from "./failure-unknown.json";
 import ordinaryRun from "./ordinary-run.json";
@@ -18,6 +21,7 @@ export interface FixtureDefinition {
   project: ProjectSummary;
   session: SessionSummary;
   records: RecordedRpcItem[];
+  subagentRuns?: SubagentRun[];
 }
 
 export const fixtureCatalog: CapabilityCatalog = {
@@ -109,6 +113,9 @@ function parseFixture(value: unknown): FixtureDefinition {
   ) {
     throw new Error(`Invalid fixture: ${String(fixture.id ?? "unknown")}`);
   }
+  if (fixture.subagentRuns !== undefined && (
+    !Array.isArray(fixture.subagentRuns) || !fixture.subagentRuns.every(isSubagentRun)
+  )) throw new Error(`Invalid subagent projection in fixture: ${fixture.id}`);
   for (const item of fixture.records) {
     const candidate = item as Record<string, unknown>;
     if (typeof candidate.at !== "number" || !candidate.record || typeof candidate.record !== "object") {
@@ -118,6 +125,6 @@ function parseFixture(value: unknown): FixtureDefinition {
   return value as FixtureDefinition;
 }
 
-export const fixtures = [ordinaryRun, parallelTools, dialogQueue, failureUnknown, resourceOpen].map(parseFixture);
+export const fixtures = [ordinaryRun, parallelTools, asyncSubagents, dialogQueue, failureUnknown, resourceOpen].map(parseFixture);
 
 export const fixtureById = new Map(fixtures.map((fixture) => [fixture.id, fixture]));

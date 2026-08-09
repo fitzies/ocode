@@ -1,6 +1,7 @@
 import type {
   ArtifactReference,
   CommandDescriptor,
+  ConnectionState,
   ExtensionWidget,
   ModelDescriptor,
   ProjectWorkspaceKind,
@@ -34,7 +35,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DeliveryMode, WorkspaceFile } from "../lib/anvilClient";
-import type { SubagentActivity } from "../lib/subagentActivity";
+import type { SubagentActivity, SubagentActivityItem } from "../lib/subagentActivity";
 import { SubagentActivityPopover } from "./SubagentActivityPopover";
 
 export interface ComposerAttachment {
@@ -65,10 +66,14 @@ interface ComposerProps {
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   workspaceKind?: ProjectWorkspaceKind;
   subagents: SubagentActivity;
+  subagentsLoading?: boolean;
+  connection: ConnectionState;
   attachments: ComposerAttachment[];
   onAttachFiles: (sessionId: string, files: File[]) => void;
   onRemoveAttachment: (sessionId: string, attachmentId: string) => void;
   onSearchFiles: (sessionId: string, query: string) => Promise<WorkspaceFile[]>;
+  onCancelSubagent: (runId: string) => Promise<void>;
+  onOpenSubagentChild: (item: SubagentActivityItem) => Promise<void>;
   onCancel: () => void;
   onDraftConsumed: (sessionId: string) => void;
   onPromptChange: (sessionId: string, prompt: string) => void;
@@ -220,10 +225,14 @@ export function Composer({
   contextUsage,
   workspaceKind,
   subagents,
+  subagentsLoading,
+  connection,
   attachments,
   onAttachFiles,
   onRemoveAttachment,
   onSearchFiles,
+  onCancelSubagent,
+  onOpenSubagentChild,
   onCancel,
   onDraftConsumed,
   onPromptChange,
@@ -698,7 +707,13 @@ export function Composer({
         <span className="composer-status-workspace">
           {workspaceKind === "general" ? "home workspace" : workspaceKind === "worktree" ? "worktree" : "main workspace"}
         </span>
-        <SubagentActivityPopover activity={subagents} />
+        <SubagentActivityPopover
+          activity={subagents}
+          connection={connection}
+          loading={subagentsLoading}
+          onCancel={onCancelSubagent}
+          onOpenChild={onOpenSubagentChild}
+        />
       </div>
     </div>
   );

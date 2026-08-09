@@ -6,6 +6,8 @@ import {
   isAnvilSessionDetailSync,
   isAnvilSummaryBootstrap,
   isGitHubRepositoryPage,
+  isSubagentRun,
+  isTerminalSubagentStatus,
   normalizeProjectSlug,
   normalizeSessionTitle,
   provisionalSessionTitleFromPrompt,
@@ -22,6 +24,7 @@ import {
   type JsonValue,
   type ProjectResourceContentBlock,
   type SessionSummary,
+  type SubagentRun,
   type ThinkingLevel,
   type TimelineEntry,
 } from "@anvil/protocol";
@@ -99,6 +102,8 @@ export interface AnvilClient {
   dispatch(command: AnvilClientCommand): void;
   selectProject(projectId: string): void;
   selectSession(sessionId: string): void;
+  openSubagentSession(parentSessionId: string, runId: string): Promise<void>;
+  cancelSubagent(parentSessionId: string, runId: string): Promise<void>;
   createProject(name: string): Promise<ProjectCreateResult>;
   cloneProject(name: string, repository: string): Promise<void>;
   addExistingProject(name: string, path: string): Promise<void>;
@@ -327,6 +332,27 @@ function removeOptimisticSession(
     queues: withoutSessionKey(snapshot.queues, sessionId),
     composerDrafts: withoutSessionKey(snapshot.composerDrafts, sessionId),
     runStates: withoutSessionKey(snapshot.runStates, sessionId),
+    subagentRuns: withoutSessionKey(snapshot.subagentRuns, sessionId),
+  };
+}
+
+function subagentSessionStatus(run: SubagentRun): SessionSummary["status"] {
+  if (run.status === "failed" || run.status === "interrupted") return "failed";
+  if (run.status === "needs_attention") return "waiting";
+  if (["queued", "starting", "running"].includes(run.status)) return "running";
+  return "idle";
+}
+
+function replaceSubagentRun<TSnapshot extends AnvilSnapshot>(snapshot: TSnapshot, run: SubagentRun): TSnapshot {
+  const runs = snapshot.subagentRuns[run.parentSessionId] ?? [];
+  return {
+    ...snapshot,
+    subagentRuns: {
+      ...snapshot.subagentRuns,
+      [run.parentSessionId]: runs.some((candidate) => candidate.id === run.id)
+        ? runs.map((candidate) => candidate.id === run.id ? run : candidate)
+        : [...runs, run],
+    },
   };
 }
 
@@ -353,6 +379,7 @@ function mergeSessionDetail<TSnapshot extends AnvilSnapshot>(
     queues: { ...snapshot.queues, [detail.sessionId]: detail.queue },
     composerDrafts: { ...snapshot.composerDrafts, [detail.sessionId]: detail.composerDraft },
     runStates: { ...snapshot.runStates, [detail.sessionId]: detail.runState },
+    subagentRuns: { ...snapshot.subagentRuns, [detail.sessionId]: detail.subagentRuns },
   } as TSnapshot;
 }
 
@@ -369,6 +396,7 @@ function withoutSessionDetail<TSnapshot extends AnvilSnapshot>(
     widgets: snapshot.widgets.filter((widget) => widget.sessionId !== sessionId),
     queues: withoutSessionKey(snapshot.queues, sessionId),
     composerDrafts: withoutSessionKey(snapshot.composerDrafts, sessionId),
+    subagentRuns: withoutSessionKey(snapshot.subagentRuns, sessionId),
   } as TSnapshot;
 }
 
@@ -389,6 +417,7 @@ function detailFromSnapshot(
     queue: snapshot.queues[sessionId] ?? { steering: [], followUp: [] },
     composerDraft: snapshot.composerDrafts[sessionId] ?? "",
     runState: snapshot.runStates[sessionId] ?? "idle",
+    subagentRuns: snapshot.subagentRuns[sessionId] ?? [],
   };
 }
 
@@ -462,6 +491,10 @@ export class FixtureAnvilClient implements AnvilClient {
           fixture.id,
         ),
       );
+      base = {
+        ...base,
+        subagentRuns: { ...base.subagentRuns, [fixture.session.id]: fixture.subagentRuns ?? [] },
+      };
     }
 
     const initialFixture = fixtures[0]!;
@@ -542,6 +575,9 @@ export class FixtureAnvilClient implements AnvilClient {
       case "interaction.respond":
         this.respondToInteraction(command.payload);
         break;
+      case "subagent.cancel":
+        if (command.sessionId) void this.cancelSubagent(command.sessionId, command.payload.runId);
+        break;
     }
   };
 
@@ -575,6 +611,63 @@ export class FixtureAnvilClient implements AnvilClient {
         : this.snapshot.replay,
     };
     this.emit();
+  };
+
+  openSubagentSession = async (parentSessionId: string, runId: string): Promise<void> => {
+    const parent = this.snapshot.sessions.find((session) => session.id === parentSessionId && !session.internal);
+    const run = this.snapshot.subagentRuns[parentSessionId]?.find((candidate) => candidate.id === runId);
+    if (!parent || !run) throw new Error("Subagent run is no longer available");
+    const child: SessionSummary = {
+      id: run.childSessionId,
+      projectId: parent.projectId,
+      title: `${run.role} · ${run.taskPreview}`.slice(0, SESSION_TITLE_MAX_LENGTH),
+      updatedAt: run.updatedAt,
+      status: subagentSessionStatus(run),
+      modelId: parent.modelId,
+      thinkingLevel: parent.thinkingLevel,
+      internal: true,
+      parentSessionId,
+    };
+    const timeline: TimelineEntry[] = [
+      {
+        id: `${run.id}:task`, kind: "message", role: "user", status: "complete", createdAt: run.createdAt,
+        content: [{ id: `${run.id}:task:text`, type: "text", text: run.taskPreview }],
+      },
+      ...((run.resultPreview || run.error) ? [{
+        id: `${run.id}:preview`, kind: "message" as const, role: "assistant" as const,
+        status: run.error ? "failed" as const : "complete" as const,
+        createdAt: run.endedAt ?? run.updatedAt,
+        content: [{ id: `${run.id}:preview:text`, type: "text" as const, text: run.error ?? run.resultPreview! }],
+        ...(run.error ? { error: run.error } : {}),
+      }] : []),
+    ];
+    this.pauseReplay();
+    const sessions = this.snapshot.sessions.some((session) => session.id === child.id)
+      ? this.snapshot.sessions.map((session) => session.id === child.id ? child : session)
+      : [...this.snapshot.sessions, child];
+    this.snapshot = {
+      ...this.snapshot,
+      sessions,
+      timelines: { ...this.snapshot.timelines, [child.id]: timeline },
+      catalogs: { ...this.snapshot.catalogs, [child.id]: fixtureCatalog },
+      queues: { ...this.snapshot.queues, [child.id]: { steering: [], followUp: [] } },
+      composerDrafts: { ...this.snapshot.composerDrafts, [child.id]: "" },
+      runStates: { ...this.snapshot.runStates, [child.id]: child.status === "running" ? "running" : "idle" },
+      subagentRuns: { ...this.snapshot.subagentRuns, [child.id]: [] },
+      workspaceLocation: locationForSession(child),
+      activeSessionId: child.id,
+    };
+    this.emit();
+  };
+
+  cancelSubagent = async (parentSessionId: string, runId: string): Promise<void> => {
+    const run = this.snapshot.subagentRuns[parentSessionId]?.find((candidate) => candidate.id === runId);
+    if (!run) throw new Error("Subagent run is no longer available");
+    if (isTerminalSubagentStatus(run.status)) return;
+    const endedAt = timestamp();
+    this.applyLocal("subagent.updated", {
+      run: { ...run, status: "cancelled", updatedAt: endedAt, endedAt },
+    }, parentSessionId);
   };
 
   createProject = async (name: string): Promise<ProjectCreateResult> => {
@@ -1040,6 +1133,10 @@ export class FixtureAnvilClient implements AnvilClient {
     this.pauseReplay();
     this.snapshot = {
       ...resetSessionState(this.snapshot, fixture.session.id),
+      subagentRuns: {
+        ...this.snapshot.subagentRuns,
+        [fixture.session.id]: fixture.subagentRuns ?? [],
+      },
       workspaceLocation: locationForSession(fixture.session),
       activeSessionId: fixture.session.id,
       hydratingSessionIds: [],
@@ -1071,7 +1168,10 @@ export class FixtureAnvilClient implements AnvilClient {
       baseTimestamp: fixture.baseTimestamp,
     });
     const rebuilt = applyAnvilEvents(
-      reset,
+      {
+        ...reset,
+        subagentRuns: { ...reset.subagentRuns, [fixture.session.id]: fixture.subagentRuns ?? [] },
+      },
       sequenceEvents(
         normalizeRecordedRpcItems(adapter, fixture.records),
         reset.lastSequence,
@@ -1238,6 +1338,7 @@ export interface ForgeAnvilClientOptions {
   fetch?: typeof fetch;
   createEventSource?: (url: string) => EventSource;
   autoConnect?: boolean;
+  internalDetailPollMs?: number;
 }
 
 export class ForgeAnvilClient implements AnvilClient {
@@ -1252,7 +1353,13 @@ export class ForgeAnvilClient implements AnvilClient {
   private readonly projectResourceListeners = new Set<(completion: LiveProjectResourceCompletion) => void>();
   private readonly fetcher: typeof fetch;
   private readonly createEventSource: (url: string) => EventSource;
+  private readonly internalDetailPollMs: number;
   private stream?: EventSource;
+  private internalDetailPollTimer?: ReturnType<typeof setTimeout>;
+  private internalDetailPollController?: AbortController;
+  private internalDetailPollSessionId?: string;
+  private internalDetailFinalSessionId?: string;
+  private internalDetailPollInFlight = false;
   private retryTimer?: ReturnType<typeof setTimeout>;
   private retryDelay = 1_000;
   private bootstrapPromise?: Promise<void>;
@@ -1309,6 +1416,7 @@ export class ForgeAnvilClient implements AnvilClient {
   constructor(options: ForgeAnvilClientOptions = {}) {
     this.fetcher = options.fetch ?? fetch.bind(globalThis);
     this.createEventSource = options.createEventSource ?? ((url) => new EventSource(url));
+    this.internalDetailPollMs = options.internalDetailPollMs ?? 1_000;
     if (options.autoConnect !== false) void this.bootstrap();
     if (typeof window !== "undefined") {
       window.addEventListener("offline", () => this.setConnection("offline"));
@@ -1320,7 +1428,11 @@ export class ForgeAnvilClient implements AnvilClient {
 
   subscribe = (listener: () => void) => {
     this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
+    this.syncInternalDetailPolling();
+    return () => {
+      this.listeners.delete(listener);
+      this.syncInternalDetailPolling();
+    };
   };
 
   subscribeProjectResourceCompletions = (listener: (completion: LiveProjectResourceCompletion) => void) => {
@@ -1359,6 +1471,60 @@ export class ForgeAnvilClient implements AnvilClient {
     if (this.detailApiEnabled) void this.hydrateSession(sessionId);
     this.touchDetail(sessionId);
     void this.persistShell();
+  };
+
+  openSubagentSession = async (parentSessionId: string, runId: string): Promise<void> => {
+    const parent = this.snapshot.sessions.find((session) => session.id === parentSessionId && !session.internal);
+    const run = this.snapshot.subagentRuns[parentSessionId]?.find((candidate) => candidate.id === runId);
+    if (!parent || !run) throw new Error("Subagent run is no longer available");
+
+    const response = await this.fetcher(`/api/v1/sessions/${encodeURIComponent(run.childSessionId)}/detail`, {
+      headers: { accept: "application/json" },
+    });
+    if (!response.ok) throw new Error(`Forge detail failed with HTTP ${response.status}`);
+    const value: unknown = await response.json();
+    if (!isAnvilSessionDetailSync(value) || value.mode !== "reset" || value.detail.sessionId !== run.childSessionId) {
+      throw new Error("Forge returned an invalid child session detail");
+    }
+
+    const child: SessionSummary = {
+      id: run.childSessionId,
+      projectId: parent.projectId,
+      title: `${run.role} · ${run.taskPreview}`.slice(0, SESSION_TITLE_MAX_LENGTH),
+      updatedAt: run.updatedAt,
+      status: subagentSessionStatus(run),
+      modelId: parent.modelId,
+      thinkingLevel: parent.thinkingLevel,
+      internal: true,
+      parentSessionId,
+    };
+    const sessions = this.snapshot.sessions.some((session) => session.id === child.id)
+      ? this.snapshot.sessions.map((session) => session.id === child.id ? child : session)
+      : [...this.snapshot.sessions, child];
+    this.snapshot = mergeSessionDetail({
+      ...this.snapshot,
+      sessions,
+      workspaceLocation: locationForSession(child),
+      activeSessionId: child.id,
+    }, value.detail);
+    this.hydratedThrough.set(child.id, value.detail.throughSequence);
+    this.touchDetail(child.id);
+    this.emit();
+  };
+
+  cancelSubagent = async (parentSessionId: string, runId: string): Promise<void> => {
+    const run = this.snapshot.subagentRuns[parentSessionId]?.find((candidate) => candidate.id === runId);
+    if (!run) throw new Error("Subagent run is no longer available");
+    if (isTerminalSubagentStatus(run.status)) return;
+    const response = await this.sendCommand(this.command("subagent.cancel", parentSessionId, { runId }), true);
+    if (
+      isSubagentRun(response?.data) &&
+      response.data.id === runId &&
+      response.data.parentSessionId === parentSessionId
+    ) {
+      this.snapshot = replaceSubagentRun(this.snapshot, response.data);
+      this.emit();
+    }
   };
 
   createProject = async (name: string): Promise<ProjectCreateResult> => {
@@ -1923,6 +2089,105 @@ export class ForgeAnvilClient implements AnvilClient {
     this.evictDetails();
   }
 
+  private currentInternalSessionId(): string | undefined {
+    if (this.listeners.size === 0 || !this.detailApiEnabled || this.snapshot.connection !== "connected") return undefined;
+    const session = this.snapshot.sessions.find((candidate) => (
+      candidate.id === this.snapshot.activeSessionId && candidate.internal && candidate.parentSessionId
+    ));
+    return session?.parentSessionId ? session.id : undefined;
+  }
+
+  private liveInternalSessionId(): string | undefined {
+    const sessionId = this.currentInternalSessionId();
+    if (!sessionId) return undefined;
+    const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (!session?.parentSessionId) return undefined;
+    const run = this.snapshot.subagentRuns[session.parentSessionId]?.find(
+      (candidate) => candidate.childSessionId === sessionId,
+    );
+    return run && !isTerminalSubagentStatus(run.status) ? sessionId : undefined;
+  }
+
+  private canSyncInternalDetail(sessionId: string, finalSync: boolean): boolean {
+    return finalSync
+      ? this.internalDetailFinalSessionId === sessionId && this.currentInternalSessionId() === sessionId
+      : this.liveInternalSessionId() === sessionId;
+  }
+
+  private syncInternalDetailPolling(): void {
+    let finalSessionId = this.internalDetailFinalSessionId;
+    if (finalSessionId && this.currentInternalSessionId() !== finalSessionId) {
+      this.internalDetailFinalSessionId = undefined;
+      finalSessionId = undefined;
+    }
+    const sessionId = finalSessionId ?? this.liveInternalSessionId();
+    if (sessionId !== this.internalDetailPollSessionId) {
+      if (this.internalDetailPollTimer) clearTimeout(this.internalDetailPollTimer);
+      this.internalDetailPollTimer = undefined;
+      this.internalDetailPollController?.abort();
+      this.internalDetailPollController = undefined;
+      this.internalDetailPollSessionId = sessionId;
+    }
+    if (finalSessionId && this.internalDetailPollTimer) {
+      clearTimeout(this.internalDetailPollTimer);
+      this.internalDetailPollTimer = undefined;
+    }
+    if (!sessionId || this.internalDetailPollTimer || this.internalDetailPollInFlight) return;
+    if (finalSessionId) {
+      void this.pollInternalSessionDetail(sessionId, true);
+      return;
+    }
+    this.internalDetailPollTimer = setTimeout(() => {
+      this.internalDetailPollTimer = undefined;
+      void this.pollInternalSessionDetail(sessionId, false);
+    }, this.internalDetailPollMs);
+  }
+
+  private async pollInternalSessionDetail(sessionId: string, finalSync: boolean): Promise<void> {
+    if (!this.canSyncInternalDetail(sessionId, finalSync) || this.internalDetailPollInFlight) return;
+    this.internalDetailPollInFlight = true;
+    const controller = new AbortController();
+    this.internalDetailPollController = controller;
+    try {
+      const baseline = this.hydratedThrough.get(sessionId);
+      const suffix = baseline === undefined ? "" : `?after=${baseline}`;
+      const response = await this.fetcher(`/api/v1/sessions/${encodeURIComponent(sessionId)}/detail${suffix}`, {
+        headers: { accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || !this.canSyncInternalDetail(sessionId, finalSync)) return;
+      if (!response.ok) throw new Error(`Forge child detail failed with HTTP ${response.status}`);
+      const value: unknown = await response.json();
+      if (controller.signal.aborted || !this.canSyncInternalDetail(sessionId, finalSync)) return;
+      if (!isAnvilSessionDetailSync(value) || (
+        value.mode === "reset" ? value.detail.sessionId !== sessionId : value.sessionId !== sessionId
+      )) {
+        throw new Error("Forge returned an invalid live child session detail");
+      }
+      const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+      if (!session) return;
+      const previous = baseline === undefined ? undefined : detailFromSnapshot(this.snapshot, sessionId, baseline);
+      if (value.mode === "delta" && !previous) throw new Error("Forge returned a child detail delta without a baseline");
+      let detail = value.mode === "reset"
+        ? value.detail
+        : applyDetailDelta(previous!, session, value.events, value.throughSequence);
+      if (value.mode === "delta" && value.subagentRuns) {
+        detail = { ...detail, subagentRuns: value.subagentRuns };
+      }
+      this.snapshot = mergeSessionDetail(this.snapshot, detail);
+      this.hydratedThrough.set(sessionId, detail.throughSequence);
+      this.touchDetail(sessionId);
+      this.emit();
+    } catch (error) {
+      if (!controller.signal.aborted) console.error(error);
+    } finally {
+      if (this.internalDetailPollController === controller) this.internalDetailPollController = undefined;
+      if (finalSync && this.internalDetailFinalSessionId === sessionId) this.internalDetailFinalSessionId = undefined;
+      this.internalDetailPollInFlight = false;
+      this.syncInternalDetailPolling();
+    }
+  }
+
   private evictDetails(): void {
     const now = Date.now();
     const candidates = [...this.detailAccess.entries()];
@@ -2006,6 +2271,9 @@ export class ForgeAnvilClient implements AnvilClient {
       let detail = value.mode === "reset"
         ? value.detail
         : applyDetailDelta(cachedDetail!, currentSession, value.events, value.throughSequence);
+      if (value.mode === "delta" && value.subagentRuns) {
+        detail = { ...detail, subagentRuns: value.subagentRuns };
+      }
       const buffered = (this.hydrationBuffers.get(sessionId) ?? [])
         .filter((event) => event.sequence > detail.throughSequence);
       if (buffered.length > 0) {
@@ -2038,13 +2306,24 @@ export class ForgeAnvilClient implements AnvilClient {
   }
 
   private async persistShell(): Promise<void> {
+    const sessions = this.snapshot.sessions.filter((session) => !session.internal);
+    const activeSessionId = sessions.some((session) => session.id === this.snapshot.activeSessionId)
+      ? this.snapshot.activeSessionId
+      : null;
+    const workspaceLocation = this.snapshot.workspaceLocation && sessions.some(
+      (session) => session.id === this.snapshot.workspaceLocation?.sessionId,
+    )
+      ? this.snapshot.workspaceLocation
+      : this.snapshot.workspaceLocation
+        ? { projectId: this.snapshot.workspaceLocation.projectId, sessionId: null }
+        : null;
     await this.cache.writeShell(summaryBootstrapFromSnapshot(
       this.snapshot.capturedAt,
       this.snapshot.connection,
       this.snapshot.projects,
-      this.snapshot.sessions,
+      sessions,
       this.snapshot.lastSequence,
-    ), this.snapshot.activeSessionId, this.snapshot.workspaceLocation);
+    ), activeSessionId, workspaceLocation);
   }
 
   private schedulePersist(sessionId: string): void {
@@ -2141,6 +2420,32 @@ export class ForgeAnvilClient implements AnvilClient {
           };
         }
         const eventApplied = next.lastSequence === event.sequence;
+        let finalInternalSessionId: string | undefined;
+        if (eventApplied && event.type === "subagent.updated") {
+          const run = event.payload.run;
+          const internalSession = previousSnapshot.sessions.find((session) => (
+            session.id === run.childSessionId && session.internal && session.parentSessionId === run.parentSessionId
+          ));
+          if (internalSession) {
+            next = {
+              ...next,
+              sessions: next.sessions.map((session) => session.id === run.childSessionId
+                ? { ...session, status: subagentSessionStatus(run), updatedAt: run.updatedAt }
+                : session),
+            };
+            const previousRun = previousSnapshot.subagentRuns[run.parentSessionId]?.find(
+              (candidate) => candidate.id === run.id,
+            );
+            if (
+              previousSnapshot.activeSessionId === run.childSessionId &&
+              previousRun &&
+              !isTerminalSubagentStatus(previousRun.status) &&
+              isTerminalSubagentStatus(run.status)
+            ) {
+              finalInternalSessionId = run.childSessionId;
+            }
+          }
+        }
         this.snapshot = {
           ...next,
           workspaceLocation: this.snapshot.workspaceLocation,
@@ -2148,6 +2453,7 @@ export class ForgeAnvilClient implements AnvilClient {
           replay,
           hydratingSessionIds: this.snapshot.hydratingSessionIds,
         };
+        if (finalInternalSessionId) this.internalDetailFinalSessionId = finalInternalSessionId;
         if (
           eventApplied &&
           this.detailApiEnabled &&
@@ -2160,7 +2466,8 @@ export class ForgeAnvilClient implements AnvilClient {
         }
         if (eventApplied) {
           for (const sessionId of this.hydratedThrough.keys()) {
-            if (!this.hydrationBuffers.has(sessionId)) {
+            const session = this.snapshot.sessions.find((candidate) => candidate.id === sessionId);
+            if (!session?.internal && !this.hydrationBuffers.has(sessionId)) {
               this.hydratedThrough.set(sessionId, Math.max(this.hydratedThrough.get(sessionId) ?? 0, event.sequence));
             }
           }
@@ -2364,6 +2671,7 @@ export class ForgeAnvilClient implements AnvilClient {
 
   private emit(): void {
     this.snapshot = reconcileClientWorkspace(this.snapshot);
+    this.syncInternalDetailPolling();
     this.listeners.forEach((listener) => listener());
   }
 }

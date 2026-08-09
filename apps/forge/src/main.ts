@@ -16,6 +16,8 @@ import { ProjectGitService } from "./projects/projectGitService.ts";
 import { EventProjectResolver } from "./projects/projectResolver.ts";
 import { LiveIndicatorsService } from "./runtime/indicators.ts";
 import { SessionManager } from "./runtime/sessionManager.ts";
+import { SubagentInternalApi, subagentEndpoint } from "./subagents/internalApi.ts";
+import { SubagentCoordinator } from "./subagents/subagentCoordinator.ts";
 import { ForgeDatabase } from "./store/database.ts";
 import { acquireForgeInstanceLock, ForgeInstanceLockedError } from "./store/instanceLock.ts";
 import { removeRetiredSpeechCredential } from "./store/retiredFeatureCleanup.ts";
@@ -45,10 +47,21 @@ async function main(): Promise<void> {
       config.terminalHistoryDir ?? join(dirname(config.databasePath), "terminal-history"),
     );
     const terminals = new TerminalManager(database, projects, terminalHistory);
+    let subagentApi!: SubagentInternalApi;
+    let subagents!: SubagentCoordinator;
     const sessions = new SessionManager(config, database, events, {
       projectResolver: projects,
       terminalCleanup: terminals,
+      runtimeEnvironment: (session) => subagentApi.environment(session),
+      cancelSubagent: async (parentSessionId, runId) => ({
+        ...await subagents.cancel(parentSessionId, runId),
+      }),
+      deleteOwnedSubagents: (parentSessionId) => subagents.deleteOwnedChildren(parentSessionId),
+      finishParentSubagentDeletion: (parentSessionId) => subagents.finishParentDeletion(parentSessionId),
+      prepareChildSubagentDeletion: (childSessionId) => subagents.prepareChildDeletion(childSessionId),
     });
+    subagents = new SubagentCoordinator(database, events, sessions);
+    subagentApi = new SubagentInternalApi(subagents, subagentEndpoint(config.host, config.port));
     const indicators = new LiveIndicatorsService(sessions);
     let shutdownPromise: Promise<void> | undefined;
     let server: ForgeHttpServer;
@@ -58,6 +71,7 @@ async function main(): Promise<void> {
       shutdownPromise = (async () => {
         process.off("SIGINT", stop);
         process.off("SIGTERM", stop);
+        subagents.stop();
         await Promise.all([
           server.close(),
           sessions.stopAll(),
@@ -79,6 +93,7 @@ async function main(): Promise<void> {
       projectFiles,
       projectGit,
       terminals,
+      subagentApi,
       searchFiles: sessions.searchFiles,
       listGitHubRepositories: githubRepositories.list,
       getProjectsRoot: sessions.getProjectsRoot,

@@ -27,6 +27,17 @@ const detail: AnvilSessionDetail = {
   queue: { steering: [], followUp: [] },
   composerDraft: "",
   runState: "idle",
+  subagentRuns: [{
+    id: "run-cached",
+    parentSessionId: "session-1",
+    parentToolCallId: "tool-cached",
+    childSessionId: "child-cached",
+    role: "reviewer",
+    status: "needs_attention",
+    taskPreview: "Review cached projection",
+    createdAt: "2026-07-23T01:00:00.000Z",
+    updatedAt: "2026-07-23T01:01:00.000Z",
+  }],
 };
 
 const summary: AnvilSummaryBootstrap = {

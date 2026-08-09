@@ -65,6 +65,7 @@ import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
 import { DesktopUpdateDialog, isOcodeDesktop } from "./DesktopUpdateDialog";
 import { InteractionPanel } from "./InteractionDialog";
+import { InternalSessionFooter } from "./InternalSessionFooter";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { ProjectGitAction } from "./ProjectGitAction";
 import { Sidebar } from "./Sidebar";
@@ -284,8 +285,13 @@ function AppShellContent() {
   const activeSessionCreationError = activeSession
     ? anvilClient.getSessionCreationError(activeSession.id)
     : undefined;
+  const ordinarySessions = useMemo(() => snapshot.sessions.filter((session) => !session.internal), [snapshot.sessions]);
   const timeline = activeSession ? snapshot.timelines[activeSession.id] ?? [] : [];
-  const subagents = useMemo(() => subagentActivityForSession(timeline), [timeline]);
+  const durableSubagentRuns = activeSession ? snapshot.subagentRuns[activeSession.id] ?? [] : [];
+  const subagents = useMemo(
+    () => subagentActivityForSession(durableSubagentRuns, timeline),
+    [durableSubagentRuns, timeline],
+  );
   const pendingInteractions = activeSession
     ? snapshot.pendingInteractions.filter((request) => request.sessionId === activeSession.id)
     : [];
@@ -301,12 +307,13 @@ function AppShellContent() {
     : EMPTY_CATALOG;
   const sidebarSnapshot = useMemo(() => ({
     projects: snapshot.projects,
-    sessions: snapshot.sessions,
-    activeSessionId: snapshot.activeSessionId,
+    sessions: ordinarySessions,
+    activeSessionId: activeSession?.internal ? null : snapshot.activeSessionId,
     connection: snapshot.connection,
   }), [
     snapshot.projects,
-    snapshot.sessions,
+    ordinarySessions,
+    activeSession?.internal,
     snapshot.activeSessionId,
     snapshot.connection,
   ]);
@@ -564,12 +571,13 @@ function AppShellContent() {
       }
       if (matchesShortcut(event, "closeThread")) {
         event.preventDefault();
-        if (activeSession) requestDeleteSession(activeSession.id);
+        if (activeSession?.internal && activeSession.parentSessionId) anvilClient.selectSession(activeSession.parentSessionId);
+        else if (activeSession) requestDeleteSession(activeSession.id);
         return;
       }
       const threadIndex = threadNumberShortcutIndex(event);
       if (threadIndex !== undefined) {
-        const target = numberedThreadTarget(sortSessionsByActivity(snapshot.sessions), threadIndex);
+        const target = numberedThreadTarget(sortSessionsByActivity(ordinarySessions), threadIndex);
         if (target) {
           event.preventDefault();
           anvilClient.selectSession(target.id);
@@ -581,7 +589,7 @@ function AppShellContent() {
       const cycleDirection = threadCycleShortcut(event);
       if (cycleDirection) {
         const target = cycledThreadTarget(
-          sortSessionsByActivity(snapshot.sessions),
+          sortSessionsByActivity(ordinarySessions),
           activeProject?.id,
           snapshot.activeSessionId,
           cycleDirection,
@@ -595,7 +603,7 @@ function AppShellContent() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProject, activeSession, isMobile, requestDeleteSession, setOpenMobile, snapshot.activeSessionId, snapshot.sessions]);
+  }, [activeProject, activeSession, isMobile, ordinarySessions, requestDeleteSession, setOpenMobile, snapshot.activeSessionId]);
 
   if (!snapshot.workspaceLocation && snapshot.connection !== "connected") {
     return (
@@ -797,6 +805,11 @@ function AppShellContent() {
 
             <InteractionPanel requests={pendingInteractions} onRespond={anvilClient.respondToInteraction} />
 
+            {activeSession.internal ? (
+              <InternalSessionFooter
+                onReturn={activeSession.parentSessionId ? () => anvilClient.selectSession(activeSession.parentSessionId!) : undefined}
+              />
+            ) : (
             <Composer
               sessionId={activeSession.id}
               modelId={activeSession.modelId}
@@ -815,10 +828,14 @@ function AppShellContent() {
               contextUsage={indicators.context}
               workspaceKind={activeProject?.workspaceKind}
               subagents={subagents}
+              subagentsLoading={snapshot.hydratingSessionIds.includes(activeSession.id)}
+              connection={snapshot.connection}
               attachments={composerAttachments[activeSession.id] ?? []}
               onAttachFiles={attachFiles}
               onRemoveAttachment={removeAttachment}
               onSearchFiles={anvilClient.searchFiles}
+              onCancelSubagent={(runId) => anvilClient.cancelSubagent(activeSession.id, runId)}
+              onOpenSubagentChild={(item) => anvilClient.openSubagentSession(activeSession.id, item.id)}
               onCancel={anvilClient.cancelActiveRun}
               onDraftConsumed={anvilClient.clearComposerDraft}
               onPromptChange={updateDraft}
@@ -826,6 +843,7 @@ function AppShellContent() {
               onThinkingLevelChange={(level) => anvilClient.setThinkingLevel(activeSession.id, level)}
               onSend={sendComposerPrompt}
             />
+            )}
           </>
         ) : (
           <div className="app-loading app-loading--workspace">

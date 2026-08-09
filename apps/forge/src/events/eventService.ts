@@ -21,6 +21,7 @@ import { ForgeDatabase } from "../store/database.ts";
 
 export class ForgeEventService extends EventEmitter {
   private snapshot: AnvilSnapshot;
+  private readonly internalSessionIds = new Set<string>();
   private eventsSinceSnapshot = 0;
   private generalProjectId?: string;
 
@@ -67,6 +68,9 @@ export class ForgeEventService extends EventEmitter {
       projects: persistedProjects,
       sequenceGap: null,
     };
+    for (const session of this.snapshot.sessions) {
+      if (session.internal) this.internalSessionIds.add(session.id);
+    }
     if (artifacts) {
       const staleUploads = database.deleteStaleUploads(new Date(Date.now() - 7 * 24 * 60 * 60 * 1_000).toISOString());
       artifacts.remove(staleUploads);
@@ -138,9 +142,24 @@ export class ForgeEventService extends EventEmitter {
   }
 
   bootstrap(): AnvilBootstrap {
+    const snapshot = this.currentSnapshot();
+    const internalSessionIds = new Set(
+      snapshot.sessions.filter((session) => session.internal).map((session) => session.id),
+    );
+    snapshot.sessions = snapshot.sessions.filter((session) => !session.internal);
+    if (snapshot.activeSessionId && internalSessionIds.has(snapshot.activeSessionId)) snapshot.activeSessionId = null;
+    snapshot.timelines = this.withoutSessionKeys(snapshot.timelines, internalSessionIds);
+    snapshot.catalogs = this.withoutSessionKeys(snapshot.catalogs, internalSessionIds);
+    snapshot.queues = this.withoutSessionKeys(snapshot.queues, internalSessionIds);
+    snapshot.composerDrafts = this.withoutSessionKeys(snapshot.composerDrafts, internalSessionIds);
+    snapshot.runStates = this.withoutSessionKeys(snapshot.runStates, internalSessionIds);
+    snapshot.subagentRuns = this.withoutSessionKeys(snapshot.subagentRuns, internalSessionIds);
+    snapshot.pendingInteractions = snapshot.pendingInteractions.filter((request) => !internalSessionIds.has(request.sessionId));
+    snapshot.extensionStatuses = snapshot.extensionStatuses.filter((status) => !internalSessionIds.has(status.sessionId));
+    snapshot.widgets = snapshot.widgets.filter((widget) => !internalSessionIds.has(widget.sessionId));
     return {
       protocolVersion: ANVIL_PROTOCOL_VERSION,
-      snapshot: this.currentSnapshot(),
+      snapshot,
       events: [],
       cursor: this.snapshot.lastSequence,
     };
@@ -152,7 +171,7 @@ export class ForgeEventService extends EventEmitter {
       capturedAt: this.snapshot.capturedAt,
       connection: "connected",
       projects: structuredClone(this.snapshot.projects),
-      sessions: structuredClone(this.snapshot.sessions),
+      sessions: structuredClone(this.snapshot.sessions.filter((session) => !session.internal)),
       cursor: this.snapshot.lastSequence,
     };
   }
@@ -171,6 +190,7 @@ export class ForgeEventService extends EventEmitter {
       queue: structuredClone(this.snapshot.queues[sessionId] ?? { steering: [], followUp: [] }),
       composerDraft: this.snapshot.composerDrafts[sessionId] ?? "",
       runState: this.snapshot.runStates[sessionId] ?? "idle",
+      subagentRuns: structuredClone(this.snapshot.subagentRuns[sessionId] ?? []),
     };
   }
 
@@ -200,6 +220,7 @@ export class ForgeEventService extends EventEmitter {
       fromSequence: afterSequence,
       throughSequence: detail.throughSequence,
       events,
+      subagentRuns: detail.subagentRuns,
     };
   }
 
@@ -237,6 +258,10 @@ export class ForgeEventService extends EventEmitter {
     const committed = this.database.createSessionWithEvent(session, event);
     this.acceptCommitted([committed]);
     return committed;
+  }
+
+  acceptSubagentEvents(committed: AnvilEvent[]): AnvilEvent[] {
+    return this.acceptCommitted(committed);
   }
 
   renameSession(sessionId: string, title: string, event: UnsequencedAnvilEvent): AnvilEvent {
@@ -316,6 +341,11 @@ export class ForgeEventService extends EventEmitter {
 
   private acceptCommitted(committed: AnvilEvent[]): AnvilEvent[] {
     if (committed.length === 0) return [];
+    for (const event of committed) {
+      if (event.type === "session.upserted" && event.payload.session.internal) {
+        this.internalSessionIds.add(event.payload.session.id);
+      }
+    }
     this.snapshot = applyAnvilEvents(this.snapshot, committed);
     if (this.snapshot.sequenceGap) {
       throw new Error(`Committed journal contains a sequence gap at ${this.snapshot.sequenceGap.expected}`);
@@ -330,6 +360,23 @@ export class ForgeEventService extends EventEmitter {
     return this.database.readEventsAfter(cursor, limit);
   }
 
+  /** Preserve global sequence continuity without exposing internal child timelines. */
+  externalEvent(event: AnvilEvent): AnvilEvent {
+    const internal = event.type === "session.upserted"
+      ? event.payload.session.internal === true
+      : event.sessionId !== null && this.internalSessionIds.has(event.sessionId);
+    if (!internal) return event;
+    return {
+      protocolVersion: event.protocolVersion,
+      id: event.id,
+      sequence: event.sequence,
+      sessionId: null,
+      timestamp: event.timestamp,
+      type: "unknown",
+      payload: { eventType: "internal.session", payload: null },
+    };
+  }
+
   latestSequence(): number {
     return this.snapshot.lastSequence;
   }
@@ -341,5 +388,9 @@ export class ForgeEventService extends EventEmitter {
   checkpoint(discardPreviousSnapshots = false): void {
     this.database.saveSnapshot(this.snapshot, { discardPreviousSnapshots });
     this.eventsSinceSnapshot = 0;
+  }
+
+  private withoutSessionKeys<T>(record: Record<string, T>, sessionIds: Set<string>): Record<string, T> {
+    return Object.fromEntries(Object.entries(record).filter(([sessionId]) => !sessionIds.has(sessionId)));
   }
 }

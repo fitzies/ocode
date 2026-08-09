@@ -27,6 +27,7 @@ import { ProjectFileService } from "../projects/projectFileService.ts";
 import { ProjectGitService } from "../projects/projectGitService.ts";
 import { ProjectsRootValidationError } from "../projects/projectsRoot.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
+import type { SubagentInternalApi } from "../subagents/internalApi.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
 import { ProjectFileRoutes } from "./projectFileRoutes.ts";
@@ -53,6 +54,7 @@ export interface ForgeHttpServerOptions {
   requestRebuild?: () => Promise<void>;
   desktopUpdates?: DesktopUpdateStore;
   terminals?: TerminalManager;
+  subagentApi?: SubagentInternalApi;
   instanceId?: string;
   ownerLogin?: string;
   webRoot?: string;
@@ -176,6 +178,7 @@ export class ForgeHttpServer {
       });
       return;
     }
+    if (this.options.subagentApi && await this.options.subagentApi.handle(request, response, url.pathname)) return;
     if (url.pathname.startsWith("/api/") && !authorizedOwner(request, this.options.ownerLogin)) {
       sendJson(response, 403, apiError("owner_rejected", "Tailscale identity is not authorized"));
       return;
@@ -812,7 +815,8 @@ export class ForgeHttpServer {
     const writeEvent = (event: AnvilEvent) => {
       if (closed || event.sequence <= delivered) return;
       delivered = event.sequence;
-      writeChunk(`id: ${event.sequence}\nevent: anvil\ndata: ${JSON.stringify(event)}\n\n`);
+      const external = this.options.events.externalEvent(event);
+      writeChunk(`id: ${external.sequence}\nevent: anvil\ndata: ${JSON.stringify(external)}\n\n`);
     };
     const onEvent = (event: AnvilEvent) => writeEvent(event);
     const heartbeat = setInterval(() => writeChunk(": heartbeat\n\n"), 15_000);

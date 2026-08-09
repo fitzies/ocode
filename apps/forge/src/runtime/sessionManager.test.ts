@@ -8,6 +8,7 @@ import {
   createOcodeAskUserQuestionResponse,
   GENERAL_PROJECT_NAME,
   type AnvilClientCommand,
+  type SubagentRun,
 } from "@anvil/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -16,6 +17,7 @@ import type { ForgeConfig } from "../config.ts";
 import { ForgeEventService } from "../events/eventService.ts";
 import { ProjectCloneError } from "../projects/projectCloneService.ts";
 import { ForgeDatabase } from "../store/database.ts";
+import { SubagentCoordinator } from "../subagents/subagentCoordinator.ts";
 import { SessionManager } from "./sessionManager.ts";
 
 let directory: string;
@@ -55,7 +57,7 @@ beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), "anvil-runtime-"));
   const executable = join(directory, "fake-pi.mjs");
   writeFileSync(executable, `#!/usr/bin/env node
-    import { existsSync } from "node:fs";
+    import { appendFileSync, existsSync, writeFileSync } from "node:fs";
     import { createInterface } from "node:readline";
     const input = createInterface({ input: process.stdin });
     const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
@@ -66,8 +68,10 @@ beforeEach(() => {
     let pendingDialogPromptId;
     let askRequestId = 0;
     let aborted = false;
+    writeFileSync(sessionDir + "/runtime-args.json", JSON.stringify(process.argv.slice(2)));
     input.on("line", (line) => {
       const request = JSON.parse(line);
+      appendFileSync(sessionDir + "/rpc-requests.jsonl", JSON.stringify(request) + "\\n");
       if (request.type === "get_state") {
         setTimeout(() => send({ type: "response", id: request.id, command: request.type, success: true, data: {
           model: { id: "model-1", name: "Model One", provider: "test", reasoning: true, input: ["text"], thinkingLevelMap: { xhigh: null } },
@@ -122,7 +126,7 @@ beforeEach(() => {
           send({ type: "message_end", message: { id: "assistant-stream", role: "assistant", content: [{ type: "text", text: "Hello world" }], timestamp: 2 } });
           send({ type: "response", id: request.id, command: request.type, success: true });
           send({ type: "agent_settled" });
-        } else if (request.message === "Hang tool") {
+        } else if (request.message === "Hang tool" || request.message.includes("Subagent stays busy")) {
           send({ type: "response", id: request.id, command: request.type, success: true });
           send({
             type: "tool_execution_start",
@@ -854,6 +858,173 @@ describe("SessionManager", () => {
       name: "Saved Root Project",
       path: join(nextRoot, "saved-root-project"),
     }));
+  });
+
+  it("returns the canonical durable run when cancellation is accepted", async () => {
+    await manager.stopAll();
+    const run: SubagentRun = {
+      id: "run-cancel-contract",
+      parentSessionId: requestedSessionId,
+      parentToolCallId: "tool-cancel-contract",
+      childSessionId: "child-cancel-contract",
+      role: "builder",
+      status: "cancelled",
+      taskPreview: "Cancel this worker",
+      createdAt: "2026-07-23T01:00:00.000Z",
+      updatedAt: "2026-07-23T01:00:01.000Z",
+      endedAt: "2026-07-23T01:00:01.000Z",
+    };
+    const cancelSubagent = vi.fn(async () => run);
+    manager = new SessionManager(config, database, events, { cancelSubagent });
+    await manager.handleCommand(command("create-cancel-contract-parent", "session.create", null, {
+      projectId: "anvil", sessionId: requestedSessionId,
+    }));
+
+    const response = await manager.handleCommand(command("cancel-contract", "subagent.cancel", requestedSessionId, {
+      runId: run.id,
+    }));
+
+    expect(response).toMatchObject({ success: true, data: run });
+    expect(cancelSubagent).toHaveBeenCalledWith(requestedSessionId, run.id);
+  });
+
+  it("excludes only delegation tools from parent and child Pi runtimes", async () => {
+    config.piExtensionPath = join(directory, "ocode-extension.ts");
+    await manager.stopAll();
+    manager = new SessionManager(config, database, events);
+    const created = await manager.handleCommand(command("create-tool-policy-parent", "session.create", null, {
+      projectId: "anvil", sessionId: requestedSessionId,
+    }));
+    const parentSessionId = (created.data as { sessionId: string }).sessionId;
+    const childSessionId = "01959f7e-7d64-7000-8000-000000000002";
+    manager.createSubagentSession({ sessionId: childSessionId, parentSessionId, title: "Worker" });
+    await waitUntil(() => existsSync(join(config.sessionDir, parentSessionId, "runtime-args.json")) &&
+      existsSync(join(config.sessionDir, childSessionId, "runtime-args.json")));
+
+    const args = (sessionId: string) => JSON.parse(
+      readFileSync(join(config.sessionDir, sessionId, "runtime-args.json"), "utf8"),
+    ) as string[];
+    const parentArgs = args(parentSessionId);
+    const childArgs = args(childSessionId);
+    expect(parentArgs.slice(parentArgs.indexOf("--exclude-tools"), parentArgs.indexOf("--exclude-tools") + 2))
+      .toEqual(["--exclude-tools", "subagent"]);
+    expect(childArgs.slice(childArgs.indexOf("--exclude-tools"), childArgs.indexOf("--exclude-tools") + 2))
+      .toEqual(["--exclude-tools", "subagent,ocode_subagent"]);
+    expect(parentArgs).toContain(config.piExtensionPath);
+    expect(childArgs).toContain(config.piExtensionPath);
+    expect(parentArgs).not.toContain("--tools");
+    expect(childArgs).not.toContain("--tools");
+  });
+
+  it.each([
+    { state: "idle/settled", expectedRpcType: "prompt" },
+    { state: "busy", expectedRpcType: "follow_up" },
+  ] as const)("delivers one internal completion to a $state parent through $expectedRpcType", async ({ state, expectedRpcType }) => {
+    const created = await manager.handleCommand(command(`create-internal-delivery-${state}`, "session.create", null, {
+      projectId: "anvil", sessionId: requestedSessionId,
+    }));
+    const sessionId = (created.data as { sessionId: string }).sessionId;
+    await waitUntil(() => (events.currentSnapshot().catalogs[sessionId]?.models.length ?? 0) > 0);
+    if (state === "busy") {
+      const busy = await manager.handleCommand(command("busy-parent", "prompt.send", sessionId, {
+        content: "Hang tool", delivery: "prompt",
+      }));
+      expect(busy.success).toBe(true);
+      await waitUntil(() => events.currentSnapshot().runStates[sessionId] === "running");
+    } else {
+      const settled = await manager.handleCommand(command("settle-idle-parent", "session.settled", sessionId, {
+        settled: true,
+      }));
+      expect(settled.success).toBe(true);
+    }
+    const promptedBefore = database.readEventsAfter(0).filter((event) => event.type === "session.prompted").length;
+    const activityBefore = database.getSession(sessionId)?.session.lastUserMessageAt;
+
+    const [delivered, duplicate] = await Promise.all([
+      manager.deliverSubagentCompletion("subagent-completion:test", sessionId, "Child session: child-1"),
+      manager.deliverSubagentCompletion("subagent-completion:test", sessionId, "different content"),
+    ]);
+
+    expect(delivered.success).toBe(true);
+    expect(duplicate).toEqual(delivered);
+    const requests = readFileSync(join(config.sessionDir, sessionId, "rpc-requests.jsonl"), "utf8")
+      .trim().split("\n").map((line) => JSON.parse(line) as { type: string; message?: string });
+    expect(requests.filter((request) => request.message === "Child session: child-1")).toEqual([
+      expect.objectContaining({ type: expectedRpcType }),
+    ]);
+    expect(requests.some((request) => request.message === "different content")).toBe(false);
+    expect(database.readEventsAfter(0).filter((event) => event.type === "session.prompted")).toHaveLength(promptedBefore);
+    expect(database.getSession(sessionId)?.session.lastUserMessageAt).toBe(activityBefore);
+    if (state === "idle/settled") expect(database.getSession(sessionId)?.session.settled).toBe(false);
+  });
+
+  it.each(["session", "project"] as const)("stops and deletes owned child runtimes before %s deletion", async (scope) => {
+    await manager.stopAll();
+    let coordinator!: SubagentCoordinator;
+    manager = new SessionManager(config, database, events, {
+      deleteOwnedSubagents: (parentSessionId) => coordinator.deleteOwnedChildren(parentSessionId),
+      finishParentSubagentDeletion: (parentSessionId) => coordinator.finishParentDeletion(parentSessionId),
+      prepareChildSubagentDeletion: (childSessionId) => coordinator.prepareChildDeletion(childSessionId),
+    });
+    coordinator = new SubagentCoordinator(database, events, manager, 1);
+    try {
+      const created = await manager.handleCommand(command(`create-owned-${scope}`, "session.create", null, {
+        projectId: "anvil", sessionId: requestedSessionId,
+      }));
+      const parentSessionId = (created.data as { sessionId: string }).sessionId;
+      const run = coordinator.launch({
+        parentSessionId, parentToolCallId: `tool-owned-${scope}`, role: "builder", task: "Subagent stays busy",
+      });
+      await waitUntil(() => database.subagents.get(run.id)?.status === "running");
+      const runtimes = (manager as unknown as { runtimes: Map<string, unknown> }).runtimes;
+      expect(runtimes.has(run.childSessionId)).toBe(true);
+
+      const deleted = scope === "session"
+        ? await manager.handleCommand(command("delete-owned-parent", "session.delete", null, { sessionId: parentSessionId }))
+        : await manager.handleCommand(command("delete-owned-project", "project.delete", null, { projectId: "anvil" }));
+
+      expect(deleted.error).toBeUndefined();
+      expect(deleted).toMatchObject({ success: true });
+      expect(database.getSession(parentSessionId)).toBeUndefined();
+      expect(database.getSession(run.childSessionId)).toBeUndefined();
+      expect(database.subagents.get(run.id)).toBeUndefined();
+      expect(runtimes.has(run.childSessionId)).toBe(false);
+      expect(events.currentSnapshot().sessions.some((session) => session.id === run.childSessionId)).toBe(false);
+    } finally {
+      coordinator.stop();
+    }
+  });
+
+  it("directly deletes an internal child without deadlocking its lifecycle cancellation", async () => {
+    await manager.stopAll();
+    let coordinator!: SubagentCoordinator;
+    manager = new SessionManager(config, database, events, {
+      deleteOwnedSubagents: (parentSessionId) => coordinator.deleteOwnedChildren(parentSessionId),
+      finishParentSubagentDeletion: (parentSessionId) => coordinator.finishParentDeletion(parentSessionId),
+      prepareChildSubagentDeletion: (childSessionId) => coordinator.prepareChildDeletion(childSessionId),
+    });
+    coordinator = new SubagentCoordinator(database, events, manager, 1);
+    try {
+      const created = await manager.handleCommand(command("create-parent-for-child-delete", "session.create", null, {
+        projectId: "anvil", sessionId: requestedSessionId,
+      }));
+      const parentSessionId = (created.data as { sessionId: string }).sessionId;
+      const run = coordinator.launch({
+        parentSessionId, parentToolCallId: "tool-direct-child-delete", task: "Subagent stays busy",
+      });
+      await waitUntil(() => database.subagents.get(run.id)?.status === "running");
+
+      const deleted = await manager.handleCommand(command("delete-internal-child", "session.delete", null, {
+        sessionId: run.childSessionId,
+      }));
+
+      expect(deleted).toMatchObject({ success: true });
+      expect(database.getSession(parentSessionId)).toBeDefined();
+      expect(database.getSession(run.childSessionId)).toBeUndefined();
+      expect(database.subagents.get(run.id)).toBeUndefined();
+    } finally {
+      coordinator.stop();
+    }
   });
 
   it("permanently deletes a session and its runtime directory", async () => {

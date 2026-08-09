@@ -43,7 +43,7 @@ describe("Sidebar thread ordering", () => {
     });
 
     expect(markup).toContain("Lowercase thread");
-    expect(markup).toContain(`${project.path.split("/").at(-1)}/feature/sidebar`);
+    expect(markup).toContain(`${project.name}/feature/sidebar`);
     expect(markup).toContain('aria-label="Create thread"');
     expect(markup).not.toContain(">Unsettled<");
   });
@@ -61,19 +61,19 @@ describe("Sidebar thread ordering", () => {
     expect(markup.match(/aria-current="page"/g)).toHaveLength(1);
   });
 
-  it("uses the repository directory name rather than a display-name slug", () => {
+  it("uses the configured project display name rather than the repository directory", () => {
     const client = new FixtureAnvilClient();
     const base = client.getSnapshot();
     const project = base.projects[0]!;
     const markup = renderSnapshot({
       ...base,
       projects: base.projects.map((candidate) => candidate.id === project.id
-        ? { ...candidate, name: "cell journey", path: "/home/oli/code/cell-journey" }
+        ? { ...candidate, name: "ocode", path: "/home/oli/code/anvil" }
         : candidate),
     });
 
-    expect(markup).toContain("cell-journey/main");
-    expect(markup).not.toContain("cell journey/main");
+    expect(markup).toContain("ocode/main");
+    expect(markup).not.toContain("anvil/main");
   });
 
   it("uses a project select instead of project filter chips", () => {

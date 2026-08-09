@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ocode agent activity concepts</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page: transparent;
+    --ink: #eeeae2;
+    --muted: #9b978f;
+    --faint: #68665f;
+    --panel: #171816;
+    --panel-2: #1d1e1b;
+    --panel-3: #24241f;
+    --line: #34352f;
+    --line-soft: #292a26;
+    --amber: #d7a84f;
+    --amber-soft: #392f1d;
+    --green: #79b98a;
+    --green-soft: #1d3022;
+    --red: #d87b70;
+    --red-soft: #38211f;
+    --blue: #86a9c6;
+    --focus: #ead09a;
+    --shadow: 0 24px 64px rgba(0,0,0,.38);
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--ink); font-family: var(--sans); }
+  button, input { font: inherit; }
+  .artifact { width: min(1440px, 100%); margin: 0 auto; padding: 22px; }
+  .intro { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 24px; margin-bottom: 18px; }
+  .eyebrow { margin: 0 0 7px; color: var(--amber); font: 650 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  h1 { margin: 0; max-width: 760px; font-size: clamp(24px, 3.5vw, 43px); font-weight: 640; letter-spacing: -.035em; line-height: 1.04; }
+  .intro p { max-width: 720px; margin: 10px 0 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+  .recommendation { max-width: 285px; padding: 12px 14px; background: var(--amber-soft); border: 1px solid #5a4726; border-radius: 9px; color: #e9d5ab; font-size: 11px; line-height: 1.5; }
+  .recommendation strong { display: block; margin-bottom: 3px; color: #f2dfb6; font: 650 10px/1.2 var(--mono); text-transform: uppercase; letter-spacing: .08em; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs input { position: absolute; opacity: 0; pointer-events: none; }
+  .tabs label { display: flex; min-width: max-content; align-items: center; gap: 8px; padding: 8px 11px; color: var(--muted); background: #151613; border: 1px solid var(--line-soft); border-radius: 7px; cursor: pointer; font-size: 11px; }
+  .tabs label b { color: var(--faint); font: 600 9px/1 var(--mono); }
+  .tabs label:has(input:checked) { color: var(--ink); background: var(--panel-3); border-color: #57523f; }
+  .tabs label:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .concept-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .concept { min-width: 0; overflow: hidden; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); animation: rise .45s both; }
+  .concept:nth-child(2) { animation-delay: .07s; }
+  .concept:nth-child(3) { animation-delay: .14s; }
+  .concept-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 15px 15px 12px; border-bottom: 1px solid var(--line-soft); }
+  .concept-kicker { color: var(--faint); font: 600 9px/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; }
+  .concept h2 { margin: 5px 0 3px; font-size: 16px; font-weight: 620; letter-spacing: -.02em; }
+  .concept-head p { margin: 0; color: var(--muted); font-size: 10.5px; line-height: 1.4; }
+  .risk { padding: 5px 7px; color: var(--green); background: var(--green-soft); border: 1px solid #315139; border-radius: 999px; font: 600 8px/1 var(--mono); white-space: nowrap; text-transform: uppercase; }
+  .risk.medium { color: #e2c887; background: var(--amber-soft); border-color: #5b4827; }
+  .stage { min-height: 440px; padding: 12px; background: #10110f; }
+  .rationale { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-items: center; padding: 10px 13px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10px; line-height: 1.45; }
+  .rationale b { color: var(--ink); font-weight: 590; }
+  .scope { color: var(--faint); font: 600 8px/1 var(--mono); white-space: nowrap; }
+
+  /* shared mock UI */
+  .window { height: 100%; min-height: 416px; overflow: hidden; background: #161714; border: 1px solid #30312c; border-radius: 9px; }
+  .chrome { display: flex; height: 34px; align-items: center; gap: 5px; padding: 0 10px; color: var(--faint); border-bottom: 1px solid var(--line-soft); font: 600 8px/1 var(--mono); }
+  .traffic { width: 6px; height: 6px; border-radius: 50%; background: #494a44; }
+  .brand { margin-left: 5px; color: #b6b2aa; letter-spacing: .04em; }
+  .spacer { flex: 1; }
+  .tiny-button { padding: 4px 7px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 5px; font: 600 8px/1 var(--mono); }
+  .dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgba(121,185,138,.08); }
+  .dot.run { background: var(--amber); box-shadow: 0 0 0 3px rgba(215,168,79,.09); }
+  .dot.attn { background: var(--red); box-shadow: 0 0 0 3px rgba(216,123,112,.09); }
+  .dot.done { background: var(--green); }
+  .spinner { width: 9px; height: 9px; border: 1.5px solid #5d553f; border-top-color: var(--amber); border-radius: 50%; animation: spin 1s linear infinite; }
+  .status-label { color: var(--faint); font: 600 8px/1 var(--mono); text-transform: uppercase; letter-spacing: .05em; }
+  .status-label.attn { color: var(--red); }
+  .status-label.run { color: var(--amber); }
+  .status-label.done { color: var(--green); }
+  .meta { color: var(--faint); font: 500 8px/1.3 var(--mono); }
+  .agent-title { overflow: hidden; color: #dedad2; font-size: 10.5px; font-weight: 610; text-overflow: ellipsis; white-space: nowrap; }
+  .activity { overflow: hidden; color: var(--muted); font-size: 9px; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-row { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 8px; align-items: start; padding: 9px 10px; border-bottom: 1px solid var(--line-soft); }
+  .agent-row.active { background: #211e17; }
+  .agent-copy { display: grid; min-width: 0; gap: 4px; }
+  .agent-side { display: grid; justify-items: end; gap: 6px; }
+  .chip { padding: 3px 5px; color: #aaa69e; background: #242520; border: 1px solid #34352f; border-radius: 4px; font: 600 7px/1 var(--mono); }
+  .countbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--faint); font: 600 8px/1 var(--mono); border-bottom: 1px solid var(--line-soft); }
+  .countbar strong { color: #bdb8ae; font-weight: 650; }
+  .countbar .urgent { color: var(--red); }
+  .view-all { margin-left: auto; color: var(--amber); }
+
+  /* A */
+  .chat { display: grid; height: 380px; grid-template-rows: 1fr auto; }
+  .messages { display: grid; align-content: start; gap: 9px; padding: 14px; }
+  .bubble { width: 78%; padding: 9px 10px; color: #b9b5ad; background: #1c1d1a; border: 1px solid var(--line-soft); border-radius: 8px; font-size: 9px; line-height: 1.45; }
+  .bubble.user { justify-self: end; width: 67%; color: #d8d4cc; background: #26241e; }
+  .composer { position: relative; margin: 9px; padding: 9px; background: #20211d; border: 1px solid #393a34; border-radius: 9px; }
+  .composer-line { display: flex; align-items: center; gap: 7px; color: #85827b; font-size: 9px; }
+  .agent-trigger { display: flex; align-items: center; gap: 5px; margin-left: auto; padding: 4px 6px; color: #d9c28b; background: #302819; border: 1px solid #594725; border-radius: 5px; font: 600 8px/1 var(--mono); }
+  .popover { position: absolute; right: 0; bottom: calc(100% + 8px); width: min(320px, calc(100vw - 70px)); overflow: hidden; background: #1a1b18; border: 1px solid #44443c; border-radius: 9px; box-shadow: 0 18px 42px rgba(0,0,0,.48); }
+  .pop-title { display: flex; align-items: center; padding: 9px 10px; border-bottom: 1px solid var(--line-soft); }
+  .pop-title strong { font-size: 10px; }
+  .pop-title span { margin-left: auto; color: var(--faint); font: 500 8px/1 var(--mono); }
+
+  /* B */
+  .shell { display: grid; height: 380px; grid-template-columns: 72px minmax(0,1fr) 190px; }
+  .sidebar { padding: 10px 7px; background: #131411; border-right: 1px solid var(--line-soft); }
+  .side-logo { margin-bottom: 15px; color: #d2c6a8; font: 700 9px/1 var(--mono); }
+  .side-item { height: 8px; margin: 9px 0; background: #2b2c27; border-radius: 2px; }
+  .side-item.short { width: 68%; }
+  .main-work { display: grid; align-content: end; padding: 12px; }
+  .code-lines { align-self: start; display: grid; gap: 7px; padding-top: 12px; }
+  .code-line { height: 5px; background: #242520; border-radius: 2px; }
+  .code-line:nth-child(2n) { width: 72%; }
+  .code-line:nth-child(3n) { width: 88%; }
+  .mini-composer { padding: 9px; color: var(--faint); background: #20211d; border: 1px solid #373832; border-radius: 8px; font-size: 8px; }
+  .dock { background: #171815; border-left: 1px solid #34352f; }
+  .dock-title { display: flex; align-items: center; height: 38px; padding: 0 10px; border-bottom: 1px solid var(--line-soft); }
+  .dock-title strong { font-size: 10px; }
+  .dock-title span { margin-left: auto; color: var(--faint); font: 600 8px/1 var(--mono); }
+  .workflow { margin: 8px; overflow: hidden; border: 1px solid #33342e; border-radius: 7px; }
+  .workflow-head { display: flex; align-items: center; gap: 6px; padding: 8px; color: #c4bfb5; background: #1f201c; font-size: 9px; }
+  .phase-rail { display: grid; grid-template-columns: repeat(4,1fr); gap: 3px; margin: 0 8px 8px; }
+  .phase { height: 3px; background: #3a3b35; border-radius: 2px; }
+  .phase.done { background: var(--green); }
+  .phase.run { background: var(--amber); }
+  .dock .agent-row { padding: 8px; }
+
+  /* C */
+  .fleet { display: grid; height: 380px; grid-template-columns: 145px minmax(0,1fr); }
+  .fleet-list { background: #141512; border-right: 1px solid var(--line-soft); }
+  .fleet-list-title { padding: 11px 9px; color: #c9c4ba; border-bottom: 1px solid var(--line-soft); font-size: 10px; font-weight: 620; }
+  .fleet-list .agent-row { grid-template-columns: auto minmax(0,1fr); padding: 9px 8px; }
+  .takeover { display: grid; min-width: 0; grid-template-rows: auto 1fr auto; }
+  .takeover-head { display: flex; align-items: center; gap: 7px; padding: 10px; border-bottom: 1px solid var(--line-soft); }
+  .takeover-head strong { min-width: 0; overflow: hidden; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+  .transcript { display: grid; align-content: start; gap: 8px; overflow: hidden; padding: 11px; font: 500 8px/1.45 var(--mono); }
+  .line { color: #aaa69e; }
+  .line.user { color: #d1cbbf; }
+  .line.think { color: #74716b; font-style: italic; }
+  .line.tool { color: var(--blue); }
+  .line.output { padding-left: 13px; color: #807d76; }
+  .line.live { color: #d8c188; }
+  .steer { display: flex; gap: 6px; margin: 9px; padding: 7px; color: #77746e; background: #20211d; border: 1px solid #3a3b35; border-radius: 7px; font-size: 8px; }
+  .steer span:last-child { margin-left: auto; color: var(--amber); font-family: var(--mono); }
+
+  .principles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
+  .principle { padding: 10px 11px; color: var(--muted); background: rgba(23,24,22,.92); border: 1px solid var(--line-soft); border-radius: 8px; font-size: 10px; line-height: 1.45; }
+  .principle strong { display: block; margin-bottom: 4px; color: var(--ink); font-size: 10px; }
+  .source-note { margin: 10px 1px 0; color: var(--faint); font: 500 8px/1.5 var(--mono); }
+
+  @keyframes rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 1080px) {
+    .concept-grid { grid-template-columns: 1fr; }
+    .stage { min-height: 390px; }
+    .window { min-height: 370px; }
+    .concept { display: grid; grid-template-columns: minmax(240px,.52fr) 1fr; }
+    .concept-head, .rationale { grid-column: 1; }
+    .stage { grid-column: 2; grid-row: 1 / span 2; }
+  }
+  @media (max-width: 720px) {
+    .artifact { padding: 12px; }
+    .intro { grid-template-columns: 1fr; }
+    .recommendation { max-width: none; }
+    .concept { display: block; }
+    .principles { grid-template-columns: 1fr 1fr; }
+    .shell { grid-template-columns: 54px minmax(0,1fr); }
+    .dock { position: absolute; right: 25px; width: min(230px, 58vw); height: 380px; box-shadow: -20px 0 40px rgba(0,0,0,.35); }
+  }
+  @media (max-width: 470px) {
+    .principles { grid-template-columns: 1fr; }
+    .fleet { grid-template-columns: 108px minmax(0,1fr); }
+    .stage { padding: 8px; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<main class="artifact">
+  <header class="intro">
+    <div>
+      <p class="eyebrow">Agent activity / concept study</p>
+      <h1>Keep the glance. Add a place for the fleet.</h1>
+      <p>T3 Code proves the value of a persistent, urgency-sorted agents panel. Davis proves the value of a focused takeover with live transcript and steering. ocode should preserve its quiet composer monitor, then reveal depth only when asked.</p>
+    </div>
+    <aside class="recommendation"><strong>Recommended path</strong>Direction B: retain the current popover as the fast path, then add a right-side fleet dock. It scales without turning every agent update into chat noise.</aside>
+  </header>
+
+  <nav class="tabs" aria-label="Concept legend">
+    <label><input type="radio" name="concept" checked /><b>A</b> Popover Plus</label>
+    <label><input type="radio" name="concept" /><b>B</b> Popover + Dock</label>
+    <label><input type="radio" name="concept" /><b>C</b> Fleet Takeover</label>
+  </nav>
+
+  <section class="concept-grid">
+    <article class="concept">
+      <header class="concept-head">
+        <div><span class="concept-kicker">A · Glance → inspect</span><h2>Popover Plus</h2><p>Upgrade the surface already in ocode.</p></div>
+        <span class="risk">Low scope</span>
+      </header>
+      <div class="stage">
+        <div class="window">
+          <div class="chrome"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><span class="brand">ocode</span><span class="spacer"></span><span>main</span></div>
+          <div class="chat">
+            <div class="messages">
+              <div class="bubble user">Review the persistence layer and keep me posted.</div>
+              <div class="bubble">Three agents launched. I’ll continue here and report as they finish.</div>
+            </div>
+            <div class="composer">
+              <div class="popover">
+                <div class="pop-title"><strong>Agents</strong><span>2 active · 1 done</span></div>
+                <div class="agent-row active"><i class="dot attn"></i><div class="agent-copy"><span class="agent-title">Reviewer · migration safety</span><span class="activity">Waiting for a decision on schema rollback</span><span class="meta">gpt-5.6 · 14.2k tok · 2m 08s</span></div><div class="agent-side"><span class="status-label attn">attention</span><span class="chip">open</span></div></div>
+                <div class="agent-row"><span class="spinner"></span><div class="agent-copy"><span class="agent-title">Scout · event delivery</span><span class="activity">Reading eventService.ts</span><span class="meta">gpt-5.6 · 8 tools · 54s</span></div><div class="agent-side"><span class="status-label run">running</span></div></div>
+                <div class="agent-row"><i class="dot done"></i><div class="agent-copy"><span class="agent-title">Researcher · prior art</span><span class="activity">Report delivered to parent</span><span class="meta">12.8k tok · 1m 31s</span></div><div class="agent-side"><span class="status-label done">done</span></div></div>
+              </div>
+              <div class="composer-line"><span>Message ocode…</span><button class="agent-trigger"><span class="spinner"></span>2 / 3 agents</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <footer class="rationale"><span><b>Best for:</b> shipping quickly. Add “current activity,” urgency sorting, model/tokens and a clear child-session handoff.</span><span class="scope">1 surface</span></footer>
+    </article>
+
+    <article class="concept">
+      <header class="concept-head">
+        <div><span class="concept-kicker">B · Glance → fleet</span><h2>Popover + Dock</h2><p>A quiet default with a persistent workspace.</p></div>
+        <span class="risk medium">Medium scope</span>
+      </header>
+      <div class="stage">
+        <div class="window">
+          <div class="chrome"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><span class="brand">ocode</span><span class="spacer"></span><button class="tiny-button">Agents 2</button></div>
+          <div class="shell">
+            <aside class="sidebar"><div class="side-logo">OC</div><div class="side-item"></div><div class="side-item short"></div><div class="side-item"></div><div class="side-item short"></div></aside>
+            <section class="main-work"><div class="code-lines"><i class="code-line"></i><i class="code-line"></i><i class="code-line"></i><i class="code-line"></i><i class="code-line"></i></div><div class="mini-composer">Continue the parent conversation…</div></section>
+            <aside class="dock">
+              <div class="dock-title"><strong>Agents</strong><span>3 total</span></div>
+              <div class="countbar"><strong>2 running</strong><span class="urgent">1 attention</span><span class="view-all">•••</span></div>
+              <div class="workflow"><div class="workflow-head"><span>⌄</span><strong>Persistence audit</strong><span class="spacer"></span><span class="meta">2/4</span></div><div class="phase-rail"><i class="phase done"></i><i class="phase done"></i><i class="phase run"></i><i class="phase"></i></div>
+                <div class="agent-row active"><i class="dot attn"></i><div class="agent-copy"><span class="agent-title">Reviewer</span><span class="activity">Needs migration decision</span><span class="meta">2m 08s</span></div><div class="agent-side"><span class="status-label attn">!</span></div></div>
+                <div class="agent-row"><span class="spinner"></span><div class="agent-copy"><span class="agent-title">Scout</span><span class="activity">Tracing event replay</span><span class="meta">54s · 8 tools</span></div></div>
+              </div>
+              <div class="agent-row"><i class="dot done"></i><div class="agent-copy"><span class="agent-title">Prior-art research</span><span class="activity">Completed · summary sent</span><span class="meta">1m 31s · 12.8k tok</span></div></div>
+            </aside>
+          </div>
+        </div>
+      </div>
+      <footer class="rationale"><span><b>Best for:</b> ocode. “View all” promotes the current popover into a dock with workflow grouping, aggregate usage and stable visibility.</span><span class="scope">2 surfaces</span></footer>
+    </article>
+
+    <article class="concept">
+      <header class="concept-head">
+        <div><span class="concept-kicker">C · Fleet → takeover</span><h2>Agent Workspace</h2><p>Dedicated monitoring and intervention.</p></div>
+        <span class="risk medium">Higher scope</span>
+      </header>
+      <div class="stage">
+        <div class="window">
+          <div class="chrome"><i class="traffic"></i><i class="traffic"></i><i class="traffic"></i><span class="brand">ocode / agents</span><span class="spacer"></span><span>⌘⇧A</span></div>
+          <div class="fleet">
+            <aside class="fleet-list">
+              <div class="fleet-list-title">Fleet · 3</div>
+              <div class="agent-row active"><i class="dot attn"></i><div class="agent-copy"><span class="agent-title">Reviewer</span><span class="activity">Needs attention</span><span class="meta">2m 08s</span></div></div>
+              <div class="agent-row"><span class="spinner"></span><div class="agent-copy"><span class="agent-title">Scout</span><span class="activity">Reading source</span><span class="meta">54s</span></div></div>
+              <div class="agent-row"><i class="dot done"></i><div class="agent-copy"><span class="agent-title">Researcher</span><span class="activity">Completed</span><span class="meta">1m 31s</span></div></div>
+            </aside>
+            <section class="takeover">
+              <header class="takeover-head"><i class="dot attn"></i><strong>Reviewer · migration safety</strong><span class="spacer"></span><span class="chip">gpt-5.6</span><button class="tiny-button">Cancel</button></header>
+              <div class="transcript">
+                <div class="line user">&gt; Review protocol migration and rollback safety.</div>
+                <div class="line think">~ I need to trace schema versions and snapshot restore…</div>
+                <div class="line tool">→ ffgrep “SCHEMA_VERSION” apps/forge/src</div>
+                <div class="line output">output: database.ts:27 const SCHEMA_VERSION = 17</div>
+                <div class="line tool">→ read apps/forge/src/store/database.ts</div>
+                <div class="line live">The migration is safe for forward reads, but rollback needs a decision: retain protocol-11 projection or explicitly downgrade…</div>
+              </div>
+              <div class="steer"><span>Steer this agent…</span><span>Enter ↵</span></div>
+            </section>
+          </div>
+        </div>
+      </div>
+      <footer class="rationale"><span><b>Best for:</b> deep supervision. Davis-style transcript takeover with steering, but adapted to ocode’s child-session model and responsive shell.</span><span class="scope">dedicated view</span></footer>
+    </article>
+  </section>
+
+  <section class="principles" aria-label="Design principles">
+    <div class="principle"><strong>Urgency before recency</strong>Attention, failure, running, then finished. “Waiting” must say whether it needs the user.</div>
+    <div class="principle"><strong>Activity, not raw stream</strong>Show one throttled “what it’s doing” line. Full transcript appears only after explicit navigation.</div>
+    <div class="principle"><strong>One source of truth</strong>Agent state belongs in the durable fleet projection—not duplicated as fake parent-chat activity.</div>
+    <div class="principle"><strong>Progressive intervention</strong>Glance → inspect → open child → steer/cancel. Keep powerful controls out of the default composer surface.</div>
+  </section>
+  <p class="source-note">Primary references: pingdotgg/t3code AgentsPanel.tsx (implemented right panel) · davis7dotsh/my-pi-setup extensions/subagents (implemented footer, picker and takeover). Visuals here are original ocode concepts, not copied source.</p>
+</main>
+</body>
+</html>

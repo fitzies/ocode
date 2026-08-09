@@ -40,6 +40,48 @@ afterEach(() => {
 });
 
 describe("bundled ocode Pi extension", () => {
+  it("exposes the asynchronous subagent bridge only to capable parent workers", async () => {
+    const originalFetch = globalThis.fetch;
+    process.env.OCODE_SUBAGENT_ENDPOINT = "http://127.0.0.1/internal";
+    process.env.OCODE_SUBAGENT_TOKEN = "secret";
+    process.env.OCODE_PARENT_SESSION_ID = "parent-1";
+    try {
+      let requestBody: Record<string, unknown> | undefined;
+      globalThis.fetch = async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(JSON.stringify({ runId: "run-1", childSessionId: "child-1", status: "queued" }), { status: 202 });
+      };
+      const tool = toolHarness().registered.get("ocode_subagent")!;
+      const result = await tool.execute(
+        "tool-call-1",
+        { action: "spawn", task: "Inspect the tests" },
+        undefined,
+        undefined,
+        { cwd: "/workspace", isProjectTrusted: () => true },
+      );
+      expect(requestBody).toMatchObject({
+        action: "spawn", parentSessionId: "parent-1", parentToolCallId: "tool-call-1", role: "scout", task: "Inspect the tests",
+      });
+      expect(result).toMatchObject({ details: { runId: "run-1", status: "queued", childSessionId: "child-1" } });
+
+      process.env.OCODE_SUBAGENT_DISABLED = "1";
+      const childHarness = toolHarness();
+      expect([...childHarness.registered.keys()]).toEqual(["ocode_render_html_file", "ocode_open_file"]);
+      childHarness.startSession();
+      expect([...childHarness.registered.keys()]).toEqual([
+        "ocode_render_html_file",
+        "ocode_open_file",
+        "ask_user_question",
+      ]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.OCODE_SUBAGENT_ENDPOINT;
+      delete process.env.OCODE_SUBAGENT_TOKEN;
+      delete process.env.OCODE_PARENT_SESSION_ID;
+      delete process.env.OCODE_SUBAGENT_DISABLED;
+    }
+  });
+
   it("defers the ask_user_question override until session start", () => {
     const harness = toolHarness();
     expect([...harness.registered.keys()]).toEqual(["ocode_render_html_file", "ocode_open_file"]);

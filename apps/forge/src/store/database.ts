@@ -18,12 +18,13 @@ import {
   type ShellTerminalMetadata,
 } from "@anvil/protocol";
 import { removeProjectFromSnapshot } from "@anvil/state";
+import { SubagentStore } from "./subagentStore.ts";
 
 // Keep the specifier indirect until tsup's esbuild recognizes node:sqlite as a built-in.
 const sqliteModuleName = "node:sqlite";
 const { DatabaseSync } = await import(sqliteModuleName) as typeof import("node:sqlite");
 
-const SCHEMA_VERSION = 13;
+const SCHEMA_VERSION = 17;
 const RETAINED_EVENT_COUNT = 100_000;
 const MAX_COMPACTION_ROWS_PER_CHECKPOINT = 1_000;
 
@@ -58,24 +59,20 @@ function upgradeStoredSnapshotProtocol(value: unknown): unknown {
   const stored = value as Record<string, unknown>;
   const storedVersion = Number(stored.protocolVersion);
 
-  if (Number(ANVIL_PROTOCOL_VERSION) === 10 && stored.protocolVersion === 11) {
-    // Protocol 11 only added the WIP durable subagent projection. Allow main to
-    // reopen databases written by that branch while deliberately discarding
-    // the unsupported projection and preserving all protocol-10 state.
-    const { subagents: _unsupportedSubagents, ...supported } = stored;
-    return { ...supported, protocolVersion: ANVIL_PROTOCOL_VERSION };
-  }
-
-  if (
-    Number(ANVIL_PROTOCOL_VERSION) === 10 &&
-    [5, 6, 7, 8, 9].includes(storedVersion)
-  ) {
-    // Protocols 7–10 add strict session-relative project resources, Forge-owned
-    // read cursors, root-owned project creation, and project removal. Snapshots upgrade structurally.
+  if (Number(ANVIL_PROTOCOL_VERSION) === 11 && [5, 6, 7, 8, 9, 10].includes(storedVersion)) {
+    // Protocol 11 adds the Forge-native subagent projection. Older snapshots
+    // upgrade structurally; child timelines remain ordinary separate sessions.
     return upgradeStoredResourceBlocks({
       ...stored,
       protocolVersion: ANVIL_PROTOCOL_VERSION,
+      subagentRuns: {},
     });
+  }
+  if (Number(ANVIL_PROTOCOL_VERSION) === 11 && storedVersion === 11) {
+    // A short-lived development build used `subagents` for an incompatible
+    // projection. Deliberately discard only that WIP field.
+    const { subagents: _retired, ...supported } = stored;
+    return { ...supported, subagentRuns: stored.subagentRuns ?? {}, protocolVersion: ANVIL_PROTOCOL_VERSION };
   }
   return value;
 }
@@ -122,6 +119,7 @@ export interface ArtifactRecord {
 
 export class ForgeDatabase {
   private readonly database: DatabaseSyncInstance;
+  readonly subagents: SubagentStore;
 
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -131,6 +129,7 @@ export class ForgeDatabase {
     if (path !== ":memory:") this.database.exec("PRAGMA journal_mode = WAL");
     this.database.exec("PRAGMA synchronous = FULL");
     this.migrate();
+    this.subagents = new SubagentStore(this.database, (events) => this.insertEvents(events));
     this.database.prepare("UPDATE commands SET status = 'unknown' WHERE status = 'pending'").run();
   }
 
@@ -413,12 +412,31 @@ export class ForgeDatabase {
     }
   }
 
+  childSessionIds(parentSessionId: string): string[] {
+    const rows = this.database.prepare(`
+      SELECT id FROM sessions WHERE parent_session_id = ? ORDER BY created_at ASC, id ASC
+    `).all(parentSessionId) as Array<{ id: unknown }>;
+    return rows.map((row) => String(row.id));
+  }
+
+  unretainedChildSessionIds(): string[] {
+    const rows = this.database.prepare(`
+      SELECT child.id FROM sessions child
+      WHERE child.parent_session_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM subagent_runs run WHERE run.child_session_id = child.id
+        )
+      ORDER BY child.created_at ASC, child.id ASC
+    `).all() as Array<{ id: unknown }>;
+    return rows.map((row) => String(row.id));
+  }
+
   getSession(id: string): RuntimeSessionRecord | undefined {
     const row = this.database.prepare(`
       SELECT id, project_id, title, model_id, thinking_level, status, settled, branch, updated_at,
              last_user_message_at, last_user_message_sequence, last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
              read_through_sequence, pi_session_id, pi_session_file,
-             context_tokens, context_window, context_percent
+             context_tokens, context_window, context_percent, internal, parent_session_id
       FROM sessions WHERE id = ?
     `).get(id) as Record<string, unknown> | undefined;
     if (!row) return undefined;
@@ -439,6 +457,8 @@ export class ForgeDatabase {
         ...(row.last_terminal_sequence === null ? {} : { lastTerminalSequence: Number(row.last_terminal_sequence) }),
         ...(row.last_terminal_outcome === null ? {} : { lastTerminalOutcome: String(row.last_terminal_outcome) as NonNullable<SessionSummary["lastTerminalOutcome"]> }),
         readThroughSequence: Number(row.read_through_sequence ?? 0),
+        ...(Boolean(row.internal) ? { internal: true } : {}),
+        ...(typeof row.parent_session_id === "string" ? { parentSessionId: row.parent_session_id } : {}),
       },
       piSessionId: typeof row.pi_session_id === "string" ? row.pi_session_id : undefined,
       piSessionFile: typeof row.pi_session_file === "string" ? row.pi_session_file : undefined,
@@ -880,8 +900,8 @@ export class ForgeDatabase {
       INSERT INTO sessions (
         id, project_id, title, model_id, thinking_level, status, settled, branch,
         last_user_message_at, last_user_message_sequence, last_activity_sequence, last_terminal_sequence, last_terminal_outcome,
-        read_through_sequence, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        read_through_sequence, internal, parent_session_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,
       session.projectId,
@@ -897,6 +917,8 @@ export class ForgeDatabase {
       session.lastTerminalSequence ?? null,
       session.lastTerminalOutcome ?? null,
       session.readThroughSequence ?? 0,
+      session.internal ? 1 : 0,
+      session.parentSessionId ?? null,
       session.updatedAt,
       session.updatedAt,
     );
@@ -1165,6 +1187,95 @@ export class ForgeDatabase {
         BEGIN IMMEDIATE;
         DROP TABLE IF EXISTS speech_daily_usage;
         PRAGMA user_version = 13;
+        COMMIT;
+      `);
+    }
+
+    if (version < 14) {
+      const sessionColumns = new Set((this.database.prepare("PRAGMA table_info(sessions)").all() as Array<{ name: string }>)
+        .map((column) => column.name));
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ${sessionColumns.has("internal") ? "" : "ALTER TABLE sessions ADD COLUMN internal INTEGER NOT NULL DEFAULT 0;"}
+        ${sessionColumns.has("parent_session_id") ? "" : "ALTER TABLE sessions ADD COLUMN parent_session_id TEXT;"}
+        CREATE INDEX IF NOT EXISTS sessions_parent_session ON sessions(parent_session_id);
+
+        CREATE TABLE IF NOT EXISTS subagent_runs (
+          id TEXT PRIMARY KEY,
+          parent_session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+          parent_tool_call_id TEXT NOT NULL,
+          child_session_id TEXT NOT NULL UNIQUE,
+          role TEXT NOT NULL DEFAULT 'scout',
+          status TEXT NOT NULL,
+          task_preview TEXT NOT NULL,
+          task TEXT NOT NULL DEFAULT '',
+          result_preview TEXT,
+          error TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          started_at TEXT,
+          ended_at TEXT,
+          UNIQUE(parent_session_id, parent_tool_call_id)
+        );
+        CREATE INDEX IF NOT EXISTS subagent_runs_parent ON subagent_runs(parent_session_id, created_at);
+        CREATE INDEX IF NOT EXISTS subagent_runs_child_session ON subagent_runs(child_session_id);
+        CREATE INDEX IF NOT EXISTS subagent_runs_status ON subagent_runs(status, created_at);
+
+        CREATE TABLE IF NOT EXISTS subagent_outbox (
+          delivery_id TEXT PRIMARY KEY,
+          run_id TEXT NOT NULL UNIQUE REFERENCES subagent_runs(id) ON DELETE CASCADE,
+          status TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          delivery_bytes INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL,
+          last_error TEXT
+        );
+        CREATE INDEX IF NOT EXISTS subagent_outbox_status ON subagent_outbox(status, updated_at);
+        PRAGMA user_version = 14;
+        COMMIT;
+      `);
+    }
+
+    if (version < 15) {
+      const runColumns = new Set((this.database.prepare("PRAGMA table_info(subagent_runs)").all() as Array<{ name: string }>)
+        .map((column) => column.name));
+      const outboxColumns = new Set((this.database.prepare("PRAGMA table_info(subagent_outbox)").all() as Array<{ name: string }>)
+        .map((column) => column.name));
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ${runColumns.has("role") ? "" : "ALTER TABLE subagent_runs ADD COLUMN role TEXT NOT NULL DEFAULT 'scout';"}
+        ${outboxColumns.has("delivery_bytes") ? "" : "ALTER TABLE subagent_outbox ADD COLUMN delivery_bytes INTEGER NOT NULL DEFAULT 0;"}
+        CREATE INDEX IF NOT EXISTS subagent_runs_child_session ON subagent_runs(child_session_id);
+        PRAGMA user_version = 15;
+        COMMIT;
+      `);
+    }
+
+    if (version < 16) {
+      const runColumns = new Set((this.database.prepare("PRAGMA table_info(subagent_runs)").all() as Array<{ name: string }>)
+        .map((column) => column.name));
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        ${runColumns.has("task") ? "" : "ALTER TABLE subagent_runs ADD COLUMN task TEXT NOT NULL DEFAULT '';"}
+        PRAGMA user_version = 16;
+        COMMIT;
+      `);
+    }
+
+    if (version < 17) {
+      this.database.exec(`
+        BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS subagent_parent_usage (
+          parent_session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+          rich_delivery_bytes INTEGER NOT NULL DEFAULT 0
+        );
+        INSERT INTO subagent_parent_usage (parent_session_id, rich_delivery_bytes)
+        SELECT r.parent_session_id, MIN(32768, SUM(o.delivery_bytes))
+        FROM subagent_outbox o JOIN subagent_runs r ON r.id = o.run_id
+        WHERE o.status IN ('delivered', 'uncertain')
+        GROUP BY r.parent_session_id
+        ON CONFLICT(parent_session_id) DO NOTHING;
+        PRAGMA user_version = 17;
         COMMIT;
       `);
     }

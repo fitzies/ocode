@@ -26,6 +26,7 @@ import {
   type JsonValue,
   type ProjectSummary,
   type SessionSummary,
+  type SubagentRun,
   type ToolEntry,
 } from "@anvil/protocol";
 
@@ -48,6 +49,11 @@ interface SessionManagerOptions {
   projectResolver?: ProjectResolver;
   terminalCleanup?: ProjectTerminalCleanup;
   projectCloner?: ProjectCloner;
+  runtimeEnvironment?: (session: RuntimeSessionRecord) => NodeJS.ProcessEnv | undefined;
+  cancelSubagent?: (parentSessionId: string, runId: string) => Promise<SubagentRun>;
+  deleteOwnedSubagents?: (parentSessionId: string) => Promise<void>;
+  finishParentSubagentDeletion?: (parentSessionId: string) => void;
+  prepareChildSubagentDeletion?: (childSessionId: string) => Promise<void>;
 }
 
 type StreamDeltaEvent = Extract<UnsequencedAnvilEvent, { type: "message.delta" | "reasoning.delta" }>;
@@ -172,6 +178,8 @@ export class SessionManager {
   private readonly activeCommandCounts = new Map<string, number>();
   private readonly provisionalTitleOwners = new Map<string, symbol>();
   private readonly interactionTimers = new Map<string, NodeJS.Timeout>();
+  private readonly internalDeliveryCounts = new Map<string, number>();
+  private readonly internalLifecycleCommandIds = new Set<string>();
   private readonly deleting = new Set<string>();
   private readonly deletingProjects = new Set<string>();
   private readonly cloneReservations = new Set<string>();
@@ -261,6 +269,99 @@ export class SessionManager {
     return execution;
   };
 
+  createSubagentSession(input: {
+    sessionId: string;
+    parentSessionId: string;
+    title: string;
+  }): void {
+    const existing = this.database.getSession(input.sessionId);
+    if (existing) {
+      if (existing.session.internal && existing.session.parentSessionId === input.parentSessionId) return;
+      throw new Error("Subagent child session id collided with an existing session");
+    }
+    const parent = this.database.getSession(input.parentSessionId);
+    if (!parent || parent.session.internal) throw new Error("A valid parent session is required");
+    const timestamp = new Date().toISOString();
+    const session: SessionSummary = {
+      id: input.sessionId,
+      projectId: parent.session.projectId,
+      title: input.title.slice(0, SESSION_TITLE_MAX_LENGTH),
+      updatedAt: timestamp,
+      status: "idle",
+      modelId: parent.session.modelId,
+      thinkingLevel: parent.session.thinkingLevel,
+      settled: false,
+      branch: parent.session.branch,
+      readThroughSequence: 0,
+      internal: true,
+      parentSessionId: input.parentSessionId,
+    };
+    this.events.createSession(session, domainEvent("session.upserted", { session }, session.id));
+    void this.ensureRuntime({ session }).catch(() => {
+      // startRuntime publishes a durable failure for the child session.
+    });
+  }
+
+  sendSubagentPrompt(runId: string, childSessionId: string, prompt: string): Promise<AnvilCommandResponse> {
+    return this.handleCommand({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: `subagent-prompt:${runId}`,
+      sessionId: childSessionId,
+      timestamp: new Date().toISOString(),
+      type: "prompt.send",
+      payload: { content: prompt, delivery: "prompt" },
+    });
+  }
+
+  async cancelSubagentSession(runId: string, childSessionId: string): Promise<AnvilCommandResponse> {
+    const commandId = `subagent-cancel:${runId}`;
+    this.internalLifecycleCommandIds.add(commandId);
+    try {
+      return await this.handleCommand({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: commandId,
+        sessionId: childSessionId,
+        timestamp: new Date().toISOString(),
+        type: "run.cancel",
+        payload: {},
+      });
+    } finally {
+      this.internalLifecycleCommandIds.delete(commandId);
+    }
+  }
+
+  async deliverSubagentCompletion(deliveryId: string, parentSessionId: string, content: string): Promise<AnvilCommandResponse> {
+    // Stable command ids provide at-most-once acceptance across retries. Keep a
+    // reference count so concurrent duplicate calls cannot drop the internal
+    // marker while the one serialized delivery is still being dispatched.
+    this.internalDeliveryCounts.set(deliveryId, (this.internalDeliveryCounts.get(deliveryId) ?? 0) + 1);
+    try {
+      return await this.handleCommand({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: deliveryId,
+        sessionId: parentSessionId,
+        timestamp: new Date().toISOString(),
+        type: "prompt.send",
+        payload: { content, delivery: "followUp" },
+      });
+    } finally {
+      const remaining = (this.internalDeliveryCounts.get(deliveryId) ?? 1) - 1;
+      if (remaining > 0) this.internalDeliveryCounts.set(deliveryId, remaining);
+      else this.internalDeliveryCounts.delete(deliveryId);
+    }
+  }
+
+  async deleteSubagentSession(childSessionId: string): Promise<void> {
+    if (!this.database.getSession(childSessionId)) return;
+    const alreadyDeleting = this.deleting.has(childSessionId);
+    this.deleting.add(childSessionId);
+    try {
+      await this.withSessionLifecycle(childSessionId, () => this.stopAndDeleteSession(childSessionId));
+    } finally {
+      if (!alreadyDeleting) this.deleting.delete(childSessionId);
+    }
+  }
+
   searchFiles = async (sessionId: string, query: string, limit: number): Promise<string[] | undefined> => {
     const stored = this.database.getSession(sessionId);
     if (!stored) return undefined;
@@ -322,13 +423,24 @@ export class SessionManager {
     const projectId = command.type === "session.create"
       ? command.payload.projectId
       : sessionId ? this.database.getSession(sessionId)?.session.projectId : undefined;
-    if (projectId && this.deletingProjects.has(projectId)) {
+    if (projectId && this.deletingProjects.has(projectId) && !this.internalLifecycleCommandIds.has(command.id)) {
       return commandResponse(command, false, { error: "Project removal is in progress" });
     }
     return this.dispatchForProject(command);
   }
 
   private async dispatchForProject(command: AnvilClientCommand): Promise<AnvilCommandResponse> {
+    if (command.type === "subagent.cancel") {
+      if (!command.sessionId || !this.options.cancelSubagent) {
+        return commandResponse(command, false, { error: "Subagent cancellation is unavailable" });
+      }
+      try {
+        const run = await this.options.cancelSubagent(command.sessionId, command.payload.runId);
+        return commandResponse(command, true, { data: { ...run } });
+      } catch (error) {
+        return commandResponse(command, false, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
     if (command.type === "project.create") return this.createProject(command);
     if (command.type === "project.clone") return this.cloneProject(command);
     if (command.type === "project.addExisting") return this.addExistingProject(command);
@@ -346,6 +458,9 @@ export class SessionManager {
       return this.afterSessionLifecycle(command.sessionId, async () => this.setSessionReadState(command));
     }
     if (!command.sessionId) return commandResponse(command, false, { error: "A session is required" });
+    if (this.internalLifecycleCommandIds.has(command.id)) {
+      return this.dispatchTrackedRuntimeCommand(command);
+    }
     return this.afterSessionLifecycle(command.sessionId, () => this.dispatchTrackedRuntimeCommand(command));
   }
 
@@ -401,7 +516,8 @@ export class SessionManager {
       }
     }
     const runtime = await this.ensureRuntime(stored);
-    if (command.type === "prompt.send" && stored.session.settled) {
+    const internalDelivery = this.internalDeliveryCounts.has(command.id);
+    if (command.type === "prompt.send" && stored.session.settled && !internalDelivery) {
       this.events.setSessionSettled(
         sessionId,
         false,
@@ -523,10 +639,24 @@ export class SessionManager {
         const message = attachmentContext.length
           ? `${command.payload.content}${command.payload.content ? "\n\n" : ""}${attachmentContext.join("\n")}`
           : command.payload.content;
-        const type = command.payload.delivery === "followUp"
-          ? "follow_up"
-          : command.payload.delivery === "steer" ? "steer" : "prompt";
-        const isFirstPrompt = type === "prompt" && !stored.session.lastUserMessageAt;
+        // Completion delivery chooses the Pi primitive here, inside the parent
+        // runtime's command tail. An idle follow_up only queues, so idle (and
+        // settled) parents need prompt to trigger a turn; a running parent must
+        // use follow_up so completion runs after its current work.
+        const parentStatus = this.events.sessionSummary(sessionId)?.status;
+        const type = internalDelivery
+          ? parentStatus === "running" || parentStatus === "waiting" ? "follow_up" : "prompt"
+          : command.payload.delivery === "followUp"
+            ? "follow_up"
+            : command.payload.delivery === "steer" ? "steer" : "prompt";
+        if (internalDelivery && stored.session.settled) {
+          this.events.setSessionSettled(
+            sessionId,
+            false,
+            domainEvent("session.settled", { settled: false }, sessionId),
+          );
+        }
+        const isFirstPrompt = !internalDelivery && type === "prompt" && !stored.session.lastUserMessageAt;
         const provisionalTitle = isFirstPrompt && this.events.sessionSummary(sessionId)?.title === DEFAULT_SESSION_TITLE
           ? provisionalSessionTitleFromPrompt(command.payload.content)
           : undefined;
@@ -571,7 +701,7 @@ export class SessionManager {
           if (provisionalTitleOwner && this.provisionalTitleOwners.get(sessionId) === provisionalTitleOwner) {
             this.provisionalTitleOwners.delete(sessionId);
           }
-          this.events.append([domainEvent("session.prompted", {}, sessionId)]);
+          if (!internalDelivery) this.events.append([domainEvent("session.prompted", {}, sessionId)]);
           this.syncSession(sessionId);
         } else {
           restoreDefaultTitle();
@@ -1084,7 +1214,13 @@ export class SessionManager {
     this.deletingProjects.add(projectId);
     for (const sessionId of sessionIds) this.deleting.add(sessionId);
     let terminalRemoval: PreparedProjectTerminalRemoval | undefined;
+    const preparedParentIds = new Set<string>();
     try {
+      const parentSessionIds = sessionIds.filter((sessionId) => !this.database.getSession(sessionId)?.session.internal);
+      for (const parentSessionId of parentSessionIds) {
+        await this.options.deleteOwnedSubagents?.(parentSessionId);
+        preparedParentIds.add(parentSessionId);
+      }
       await Promise.all(sessionIds.map((sessionId) =>
         this.withSessionLifecycle(sessionId, () => this.stopSessionRuntime(sessionId)),
       ));
@@ -1095,6 +1231,12 @@ export class SessionManager {
       const refreshedSessionIds = this.events.sessionSummariesForProject(projectId).map((session) => session.id);
       const addedSessionIds = refreshedSessionIds.filter((sessionId) => !sessionIds.includes(sessionId));
       for (const sessionId of addedSessionIds) this.deleting.add(sessionId);
+      for (const sessionId of addedSessionIds) {
+        if (!this.database.getSession(sessionId)?.session.internal) {
+          await this.options.deleteOwnedSubagents?.(sessionId);
+          preparedParentIds.add(sessionId);
+        }
+      }
       await Promise.all(addedSessionIds.map((sessionId) =>
         this.withSessionLifecycle(sessionId, () => this.stopSessionRuntime(sessionId)),
       ));
@@ -1126,6 +1268,9 @@ export class SessionManager {
       return commandResponse(command, true);
     } finally {
       terminalRemoval?.cancel();
+      for (const parentSessionId of preparedParentIds) {
+        this.options.finishParentSubagentDeletion?.(parentSessionId);
+      }
       for (const sessionId of sessionIds) this.deleting.delete(sessionId);
       this.deletingProjects.delete(projectId);
     }
@@ -1139,36 +1284,44 @@ export class SessionManager {
     if (!stored) return commandResponse(command, false, { error: "Session not found" });
 
     this.deleting.add(sessionId);
+    let parentDeletionPrepared = false;
     try {
-      const starting = this.starting.get(sessionId);
-      const runtime = this.runtimes.get(sessionId);
-      if (runtime) await this.stopRuntime(runtime);
-      if (starting) await starting.catch(() => undefined);
-      const settledRuntime = this.runtimes.get(sessionId);
-      if (settledRuntime && settledRuntime !== runtime) await this.stopRuntime(settledRuntime);
-      this.runtimes.delete(sessionId);
-
-      const pending = this.events.pendingInteractionsForSession(sessionId);
-      for (const request of pending) {
-        const timer = this.interactionTimers.get(request.id);
-        if (timer) clearTimeout(timer);
-        this.interactionTimers.delete(request.id);
+      if (stored.session.internal) {
+        await this.options.prepareChildSubagentDeletion?.(sessionId);
+      } else {
+        await this.options.deleteOwnedSubagents?.(sessionId);
+        parentDeletionPrepared = true;
       }
-
-      this.events.deleteSession(
-        sessionId,
-        domainEvent("session.deleted", { sessionId }, sessionId),
-      );
-      try {
-        rmSync(join(this.config.sessionDir, sessionId), { recursive: true, force: true });
-      } catch (error) {
-        process.stderr.write(
-          `[pi:${sessionId}] Session deleted; file cleanup will retry after restart: ${error instanceof Error ? error.message : String(error)}\n`,
-        );
-      }
+      await this.stopAndDeleteSession(sessionId);
       return commandResponse(command, true);
     } finally {
+      if (parentDeletionPrepared) this.options.finishParentSubagentDeletion?.(sessionId);
       this.deleting.delete(sessionId);
+    }
+  }
+
+  private async stopAndDeleteSession(sessionId: string): Promise<void> {
+    const starting = this.starting.get(sessionId);
+    const runtime = this.runtimes.get(sessionId);
+    if (runtime) await this.stopRuntime(runtime);
+    if (starting) await starting.catch(() => undefined);
+    const settledRuntime = this.runtimes.get(sessionId);
+    if (settledRuntime && settledRuntime !== runtime) await this.stopRuntime(settledRuntime);
+    this.runtimes.delete(sessionId);
+
+    for (const request of this.events.pendingInteractionsForSession(sessionId)) {
+      const timer = this.interactionTimers.get(request.id);
+      if (timer) clearTimeout(timer);
+      this.interactionTimers.delete(request.id);
+    }
+    if (!this.database.getSession(sessionId)) return;
+    this.events.deleteSession(sessionId, domainEvent("session.deleted", { sessionId }, sessionId));
+    try {
+      rmSync(join(this.config.sessionDir, sessionId), { recursive: true, force: true });
+    } catch (error) {
+      process.stderr.write(
+        `[pi:${sessionId}] Session deleted; file cleanup will retry after restart: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
     }
   }
 
@@ -1266,9 +1419,12 @@ export class SessionManager {
       executable: this.config.piExecutable,
       cwd: project.path,
       sessionDir,
-      extraArgs: this.config.piExtensionPath
-        ? ["--extension", this.config.piExtensionPath]
-        : undefined,
+      env: this.options.runtimeEnvironment?.(stored),
+      extraArgs: [
+        "--exclude-tools",
+        stored.session.internal ? "subagent,ocode_subagent" : "subagent",
+        ...(this.config.piExtensionPath ? ["--extension", this.config.piExtensionPath] : []),
+      ],
     });
     const runtime: ManagedSession = {
       rpc,

@@ -18,6 +18,17 @@ const sessions: SessionSummary[] = [
     thinkingLevel: "medium",
   },
   {
+    id: "child-1",
+    projectId: "project-remove",
+    title: "Internal child",
+    updatedAt: "2026-07-23T01:00:00.000Z",
+    status: "running",
+    modelId: "test/model",
+    thinkingLevel: "medium",
+    internal: true,
+    parentSessionId: "session-1",
+  },
+  {
     id: "session-2",
     projectId: "project-keep",
     title: "Second",

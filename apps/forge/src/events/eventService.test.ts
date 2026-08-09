@@ -33,6 +33,31 @@ describe("ForgeEventService", () => {
     database.close();
   });
 
+  it("hides internal child sessions from bootstraps but preserves direct detail access", () => {
+    const database = new ForgeDatabase(":memory:");
+    const project = { id: "project-1", name: "Project", path: "/repo" };
+    const service = new ForgeEventService(database, [project]);
+    const child = {
+      id: "child-1", projectId: project.id, title: "Internal child", updatedAt: "2026-01-01T00:00:00.000Z",
+      status: "idle" as const, modelId: "test/model", thinkingLevel: "off" as const,
+      internal: true, parentSessionId: "parent-1",
+    };
+    service.createSession(child, { sessionId: child.id, timestamp: child.updatedAt, type: "session.upserted", payload: { session: child } });
+
+    const bootstrap = service.bootstrap().snapshot;
+    expect(bootstrap.sessions).toEqual([]);
+    expect(bootstrap.timelines).not.toHaveProperty(child.id);
+    expect(bootstrap.catalogs).not.toHaveProperty(child.id);
+    expect(bootstrap.runStates).not.toHaveProperty(child.id);
+    expect(service.summaryBootstrap().sessions).toEqual([]);
+    expect(service.currentSnapshot().sessions).toContainEqual(expect.objectContaining({ id: child.id, internal: true }));
+    expect(service.externalEvent(database.readEventsAfter(0)[0]!)).toMatchObject({
+      sessionId: null, type: "unknown", payload: { eventType: "internal.session" },
+    });
+    expect(service.sessionDetail(child.id)?.sessionId).toBe(child.id);
+    database.close();
+  });
+
   it("restores durable session read state across Forge restarts", () => {
     const directory = mkdtempSync(join(tmpdir(), "anvil-read-state-"));
     const path = join(directory, "forge.sqlite");

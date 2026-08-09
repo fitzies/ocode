@@ -18,6 +18,46 @@ import {
 } from "./index";
 
 describe("protocol runtime guards", () => {
+  it("validates Forge-native subagent lifecycle events and cancellation", () => {
+    const run = {
+      id: "run-1",
+      parentSessionId: "session-1",
+      parentToolCallId: "tool-1",
+      childSessionId: "child-1",
+      role: "reviewer",
+      status: "needs_attention",
+      taskPreview: "Review the migration",
+      createdAt: "2026-07-21T08:00:00.000Z",
+      updatedAt: "2026-07-21T08:01:00.000Z",
+    };
+    expect(isAnvilEvent({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-subagent",
+      sequence: 1,
+      sessionId: "session-1",
+      timestamp: run.updatedAt,
+      type: "subagent.updated",
+      payload: { run },
+    })).toBe(true);
+    expect(isAnvilEvent({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-subagent-invalid",
+      sequence: 1,
+      sessionId: "session-1",
+      timestamp: run.updatedAt,
+      type: "subagent.updated",
+      payload: { run: { ...run, status: "paused" } },
+    })).toBe(false);
+    expect(isAnvilClientCommand({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "cancel-subagent",
+      sessionId: "session-1",
+      timestamp: run.updatedAt,
+      type: "subagent.cancel",
+      payload: { runId: run.id },
+    })).toBe(true);
+  });
+
   it("builds a compact provisional title from the first prompt", () => {
     expect(provisionalSessionTitleFromPrompt("  Fix   the sidebar\nwhile Pi names this thread  "))
       .toBe("Fix the sidebar while Pi names this…");
@@ -425,6 +465,7 @@ describe("protocol runtime guards", () => {
       queues: {},
       composerDrafts: {},
       runStates: {},
+      subagentRuns: {},
       lastSequence: 0,
       sequenceGap: null,
     };
@@ -474,6 +515,33 @@ describe("protocol runtime guards", () => {
     })).toBe(false);
     expect(isAnvilSessionDetailSync({
       protocolVersion: ANVIL_PROTOCOL_VERSION,
+      mode: "delta",
+      sessionId: session.id,
+      fromSequence: 4,
+      throughSequence: 4,
+      events: [],
+      subagentRuns: [],
+    })).toBe(true);
+    expect(isAnvilSessionDetailSync({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      mode: "delta",
+      sessionId: session.id,
+      fromSequence: 4,
+      throughSequence: 4,
+      events: [],
+      subagentRuns: [{}],
+    })).toBe(false);
+    // Older servers omitted the projection; clients still accept that shape.
+    expect(isAnvilSessionDetailSync({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      mode: "delta",
+      sessionId: session.id,
+      fromSequence: 4,
+      throughSequence: 4,
+      events: [],
+    })).toBe(true);
+    expect(isAnvilSessionDetailSync({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
       mode: "reset",
       detail: {
         protocolVersion: ANVIL_PROTOCOL_VERSION,
@@ -487,6 +555,7 @@ describe("protocol runtime guards", () => {
         queue: { steering: [], followUp: [] },
         composerDraft: "",
         runState: "idle",
+        subagentRuns: [],
       },
     })).toBe(true);
     expect(isAnvilSummaryBootstrap({

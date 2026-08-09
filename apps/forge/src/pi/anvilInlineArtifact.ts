@@ -8,6 +8,7 @@ import {
   OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL,
   OCODE_ASK_USER_QUESTION_KIND,
   OCODE_ASK_USER_QUESTION_SCHEMA_VERSION,
+  SUBAGENT_IDENTIFIER_MAX_BYTES,
   normalizeProjectResourcePath,
   parseOcodeAskUserQuestionResponse,
 } from "@anvil/protocol";
@@ -19,6 +20,7 @@ const MAX_INLINE_HTML_BYTES = 192 * 1024;
 const MAX_OPEN_FILE_BYTES = 20 * 1024 * 1024;
 const TOOL_NAME = "ocode_render_html_file";
 const OPEN_FILE_TOOL_NAME = "ocode_open_file";
+const SUBAGENT_TOOL_NAME = "ocode_subagent";
 const OPEN_FILE_TEXT_EXTENSIONS = new Set([
   ".c", ".cc", ".conf", ".cpp", ".css", ".csv", ".go", ".h", ".hpp", ".htm", ".html", ".ini",
   ".java", ".js", ".json", ".jsx", ".log", ".lua", ".md", ".mdx", ".mjs", ".py", ".rb", ".rs", ".sh",
@@ -237,6 +239,71 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 export default function anvilInlineArtifact(pi: ExtensionApi): void {
+  const subagentEndpoint = process.env.OCODE_SUBAGENT_ENDPOINT;
+  const subagentToken = process.env.OCODE_SUBAGENT_TOKEN;
+  const parentSessionId = process.env.OCODE_PARENT_SESSION_ID;
+  if (process.env.OCODE_SUBAGENT_DISABLED !== "1" && subagentEndpoint && subagentToken && parentSessionId) {
+    pi.registerTool({
+      name: SUBAGENT_TOOL_NAME,
+      label: "ocode asynchronous subagent",
+      description:
+        "Launch a fresh asynchronous Pi worker managed durably by ocode Forge, or inspect/cancel a prior run. Spawn returns immediately after durable admission and does not wait for completion.",
+      promptSnippet: "Launch an independent asynchronous ocode Pi worker and receive a run id immediately",
+      promptGuidelines: [
+        "Use ocode_subagent spawn only for independent work that can run with a fresh context and report back later.",
+        "After ocode_subagent spawn returns, continue the parent task without waiting or polling repeatedly; Forge sends a follow-up on completion.",
+      ],
+      parameters: Type.Object({
+        action: Type.Union([Type.Literal("spawn"), Type.Literal("status"), Type.Literal("cancel")]),
+        role: Type.Optional(Type.Union([
+          Type.Literal("builder"), Type.Literal("scout"), Type.Literal("researcher"), Type.Literal("reviewer"),
+        ], { description: "Worker role; defaults to scout." })),
+        task: Type.Optional(Type.String({ maxLength: 48 * 1024, description: "Fresh, self-contained task for a new worker. Parent transcript is never copied." })),
+        runId: Type.Optional(Type.String({ maxLength: SUBAGENT_IDENTIFIER_MAX_BYTES, description: "Run id returned by spawn." })),
+      }, { additionalProperties: false }),
+      async execute(toolCallId, params, signal) {
+        if (signal?.aborted) throw new Error("Subagent request was cancelled");
+        const action = params.action;
+        if (action === "spawn" && (typeof params.task !== "string" || !params.task.trim())) {
+          throw new Error("A non-empty task is required to spawn a subagent");
+        }
+        if ((action === "status" || action === "cancel") && typeof params.runId !== "string") {
+          throw new Error("A run id is required for this action");
+        }
+        const response = await fetch(subagentEndpoint, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${subagentToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            action,
+            parentSessionId,
+            ...(action === "spawn" ? { parentToolCallId: toolCallId, role: params.role ?? "scout", task: params.task } : { runId: params.runId }),
+          }),
+          signal,
+        });
+        const result = await response.json() as Record<string, unknown>;
+        if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : "Forge rejected the subagent request");
+        const run = result.run && typeof result.run === "object" ? result.run as Record<string, unknown> : result;
+        const runId = typeof run.runId === "string" ? run.runId : typeof run.id === "string" ? run.id : params.runId;
+        const status = typeof run.status === "string" ? run.status : "accepted";
+        return {
+          content: [{ type: "text", text: `${action === "spawn" ? "Accepted" : "Subagent"} run ${runId}: ${status}.` }],
+          details: {
+            kind: "ocode.subagent",
+            schemaVersion: 1,
+            action,
+            runId,
+            status,
+            ...(typeof run.childSessionId === "string" ? { childSessionId: run.childSessionId } : {}),
+            ...(typeof run.role === "string" ? { role: run.role } : {}),
+          },
+        };
+      },
+    });
+  }
+
   pi.registerTool({
     name: TOOL_NAME,
     label: "Render HTML artifact",

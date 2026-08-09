@@ -98,6 +98,217 @@ describe("ForgeAnvilClient", () => {
     });
   });
 
+  it("cancels a durable subagent and opens its internal child only after explicit navigation", async () => {
+    const stream = new FakeEventSource();
+    const run = {
+      id: "run-1",
+      parentSessionId: session.id,
+      parentToolCallId: "tool-1",
+      childSessionId: "child-1",
+      role: "builder" as const,
+      status: "running" as const,
+      taskPreview: "Implement the focused patch",
+      createdAt: session.updatedAt,
+      updatedAt: session.updatedAt,
+      startedAt: session.updatedAt,
+    };
+    const snapshot = {
+      ...createEmptySnapshot({
+        projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+        sessions: [session],
+        activeSessionId: session.id,
+      }),
+      subagentRuns: { [session.id]: [run] },
+    };
+    const childDetail = {
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      sessionId: run.childSessionId,
+      throughSequence: 0,
+      timeline: [{
+        id: "child-result", kind: "message", role: "assistant", content: [{ id: "text", type: "text", text: "Child detail" }],
+        status: "complete", createdAt: session.updatedAt,
+      }],
+      catalog: { models: [], commands: [], skills: [] },
+      pendingInteractions: [], extensionStatuses: [], widgets: [],
+      queue: { steering: [], followUp: [] }, composerDraft: "", runState: "idle", subagentRuns: [],
+    };
+    const fetcher = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, snapshot, events: [], cursor: 0 }));
+      }
+      if (url.includes(`/sessions/${run.childSessionId}/detail`)) {
+        return new Response(JSON.stringify({ protocolVersion: ANVIL_PROTOCOL_VERSION, mode: "reset", detail: childDetail }));
+      }
+      if (url.endsWith("/commands")) {
+        const command = JSON.parse(String(init?.body)) as { type: string };
+        expect(command.type).toBe("subagent.cancel");
+        return new Response(JSON.stringify({
+          protocolVersion: ANVIL_PROTOCOL_VERSION,
+          id: "response-cancel",
+          commandId: "cancel",
+          timestamp: session.updatedAt,
+          success: true,
+          outcome: "completed",
+          data: { ...run, status: "cancelled", endedAt: session.updatedAt },
+        }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    };
+    const client = new ForgeAnvilClient({ fetch: fetcher as typeof fetch, createEventSource: () => stream as unknown as EventSource });
+    await waitUntil(() => client.getSnapshot().subagentRuns[session.id]?.length === 1);
+
+    await client.cancelSubagent(session.id, run.id);
+    expect(client.getSnapshot().subagentRuns[session.id]?.[0]?.status).toBe("cancelled");
+    expect(client.getSnapshot().sessions.some((candidate) => candidate.id === run.childSessionId)).toBe(false);
+
+    await client.openSubagentSession(session.id, run.id);
+    expect(client.getSnapshot()).toMatchObject({
+      activeSessionId: run.childSessionId,
+      sessions: expect.arrayContaining([expect.objectContaining({ id: run.childSessionId, internal: true, parentSessionId: session.id })]),
+    });
+    expect(client.getSnapshot().timelines[run.childSessionId]?.[0]).toMatchObject({ content: [{ text: "Child detail" }] });
+  });
+
+  it("polls only an opened live child, performs one final terminal sync, and cleans up", async () => {
+    const stream = new FakeEventSource();
+    const run = {
+      id: "run-live-child",
+      parentSessionId: session.id,
+      parentToolCallId: "tool-live-child",
+      childSessionId: "child-live",
+      role: "scout" as const,
+      status: "running" as const,
+      taskPreview: "Inspect live output",
+      createdAt: session.updatedAt,
+      updatedAt: session.updatedAt,
+      startedAt: session.updatedAt,
+    };
+    const snapshot = {
+      ...createEmptySnapshot({
+        projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+        sessions: [session],
+        activeSessionId: session.id,
+      }),
+      subagentRuns: { [session.id]: [run] },
+    };
+    let detailCalls = 0;
+    let finalChildOutputAvailable = false;
+    const detail = (text: string, throughSequence: number, terminal = false) => ({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      mode: "reset" as const,
+      detail: {
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        sessionId: run.childSessionId,
+        throughSequence,
+        timeline: [{
+          id: "child-live-message", kind: "message", role: "assistant",
+          content: [{ id: "child-live-text", type: "text", text }],
+          status: terminal ? "complete" : "streaming", createdAt: session.updatedAt,
+        }],
+        catalog: { models: [], commands: [], skills: [] },
+        pendingInteractions: [], extensionStatuses: [], widgets: [],
+        queue: { steering: [], followUp: [] }, composerDraft: "", runState: terminal ? "idle" : "running", subagentRuns: [],
+      },
+    });
+    const fetcher = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({
+          protocolVersion: ANVIL_PROTOCOL_VERSION,
+          capturedAt: session.updatedAt,
+          connection: "connected",
+          projects: snapshot.projects,
+          sessions: [session],
+          cursor: 0,
+        }));
+      }
+      if (url.includes(`/sessions/${run.childSessionId}/detail`)) {
+        detailCalls++;
+        return new Response(JSON.stringify(detail(
+          finalChildOutputAvailable ? "Final child output" : detailCalls === 1 ? "Initial" : "Updated while open",
+          detailCalls - 1,
+          finalChildOutputAvailable,
+        )));
+      }
+      if (url.includes(`/sessions/${session.id}/detail`)) {
+        return new Response(JSON.stringify({
+          protocolVersion: ANVIL_PROTOCOL_VERSION,
+          mode: "reset",
+          detail: {
+            protocolVersion: ANVIL_PROTOCOL_VERSION,
+            sessionId: session.id,
+            throughSequence: 0,
+            timeline: [], catalog: { models: [], commands: [], skills: [] },
+            pendingInteractions: [], extensionStatuses: [], widgets: [],
+            queue: { steering: [], followUp: [] }, composerDraft: "", runState: "idle", subagentRuns: [run],
+          },
+        }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+      internalDetailPollMs: 5,
+    });
+    const unsubscribe = client.subscribe(() => undefined);
+    await waitUntil(() => client.getSnapshot().subagentRuns[session.id]?.length === 1);
+    expect(detailCalls).toBe(0);
+    expect(client.getSnapshot().timelines[run.childSessionId]).toBeUndefined();
+
+    await client.openSubagentSession(session.id, run.id);
+    await waitUntil(() => {
+      const entry = client.getSnapshot().timelines[run.childSessionId]?.[0];
+      return entry?.kind === "message" && entry.content[0]?.type === "text" && entry.content[0].text === "Updated while open";
+    });
+
+    client.selectSession(session.id);
+    const afterNavigation = detailCalls;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(detailCalls).toBe(afterNavigation);
+
+    await client.openSubagentSession(session.id, run.id);
+    unsubscribe();
+    const afterUnmount = detailCalls;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(detailCalls).toBe(afterUnmount);
+
+    const unsubscribeAgain = client.subscribe(() => undefined);
+    stream.onerror?.(new Event("error"));
+    const afterOffline = detailCalls;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(detailCalls).toBe(afterOffline);
+
+    stream.onopen?.(new Event("open"));
+    finalChildOutputAvailable = true;
+    const beforeTerminal = detailCalls;
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-child-terminal",
+      sequence: 1,
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:02.000Z",
+      type: "subagent.updated",
+      payload: { run: { ...run, status: "completed", updatedAt: "2026-07-23T01:00:02.000Z", endedAt: "2026-07-23T01:00:02.000Z" } },
+    }));
+    await waitUntil(() => {
+      const entry = client.getSnapshot().timelines[run.childSessionId]?.[0];
+      return entry?.kind === "message" &&
+        entry.status === "complete" &&
+        entry.content[0]?.type === "text" &&
+        entry.content[0].text === "Final child output";
+    });
+    expect(detailCalls).toBe(beforeTerminal + 1);
+    expect(client.getSnapshot()).toMatchObject({
+      sessions: expect.arrayContaining([expect.objectContaining({ id: run.childSessionId, status: "idle" })]),
+      runStates: { [run.childSessionId]: "idle" },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(detailCalls).toBe(beforeTerminal + 1);
+    unsubscribeAgain();
+  });
+
   it("renders a detail newer than bootstrap without duplicating its later SSE events", async () => {
     const stream = new FakeEventSource();
     const fetcher = async (input: RequestInfo | URL) => {
@@ -135,6 +346,7 @@ describe("ForgeAnvilClient", () => {
             queue: { steering: [], followUp: [] },
             composerDraft: "",
             runState: "running",
+            subagentRuns: [],
           },
         }));
       }
@@ -179,6 +391,84 @@ describe("ForgeAnvilClient", () => {
     });
   });
 
+  it("replaces a stale cached subagent projection when an empty detail delta is authoritative", async () => {
+    const stream = new FakeEventSource();
+    const staleRun = {
+      id: "run-stale",
+      parentSessionId: session.id,
+      parentToolCallId: "tool-stale",
+      childSessionId: "child-stale",
+      role: "builder" as const,
+      status: "running" as const,
+      taskPreview: "Finish the task",
+      createdAt: session.updatedAt,
+      updatedAt: session.updatedAt,
+    };
+    let detailRequests = 0;
+    const fetcher = async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/bootstrap")) {
+        return new Response(JSON.stringify({
+          protocolVersion: ANVIL_PROTOCOL_VERSION,
+          capturedAt: session.updatedAt,
+          connection: "connected",
+          projects: [{ id: "anvil", name: "Anvil", path: "/repo" }],
+          sessions: [session],
+          cursor: 10,
+        }));
+      }
+      if (url.includes("/detail")) {
+        detailRequests++;
+        if (detailRequests === 1) {
+          return new Response(JSON.stringify({
+            protocolVersion: ANVIL_PROTOCOL_VERSION,
+            mode: "reset",
+            detail: {
+              protocolVersion: ANVIL_PROTOCOL_VERSION,
+              sessionId: session.id,
+              throughSequence: 10,
+              timeline: [],
+              catalog: { models: [], commands: [], skills: [] },
+              pendingInteractions: [],
+              extensionStatuses: [],
+              widgets: [],
+              queue: { steering: [], followUp: [] },
+              composerDraft: "",
+              runState: "idle",
+              subagentRuns: [staleRun],
+            },
+          }));
+        }
+        expect(url).toContain("after=10");
+        return new Response(JSON.stringify({
+          protocolVersion: ANVIL_PROTOCOL_VERSION,
+          mode: "delta",
+          sessionId: session.id,
+          fromSequence: 10,
+          throughSequence: 10,
+          events: [],
+          subagentRuns: [{
+            ...staleRun,
+            status: "completed",
+            updatedAt: "2026-07-23T01:00:02.000Z",
+            completedAt: "2026-07-23T01:00:02.000Z",
+          }],
+        }));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    };
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().subagentRuns[session.id]?.[0]?.status === "running");
+
+    stream.emit("reset", "{}");
+
+    await waitUntil(() => client.getSnapshot().subagentRuns[session.id]?.[0]?.status === "completed");
+    expect(detailRequests).toBe(2);
+  });
+
   it("ignores an obsolete detail response after a newer bootstrap", async () => {
     const stream = new FakeEventSource();
     let bootstrapCount = 0;
@@ -209,6 +499,7 @@ describe("ForgeAnvilClient", () => {
         queue: { steering: [], followUp: [] },
         composerDraft: "",
         runState: "idle",
+        subagentRuns: [],
       },
     }));
     const fetcher = async (input: RequestInfo | URL) => {

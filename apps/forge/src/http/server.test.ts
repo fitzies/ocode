@@ -106,7 +106,7 @@ describe("ForgeHttpServer", () => {
     const deltaResponse = await fetch(`${baseUrl}/api/v1/sessions/${session.id}/detail?after=1`);
     const delta: unknown = await deltaResponse.json();
     expect(isAnvilSessionDetailSync(delta)).toBe(true);
-    expect(delta).toMatchObject({ mode: "delta", fromSequence: 1, throughSequence: 2 });
+    expect(delta).toMatchObject({ mode: "delta", fromSequence: 1, throughSequence: 2, subagentRuns: [] });
     expect((delta as { events: unknown[] }).events).toHaveLength(1);
 
     const resetResponse = await fetch(`${baseUrl}/api/v1/sessions/${session.id}/detail`);

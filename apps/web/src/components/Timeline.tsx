@@ -5,6 +5,7 @@ import type {
   JsonValue,
   MessageEntry,
   ProjectResourceContentBlock,
+  ReasoningEntry,
   SessionSummary,
   SystemEventEntry,
   TimelineEntry,
@@ -36,6 +37,7 @@ import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtif
 import { MarkdownText } from "./MarkdownText";
 import { MessageActions } from "./MessageActions";
 import { Button } from "./ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { displayToolName, presentTool, type ToolCategory } from "./toolPresentation";
 
 interface TimelineProps {
@@ -341,7 +343,6 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
   onOpenProjectResource: (block: ProjectResourceContentBlock) => void;
 }) {
   const entranceClass = entering ? " timeline-entry--entering" : "";
-  const reasoningStartedEmpty = useRef(entry.kind === "reasoning" && !entry.content).current;
   if (entry.kind === "message") {
     const visibleContent = entry.role === "user"
       ? userVisibleContent(entry.content)
@@ -370,23 +371,8 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
     );
   }
 
-  if (entry.kind === "reasoning") {
-    const revealReasoning = reasoningStartedEmpty && Boolean(entry.content);
-    return (
-      <div className={`thinking-event thinking-event--${entry.status}${entranceClass}`}>
-        <span className="thinking-label">Thinking:</span>
-        <span className={`thinking-content${revealReasoning ? " thinking-content--revealing" : ""}`}>
-          {(!entry.content || revealReasoning) && (
-            <span className="thinking-placeholder" aria-hidden={revealReasoning || undefined}>Getting started…</span>
-          )}
-          {entry.content && (
-            <MarkdownText className="thinking-markdown markdown-body">{entry.content}</MarkdownText>
-          )}
-        </span>
-        {entry.status === "cancelled" && <span className="event-state-label">cancelled</span>}
-      </div>
-    );
-  }
+  // Reasoning entries are consolidated into turn-level rows by timelineRows.
+  if (entry.kind === "reasoning") return null;
 
   if (entry.kind === "tool") {
     const presentation = presentTool(entry);
@@ -432,8 +418,8 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
           .join("\n\n")
       : "";
     return (
-      <details className={`tool-event tool-event--${entry.status} tool-event--${presentation.category}${entranceClass}`}>
-        <summary>
+      <Collapsible className={`tool-event tool-event--${entry.status} tool-event--${presentation.category}${entranceClass}`}>
+        <CollapsibleTrigger className="tool-event-trigger">
           <span className="tool-icon"><ToolGlyph category={presentation.category} /></span>
           <span className="tool-main">
             <strong>{presentation.title}</strong>
@@ -444,32 +430,34 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
           <span className="tool-status-copy" aria-hidden="true">{presentation.status}</span>
           <span className="tool-status"><ToolStatus entry={entry} /></span>
           <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
-        </summary>
-        {presentation.category === "agent" ? (
-          <div className="tool-detail agent-detail">
-            <section className="agent-detail-section">
-              <h4 className="detail-label">Message</h4>
-              {subagentTask
-                ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentTask}</MarkdownText>
-                : <span className="agent-detail-placeholder">No message available.</span>}
-            </section>
-            <section className="agent-detail-section">
-              <h4 className="detail-label">Response</h4>
-              {subagentResponse
-                ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentResponse}</MarkdownText>
-                : <span className="agent-detail-placeholder">{entry.status === "running" || entry.status === "queued" ? "Waiting for response…" : "No response returned."}</span>}
-            </section>
-          </div>
-        ) : (
-          <div className="tool-detail">
-            {fileToolResource && <section className="tool-output"><span className="detail-label">File</span><ContentBlocks blocks={[fileToolResource]} compact onOpenProjectResource={onOpenProjectResource} /></section>}
-            {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact onOpenProjectResource={onOpenProjectResource} /></section>}
-            <JsonDetails label="Arguments" value={entry.arguments} />
-            <JsonDetails label="Details" value={entry.details} />
-            <JsonDetails label="Raw RPC event" value={entry.raw} />
-          </div>
-        )}
-      </details>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="tool-event-content" forceMount>
+          {presentation.category === "agent" ? (
+            <div className="tool-detail agent-detail">
+              <section className="agent-detail-section">
+                <h4 className="detail-label">Message</h4>
+                {subagentTask
+                  ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentTask}</MarkdownText>
+                  : <span className="agent-detail-placeholder">No message available.</span>}
+              </section>
+              <section className="agent-detail-section">
+                <h4 className="detail-label">Response</h4>
+                {subagentResponse
+                  ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentResponse}</MarkdownText>
+                  : <span className="agent-detail-placeholder">{entry.status === "running" || entry.status === "queued" ? "Waiting for response…" : "No response returned."}</span>}
+              </section>
+            </div>
+          ) : (
+            <div className="tool-detail">
+              {fileToolResource && <section className="tool-output"><span className="detail-label">File</span><ContentBlocks blocks={[fileToolResource]} compact onOpenProjectResource={onOpenProjectResource} /></section>}
+              {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact onOpenProjectResource={onOpenProjectResource} /></section>}
+              <JsonDetails label="Arguments" value={entry.arguments} />
+              <JsonDetails label="Details" value={entry.details} />
+              <JsonDetails label="Raw RPC event" value={entry.raw} />
+            </div>
+          )}
+        </CollapsibleContent>
+      </Collapsible>
     );
   }
 
@@ -512,8 +500,36 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
 
 type TimelineRow =
   | { key: string; kind: "entry"; entry: TimelineEntry }
+  | { key: string; kind: "reasoning-group"; reasoning: ReasoningEntry[] }
   | { key: string; kind: "tool-batch"; tools: ToolEntry[] }
   | { key: string; kind: "retry"; retry: RetryCycle };
+
+function ReasoningGroup({ entries, entering = false }: { entries: ReasoningEntry[]; entering?: boolean }) {
+  const active = entries.some((entry) => entry.status === "streaming");
+  const latest = entries.at(-1);
+  const populated = entries.filter((entry) => entry.content.trim());
+  const label = latest?.content.trim() || "Getting started…";
+  if (active) {
+    return (
+      <div className={`thinking-event thinking-event--streaming${entering ? " timeline-entry--entering" : ""}`} role="status">
+        <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="thinking-spinner size-3" />
+        <MarkdownText className="thinking-live-text markdown-body">{label}</MarkdownText>
+      </div>
+    );
+  }
+  return (
+    <Collapsible className={`thinking-event thinking-event--complete${entering ? " timeline-entry--entering" : ""}`}>
+      <CollapsibleTrigger className="thinking-trigger">
+        <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3" />
+        <span>Thought process</span>
+        {populated.length > 1 && <small>{populated.length} steps</small>}
+      </CollapsibleTrigger>
+      <CollapsibleContent className="thinking-history" forceMount>
+        {populated.map((entry) => <MarkdownText key={entry.id} className="thinking-markdown markdown-body">{entry.content}</MarkdownText>)}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
 
 function takeAssociatedRetryError(rows: TimelineRow[], expectedError: string | undefined): MessageEntry | undefined {
   if (!expectedError) return undefined;
@@ -532,11 +548,32 @@ function takeAssociatedRetryError(rows: TimelineRow[], expectedError: string | u
 
 function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   const rows: TimelineRow[] = [];
+  const reasoningByTurn = new Map<string, ReasoningEntry[]>();
+  const reasoningTurnById = new Map<string, string>();
+  let currentTurnKey = "session-start";
+  for (const entry of entries) {
+    if (entry.kind === "message" && entry.role === "user") currentTurnKey = entry.id;
+    if (entry.kind !== "reasoning") continue;
+    const group = reasoningByTurn.get(currentTurnKey) ?? [];
+    group.push(entry);
+    reasoningByTurn.set(currentTurnKey, group);
+    reasoningTurnById.set(entry.id, currentTurnKey);
+  }
+  const renderedReasoningTurns = new Set<string>();
   let activeRetry: Extract<TimelineRow, { kind: "retry" }> | undefined;
   let index = 0;
   while (index < entries.length) {
     const entry = entries[index]!;
     if (entry.kind === "message" && entry.role === "user") activeRetry = undefined;
+    if (entry.kind === "reasoning") {
+      const turnKey = reasoningTurnById.get(entry.id) ?? "session-start";
+      if (!renderedReasoningTurns.has(turnKey)) {
+        renderedReasoningTurns.add(turnKey);
+        rows.push({ key: `reasoning-turn-${turnKey}`, kind: "reasoning-group", reasoning: reasoningByTurn.get(turnKey) ?? [entry] });
+      }
+      index += 1;
+      continue;
+    }
     const retryType = retryEventType(entry);
     if (entry.kind === "event" && retryType === "auto_retry_start") {
       const associatedError = takeAssociatedRetryError(rows, retryString(entry, "errorMessage"));
@@ -590,6 +627,7 @@ function TimelineRowView({ row, entering = false, onOpenProjectResource }: {
 }) {
   const animateEntrance = useRef(entering).current;
   if (row.kind === "entry") return <TimelineItem entry={row.entry} entering={animateEntrance} onOpenProjectResource={onOpenProjectResource} />;
+  if (row.kind === "reasoning-group") return <ReasoningGroup entries={row.reasoning} entering={animateEntrance} />;
   if (row.kind === "retry") return <RetryTimelineItem retry={row.retry} entering={animateEntrance} />;
   const completed = row.tools.filter((tool) => tool.status === "completed").length;
   const running = row.tools.filter((tool) => tool.status === "running").length;
@@ -649,7 +687,14 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
   const virtualizer = useVirtualizer({
     count: virtualized ? rows.length : 0,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => rows[index]?.kind === "tool-batch" ? 180 : 96,
+    estimateSize: (index) => {
+      const row = rows[index];
+      if (row?.kind === "tool-batch") return 44 + row.tools.length * 29;
+      if (row?.kind === "reasoning-group") return 34;
+      if (row?.kind === "entry" && row.entry.kind === "tool") return 30;
+      if (row?.kind === "entry" && row.entry.kind === "message") return 112;
+      return 64;
+    },
     getItemKey: (index) => rows[index]?.key ?? index,
     overscan: 8,
   });
@@ -748,7 +793,7 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
               <span className="forge-spinner" aria-hidden="true" />
             </div>
           ) : (
-            <h2>What should Pi work on?</h2>
+            <h2>Let’s build</h2>
           )}
         </div>
       </div>
@@ -773,7 +818,7 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
                   const row = rows[item.index]!;
                   return (
                     <div
-                      className="timeline-virtual-row"
+                      className={`timeline-virtual-row timeline-virtual-row--${row.kind === "entry" ? row.entry.kind : row.kind}`}
                       data-index={item.index}
                       key={row.key}
                       ref={virtualizer.measureElement}

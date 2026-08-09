@@ -1,0 +1,158 @@
+{
+  "id": "async-subagents",
+  "name": "Forge async subagents",
+  "description": "Concurrent durable subagent roles, completion delivery, failure, attention, cancellation, interruption, and uncertain notification state.",
+  "baseTimestamp": "2026-07-21T09:00:00.000Z",
+  "project": { "id": "ocode", "name": "ocode", "path": "~/code/ocode" },
+  "session": {
+    "id": "async-subagents",
+    "projectId": "ocode",
+    "title": "Harden async worker orchestration",
+    "updatedAt": "2026-07-21T09:08:30.000Z",
+    "status": "running",
+    "modelId": "openai/gpt-5.4",
+    "thinkingLevel": "high",
+    "branch": "subagents-ui"
+  },
+  "subagentRuns": [
+    {
+      "id": "run-builder-live",
+      "parentSessionId": "async-subagents",
+      "parentToolCallId": "call-builder-live",
+      "childSessionId": "child-builder-live",
+      "role": "builder",
+      "status": "running",
+      "taskPreview": "Implement cancellation idempotency and ensure a repeated request cannot cancel a terminal worker.",
+      "createdAt": "2026-07-21T09:04:00.000Z",
+      "updatedAt": "2026-07-21T09:08:30.000Z",
+      "startedAt": "2026-07-21T09:04:02.000Z"
+    },
+    {
+      "id": "run-scout-starting",
+      "parentSessionId": "async-subagents",
+      "parentToolCallId": "call-scout-starting",
+      "childSessionId": "child-scout-starting",
+      "role": "scout",
+      "status": "starting",
+      "taskPreview": "Map every client cache path that folds the durable subagent projection.",
+      "createdAt": "2026-07-21T09:08:10.000Z",
+      "updatedAt": "2026-07-21T09:08:20.000Z"
+    },
+    {
+      "id": "run-reviewer-attention",
+      "parentSessionId": "async-subagents",
+      "parentToolCallId": "call-reviewer-attention",
+      "childSessionId": "child-reviewer-attention",
+      "role": "reviewer",
+      "status": "needs_attention",
+      "taskPreview": "Review the migration boundary and decide whether an interrupted child should retry automatically.",
+      "resultPreview": "The retry policy is ambiguous because the previous process exited after persisting completion but before acknowledgement.",
+      "createdAt": "2026-07-21T09:01:00.000Z",
+      "updatedAt": "2026-07-21T09:07:45.000Z",
+      "startedAt": "2026-07-21T09:01:03.000Z"
+    },
+    {
+      "id": "run-research-completed-busy",
+      "parentSessionId": "async-subagents",
+      "parentToolCallId": "call-research-completed",
+      "childSessionId": "child-research-completed",
+      "role": "researcher",
+      "status": "completed",
+      "taskPreview": "Check Pi RPC behavior when completion arrives while the parent agent is busy.",
+      "resultPreview": "Completion can be queued as a follow-up without interrupting the parent run; delivery remains idempotent by command id.",
+      "createdAt": "2026-07-21T09:00:30.000Z",
+      "updatedAt": "2026-07-21T09:03:12.000Z",
+      "startedAt": "2026-07-21T09:00:32.000Z",
+      "endedAt": "2026-07-21T09:03:10.000Z",
+      "notification": {
+        "id": "subagent-completion:run-research-completed-busy",
+        "status": "pending",
+        "updatedAt": "2026-07-21T09:03:12.000Z"
+      }
+    },
+    {
+      "id": "run-review-failed",
+      "parentSessionId": "async-subagents",
+      "parentToolCallId": "call-review-failed",
+      "childSessionId": "child-review-failed",
+      "role": "reviewer",
+      "status": "failed",
+      "taskPreview": "Run the cross-device reconnection checks against a restarted Forge process.",
+      "error": "Child runtime exited with code 1 after the test server failed to bind its reserved port.",
+      "createdAt": "2026-07-21T09:02:00.000Z",
+      "updatedAt": "2026-07-21T09:04:40.000Z",
+      "startedAt": "2026-07-21T09:02:02.000Z",
+      "endedAt": "2026-07-21T09:04:39.000Z",
+      "notification": {
+        "id": "subagent-completion:run-review-failed",
+        "status": "delivered",
+        "updatedAt": "2026-07-21T09:04:40.000Z"
+      }
+    },
+    {
+      "id": "run-scout-cancelled",
+      "parentSessionId": "async-subagents",
+      "parentToolCallId": "call-scout-cancelled",
+      "childSessionId": "child-scout-cancelled",
+      "role": "scout",
+      "status": "cancelled",
+      "taskPreview": "Inventory obsolete prototype components after the durable projection landed.",
+      "resultPreview": "Stopped after the relevant activity modules were identified.",
+      "createdAt": "2026-07-21T09:00:10.000Z",
+      "updatedAt": "2026-07-21T09:01:20.000Z",
+      "startedAt": "2026-07-21T09:00:11.000Z",
+      "endedAt": "2026-07-21T09:01:20.000Z"
+    },
+    {
+      "id": "run-builder-interrupted",
+      "parentSessionId": "async-subagents",
+      "parentToolCallId": "call-builder-interrupted",
+      "childSessionId": "child-builder-interrupted",
+      "role": "builder",
+      "status": "interrupted",
+      "taskPreview": "Apply the UI patch before the Forge service restart.",
+      "error": "Forge restarted while the child process was active. The partial child transcript remains available.",
+      "createdAt": "2026-07-21T08:55:00.000Z",
+      "updatedAt": "2026-07-21T09:00:05.000Z",
+      "startedAt": "2026-07-21T08:55:02.000Z",
+      "endedAt": "2026-07-21T09:00:05.000Z",
+      "notification": {
+        "id": "subagent-completion:run-builder-interrupted",
+        "status": "uncertain",
+        "updatedAt": "2026-07-21T09:00:06.000Z",
+        "error": "Connection closed after delivery began; the parent may already have received this notification."
+      }
+    }
+  ],
+  "records": [
+    {
+      "at": 0,
+      "record": {
+        "type": "message_start",
+        "message": { "role": "user", "content": "Harden async subagents and keep the parent responsive while workers finish.", "timestamp": 1784624400000 }
+      }
+    },
+    {
+      "at": 20,
+      "record": {
+        "type": "message_end",
+        "message": { "role": "user", "content": "Harden async subagents and keep the parent responsive while workers finish.", "timestamp": 1784624400000 }
+      }
+    },
+    { "at": 80, "record": { "type": "agent_start" } },
+    {
+      "at": 180,
+      "record": {
+        "type": "message_start",
+        "message": { "role": "assistant", "content": "I launched focused workers and will continue coordinating from the parent session.", "model": "gpt-5.4", "timestamp": 1784624400180 }
+      }
+    },
+    {
+      "at": 220,
+      "record": {
+        "type": "message_end",
+        "message": { "role": "assistant", "content": "I launched focused workers and will continue coordinating from the parent session.", "model": "gpt-5.4", "stopReason": "stop", "timestamp": 1784624400180 }
+      }
+    }
+  ]
+}

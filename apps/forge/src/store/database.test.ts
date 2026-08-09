@@ -9,6 +9,7 @@ import { applyAnvilEvents, createEmptySnapshot } from "@anvil/state";
 import { describe, expect, it } from "vitest";
 
 import { ForgeDatabase } from "./database.ts";
+import { MAX_SUBAGENT_RUNS_GLOBAL, MAX_SUBAGENT_RUNS_PER_PARENT, SUBAGENT_PARENT_COMPLETION_BUDGET_BYTES } from "./subagentStore.ts";
 
 function event(sessionId: string | null, timestamp: string): UnsequencedAnvilEvent {
   return {
@@ -20,6 +21,119 @@ function event(sessionId: string | null, timestamp: string): UnsequencedAnvilEve
 }
 
 describe("ForgeDatabase event journal", () => {
+  it("durably admits one subagent per parent tool call and folds its completion outbox", () => {
+    const database = new ForgeDatabase(":memory:");
+    database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);
+    database.createSession({
+      id: "parent-1",
+      projectId: "project-1",
+      title: "Parent",
+      updatedAt: "2026-07-23T01:00:00.000Z",
+      status: "idle",
+      modelId: "test/model",
+      thinkingLevel: "off",
+    });
+
+    const first = database.subagents.admit({ parentSessionId: "parent-1", parentToolCallId: "tool-1", childSessionId: "child-1", role: "scout", taskPreview: "Inspect tests", timestamp: "2026-07-23T01:00:01.000Z" });
+    const duplicate = database.subagents.admit({ parentSessionId: "parent-1", parentToolCallId: "tool-1", childSessionId: "different-child", role: "builder", taskPreview: "Different task", timestamp: "2026-07-23T01:00:02.000Z" });
+    expect(first.created).toBe(true);
+    expect(duplicate.created).toBe(false);
+    expect(duplicate.run).toMatchObject({ id: first.run.id, childSessionId: "child-1", taskPreview: "Inspect tests" });
+
+    const terminal = database.subagents.updateStatus(first.run.id, "completed", "2026-07-23T01:01:00.000Z", {
+      resultPreview: "All tests pass",
+    });
+    expect(terminal?.run).toMatchObject({
+      status: "completed",
+      resultPreview: "All tests pass",
+      notification: { status: "pending" },
+    });
+    const delivery = database.subagents.claimDelivery();
+    expect(delivery).toMatchObject({ runId: first.run.id, deliveryId: `subagent-completion:${first.run.id}` });
+    database.subagents.finishDelivery(delivery!.deliveryId, "delivered", "2026-07-23T01:01:01.000Z", 42);
+    expect(database.subagents.get(first.run.id)?.notification?.status).toBe("delivered");
+    database.close();
+  });
+
+  it("enforces admission, indexes child ownership, and budgets rich completion delivery", () => {
+    const directory = mkdtempSync(join(tmpdir(), "ocode-subagent-index-"));
+    const path = join(directory, "forge.sqlite");
+    try {
+      const database = new ForgeDatabase(path);
+      database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);
+      database.createSession({ id: "parent-1", projectId: "project-1", title: "Parent", updatedAt: "2026-01-01T00:00:00.000Z", status: "idle", modelId: "test/model", thinkingLevel: "off" });
+      for (let index = 0; index < MAX_SUBAGENT_RUNS_PER_PARENT; index += 1) {
+        database.subagents.admit({ parentSessionId: "parent-1", parentToolCallId: `active-${index}`, childSessionId: `active-child-${index}`, role: "scout", taskPreview: "task", timestamp: new Date(index).toISOString() });
+      }
+      expect(() => database.subagents.admit({ parentSessionId: "parent-1", parentToolCallId: "too-many", childSessionId: "too-many-child", role: "builder", taskPreview: "task", timestamp: new Date().toISOString() }))
+        .toThrow(/at most/);
+      expect(database.subagents.getByChildSessionId("active-child-2")?.parentSessionId).toBe("parent-1");
+      database.close();
+
+      const raw = new DatabaseSync(path);
+      const plan = raw.prepare("EXPLAIN QUERY PLAN SELECT * FROM subagent_runs WHERE child_session_id = ?").all("active-child-2") as Array<{ detail: string }>;
+      expect(plan.some((row) => /child_session|sqlite_autoindex_subagent_runs/.test(row.detail))).toBe(true);
+      raw.close();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+
+    const globalDatabase = new ForgeDatabase(":memory:");
+    globalDatabase.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);
+    for (let index = 0; index < MAX_SUBAGENT_RUNS_GLOBAL; index += 1) {
+      const parentSessionId = `global-parent-${index}`;
+      globalDatabase.createSession({ id: parentSessionId, projectId: "project-1", title: "Parent", updatedAt: new Date(index).toISOString(), status: "idle", modelId: "test/model", thinkingLevel: "off" });
+      globalDatabase.subagents.admit({ parentSessionId, parentToolCallId: "tool", childSessionId: `global-child-${index}`, role: "scout", taskPreview: "task", timestamp: new Date(index).toISOString() });
+    }
+    globalDatabase.createSession({ id: "global-overflow-parent", projectId: "project-1", title: "Parent", updatedAt: new Date().toISOString(), status: "idle", modelId: "test/model", thinkingLevel: "off" });
+    expect(() => globalDatabase.subagents.admit({ parentSessionId: "global-overflow-parent", parentToolCallId: "tool", childSessionId: "global-overflow-child", role: "scout", taskPreview: "task", timestamp: new Date().toISOString() })).toThrow(/Forge may have at most/);
+    globalDatabase.close();
+
+    const database = new ForgeDatabase(":memory:");
+    database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);
+    database.createSession({ id: "parent-1", projectId: "project-1", title: "Parent", updatedAt: "2026-01-01T00:00:00.000Z", status: "idle", modelId: "test/model", thinkingLevel: "off" });
+    const remaining: number[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const admitted = database.subagents.admit({ parentSessionId: "parent-1", parentToolCallId: `done-${index}`, childSessionId: `done-child-${index}`, role: "reviewer", taskPreview: "task", timestamp: new Date(index).toISOString() });
+      database.subagents.updateStatus(admitted.run.id, "completed", new Date(index + 10).toISOString());
+      const delivery = database.subagents.claimDelivery()!;
+      remaining.push(delivery.remainingRichBytes);
+      database.subagents.finishDelivery(delivery.deliveryId, "delivered", new Date(index + 20).toISOString(), 8 * 1024);
+    }
+    expect(remaining).toEqual([
+      SUBAGENT_PARENT_COMPLETION_BUDGET_BYTES,
+      SUBAGENT_PARENT_COMPLETION_BUDGET_BYTES - 8 * 1024,
+      SUBAGENT_PARENT_COMPLETION_BUDGET_BYTES - 16 * 1024,
+      SUBAGENT_PARENT_COMPLETION_BUDGET_BYTES - 24 * 1024,
+      0,
+    ]);
+    for (let index = 5; index < 56; index += 1) {
+      const admitted = database.subagents.admit({ parentSessionId: "parent-1", parentToolCallId: `prune-${index}`, childSessionId: `prune-child-${index}`, role: "scout", taskPreview: "task", timestamp: new Date(index + 100).toISOString() });
+      database.subagents.updateStatus(admitted.run.id, "completed", new Date(index + 200).toISOString(), { notify: false });
+    }
+    const afterPruning = database.subagents.admit({ parentSessionId: "parent-1", parentToolCallId: "after-pruning", childSessionId: "after-pruning-child", role: "scout", taskPreview: "task", timestamp: new Date(500).toISOString() });
+    database.subagents.updateStatus(afterPruning.run.id, "completed", new Date(501).toISOString());
+    expect(database.subagents.claimDelivery()?.remainingRichBytes).toBe(0);
+    database.close();
+  });
+
+  it("keeps durable child ownership after terminal run retention pruning", () => {
+    const database = new ForgeDatabase(":memory:");
+    database.syncProjects([{ id: "project-1", name: "Project", path: "/repo" }]);
+    database.createSession({ id: "parent-1", projectId: "project-1", title: "Parent", updatedAt: "2026-01-01T00:00:00.000Z", status: "idle", modelId: "test/model", thinkingLevel: "off" });
+    for (let index = 0; index < 52; index += 1) {
+      const childSessionId = `retained-child-${index}`;
+      database.createSession({ id: childSessionId, projectId: "project-1", title: "Child", updatedAt: new Date(index).toISOString(), status: "idle", modelId: "test/model", thinkingLevel: "off", internal: true, parentSessionId: "parent-1" });
+      const admitted = database.subagents.admit({ parentSessionId: "parent-1", parentToolCallId: `retained-${index}`, childSessionId, role: "scout", taskPreview: "task", timestamp: new Date(index).toISOString() });
+      database.subagents.updateStatus(admitted.run.id, "completed", new Date(index + 100).toISOString(), { notify: false });
+    }
+    expect(database.subagents.list("parent-1").length).toBeLessThanOrEqual(50);
+    expect(database.getSession("retained-child-0")).toBeDefined();
+    expect(database.childSessionIds("parent-1")).toHaveLength(52);
+    expect(database.unretainedChildSessionIds()).toContain("retained-child-0");
+    database.close();
+  });
+
   it("migrates v4 sessions to unsettled without losing them", () => {
     const directory = mkdtempSync(join(tmpdir(), "anvil-store-v4-"));
     const path = join(directory, "forge.sqlite");
@@ -71,7 +185,7 @@ describe("ForgeDatabase event journal", () => {
       migrated.close();
       const raw = new DatabaseSync(path);
       expect(raw.prepare("SELECT name FROM sqlite_master WHERE name = 'speech_daily_usage'").get()).toBeUndefined();
-      expect((raw.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(13);
+      expect((raw.prepare("PRAGMA user_version").get() as { user_version: number }).user_version).toBe(17);
       raw.close();
     } finally {
       rmSync(directory, { recursive: true, force: true });
@@ -255,7 +369,7 @@ describe("ForgeDatabase event journal", () => {
     database.close();
   });
 
-  it.each([5, 6, 7])("upgrades structurally compatible protocol %i snapshots", (legacyVersion) => {
+  it.each([5, 6, 7, 8, 9, 10])("upgrades structurally compatible protocol %i snapshots", (legacyVersion) => {
     const directory = mkdtempSync(join(tmpdir(), `anvil-store-v${legacyVersion}-snapshot-`));
     const path = join(directory, "forge.sqlite");
     try {
@@ -300,6 +414,7 @@ describe("ForgeDatabase event journal", () => {
         connection: "offline",
         lastSequence: 0,
         sessions: [{ readThroughSequence: 0 }],
+        subagentRuns: {},
         timelines: { "session-1": [{ output: [{ type: "projectResource", path: "README.md" }] }] },
       });
       const entry = restored?.timelines["session-1"]?.[0];

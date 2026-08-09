@@ -86,6 +86,37 @@ describe("app shell snapshot selection", () => {
     expect(equalAppShellSnapshots(backgroundSelection, selectAppShellSnapshot(activeUpdated))).toBe(false);
   });
 
+  it("reacts to the selected durable subagent projection but ignores background runs", () => {
+    const initial = snapshot();
+    const run = {
+      id: "run-1",
+      parentSessionId: "session-background",
+      parentToolCallId: "tool-1",
+      childSessionId: "child-1",
+      role: "scout" as const,
+      status: "running" as const,
+      taskPreview: "Inspect state",
+      createdAt: "2026-07-24T10:00:00.000Z",
+      updatedAt: "2026-07-24T10:00:00.000Z",
+    };
+    const selected = selectAppShellSnapshot(initial);
+    const background = {
+      ...applyAnvilEvent(initial, event(1, "session-background", "subagent.updated", { run })),
+      replay: initial.replay,
+      hydratingSessionIds: initial.hydratingSessionIds,
+    } as AnvilClientSnapshot;
+    expect(equalAppShellSnapshots(selected, selectAppShellSnapshot(background))).toBe(true);
+
+    const active = {
+      ...applyAnvilEvent(background, event(2, "session-active", "subagent.updated", {
+        run: { ...run, id: "run-active", parentSessionId: "session-active", childSessionId: "child-active" },
+      })),
+      replay: initial.replay,
+      hydratingSessionIds: initial.hydratingSessionIds,
+    } as AnvilClientSnapshot;
+    expect(equalAppShellSnapshots(selectAppShellSnapshot(background), selectAppShellSnapshot(active))).toBe(false);
+  });
+
   it("still exposes background summary changes to the sidebar", () => {
     const initial = snapshot();
     const updated = {

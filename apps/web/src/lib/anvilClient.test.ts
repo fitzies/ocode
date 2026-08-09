@@ -15,6 +15,31 @@ describe("FixtureAnvilClient", () => {
     expect(snapshot.timelines["parallel-tools"].filter((entry) => entry.kind === "tool")).toHaveLength(2);
     expect(snapshot.pendingInteractions.filter((request) => request.sessionId === "dialog-queue")).toHaveLength(6);
     expect(snapshot.timelines["failure-unknown"].some((entry) => entry.kind === "event" && entry.category === "unknown")).toBe(true);
+    expect(snapshot.subagentRuns["async-subagents"]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ role: "builder", status: "running" }),
+      expect.objectContaining({ role: "reviewer", status: "needs_attention" }),
+      expect.objectContaining({ status: "cancelled" }),
+      expect.objectContaining({ status: "interrupted", notification: expect.objectContaining({ status: "uncertain" }) }),
+    ]));
+  });
+
+  it("cancels durable fixture runs and opens bounded child detail only on request", async () => {
+    const client = new FixtureAnvilClient();
+    const parentSessionId = "async-subagents";
+    const running = client.getSnapshot().subagentRuns[parentSessionId]!.find((run) => run.status === "running")!;
+
+    await client.cancelSubagent(parentSessionId, running.id);
+    expect(client.getSnapshot().subagentRuns[parentSessionId]?.find((run) => run.id === running.id)?.status).toBe("cancelled");
+    expect(client.getSnapshot().sessions.some((session) => session.id === running.childSessionId)).toBe(false);
+
+    await client.openSubagentSession(parentSessionId, running.id);
+    expect(client.getSnapshot().sessions).toContainEqual(expect.objectContaining({
+      id: running.childSessionId,
+      internal: true,
+      parentSessionId,
+    }));
+    expect(client.getSnapshot().activeSessionId).toBe(running.childSessionId);
+    expect(client.getSnapshot().timelines[running.childSessionId]).toHaveLength(1);
   });
 
   it("settles and reopens a thread through protocol state", async () => {

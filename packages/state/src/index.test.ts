@@ -31,6 +31,30 @@ function event<T extends AnvilEvent["type"]>(
 }
 
 describe("Anvil event reducer", () => {
+  it("folds idempotent subagent lifecycle updates into the parent projection", () => {
+    let snapshot = createEmptySnapshot({ sessions: [session] });
+    const run = {
+      id: "run-1",
+      parentSessionId: session.id,
+      parentToolCallId: "tool-1",
+      childSessionId: "child-1",
+      role: "scout" as const,
+      status: "queued" as const,
+      taskPreview: "Inspect tests",
+      createdAt: "2026-07-21T09:00:00.000Z",
+      updatedAt: "2026-07-21T09:00:00.000Z",
+    };
+    snapshot = applyAnvilEvent(snapshot, event(1, "subagent.updated", { run }));
+    snapshot = applyAnvilEvent(snapshot, event(2, "subagent.updated", {
+      run: { ...run, status: "running", updatedAt: "2026-07-21T09:00:02.000Z" },
+    }));
+
+    expect(snapshot.subagentRuns[session.id]).toEqual([
+      expect.objectContaining({ id: "run-1", status: "running" }),
+    ]);
+    expect(isAnvilSnapshot(snapshot)).toBe(true);
+  });
+
   it("updates a renamed thread from session configuration", () => {
     let snapshot = createEmptySnapshot({ sessions: [session] });
     snapshot = applyAnvilEvent(snapshot, event(1, "session.configured", { title: "Renamed thread" }));

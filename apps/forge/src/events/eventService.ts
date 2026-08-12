@@ -12,6 +12,7 @@ import {
   type AnvilSummaryBootstrap,
   type ProjectSummary,
   type SessionSummary,
+  type ThreadSearchMatch,
 } from "@anvil/protocol";
 import { applyAnvilEvents, createEmptySnapshot, restoreLegacyUserActivity } from "@anvil/state";
 
@@ -154,6 +155,56 @@ export class ForgeEventService extends EventEmitter {
 
   timelineForSession(sessionId: string): AnvilSnapshot["timelines"][string] {
     return structuredClone(this.snapshot.timelines[sessionId] ?? []);
+  }
+
+  searchThreads(query: string, limit = 50): ThreadSearchMatch[] {
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    if (normalizedQuery.length < 2 || normalizedQuery.length > 200) return [];
+
+    const matches: Array<ThreadSearchMatch & { sessionUpdatedAt: string }> = [];
+    for (const session of this.snapshot.sessions) {
+      if (session.internal) continue;
+      const candidates = (this.snapshot.timelines[session.id] ?? []).flatMap((entry) => {
+        if (
+          entry.kind !== "message" ||
+          entry.status !== "complete" ||
+          (entry.role !== "user" && entry.role !== "assistant") ||
+          (entry.role === "user" && entry.origin !== undefined)
+        ) return [];
+        const text = entry.content
+          .filter((block) => block.type === "text")
+          .map((block) => block.type === "text" ? block.text : "")
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim();
+        const matchIndex = text.toLocaleLowerCase().indexOf(normalizedQuery);
+        if (matchIndex < 0) return [];
+        const bodyLength = 236;
+        const start = Math.min(Math.max(0, matchIndex - 72), Math.max(0, text.length - bodyLength));
+        const end = Math.min(text.length, start + bodyLength);
+        return [{
+          sessionId: session.id,
+          role: entry.role,
+          snippet: `${start > 0 ? "…" : ""}${text.slice(start, end)}${end < text.length ? "…" : ""}`,
+          messageCreatedAt: entry.createdAt,
+          sessionUpdatedAt: session.updatedAt,
+        }];
+      });
+      const preferred = candidates
+        .sort((left, right) => {
+          if (left.role !== right.role) return left.role === "user" ? -1 : 1;
+          return right.messageCreatedAt.localeCompare(left.messageCreatedAt);
+        })[0];
+      if (preferred) matches.push(preferred);
+    }
+
+    return matches
+      .sort((left, right) => {
+        if (left.role !== right.role) return left.role === "user" ? -1 : 1;
+        return right.sessionUpdatedAt.localeCompare(left.sessionUpdatedAt) || left.sessionId.localeCompare(right.sessionId);
+      })
+      .slice(0, Math.max(1, Math.min(50, limit)))
+      .map(({ sessionUpdatedAt: _sessionUpdatedAt, ...match }) => match);
   }
 
   bootstrap(): AnvilBootstrap {

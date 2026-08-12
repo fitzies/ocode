@@ -48,8 +48,13 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return value as T;
 }
 
-export function getProjectGitStatus(projectId: string, signal?: AbortSignal): Promise<ProjectGitStatus> {
-  return requestJson(endpoint(projectId, "status"), { signal });
+export function getProjectGitStatus(
+  projectId: string,
+  signal?: AbortSignal,
+  options?: { localOnly?: boolean },
+): Promise<ProjectGitStatus> {
+  const url = `${endpoint(projectId, "status")}${options?.localOnly ? "?remote=false" : ""}`;
+  return requestJson(url, { signal });
 }
 
 export function connectProjectGit(

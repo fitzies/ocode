@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/command";
 import { useWorkspaceSurfaces } from "@/components/workspace/WorkspaceSurfaceState";
 import type { WorkspaceFile } from "@/lib/anvilClient";
+import { getProjectGitStatus } from "@/lib/projectGit";
 
 export type RichPreviewKind = "markdown" | "html";
 type RichView = "preview" | "source";
@@ -29,6 +30,26 @@ export function richPreviewKind(path: string): RichPreviewKind | undefined {
   if (["md", "markdown", "mdx"].includes(extension ?? "")) return "markdown";
   if (["html", "htm"].includes(extension ?? "")) return "html";
   return undefined;
+}
+
+export function sortFilesByChangedLines(
+  files: WorkspaceFile[],
+  lineDiffs: Map<string, { additions: number; deletions: number }>,
+): WorkspaceFile[] {
+  const knownPaths = new Set(files.map((file) => file.path));
+  const dirtyFiles = [...lineDiffs.keys()]
+    .filter((path) => !knownPaths.has(path))
+    .map((path) => ({ path }));
+  return [...dirtyFiles, ...files]
+    .map((file, index) => ({ file, index }))
+    .sort((left, right) => {
+      const leftDiff = lineDiffs.get(left.file.path);
+      const rightDiff = lineDiffs.get(right.file.path);
+      const leftLines = (leftDiff?.additions ?? 0) + (leftDiff?.deletions ?? 0);
+      const rightLines = (rightDiff?.additions ?? 0) + (rightDiff?.deletions ?? 0);
+      return rightLines - leftLines || left.index - right.index;
+    })
+    .map(({ file }) => file);
 }
 
 export function FilePickerDialog({
@@ -48,6 +69,8 @@ export function FilePickerDialog({
   const [query, setQuery] = useState("");
   const [files, setFiles] = useState<WorkspaceFile[]>([]);
   const [loading, setLoading] = useState(false);
+  const [gitLoading, setGitLoading] = useState(false);
+  const [lineDiffs, setLineDiffs] = useState<Map<string, { additions: number; deletions: number }>>(new Map());
   const [selectedPath, setSelectedPath] = useState<string>();
   const [selectedView, setSelectedView] = useState<RichView>("preview");
   const requestRef = useRef(0);
@@ -57,8 +80,17 @@ export function FilePickerDialog({
     if (!open) return;
     setQuery("");
     setFiles([]);
+    setLineDiffs(new Map());
+    setGitLoading(true);
     setSelectedPath(undefined);
     setSelectedView("preview");
+    const controller = new AbortController();
+    void getProjectGitStatus(projectId, controller.signal, { localOnly: true }).then((status) => {
+      setLineDiffs(new Map(status.files?.map((file) => [file.path, file]) ?? []));
+    }).catch(() => undefined).finally(() => {
+      if (!controller.signal.aborted) setGitLoading(false);
+    });
+    return () => controller.abort();
   }, [open, projectId, sessionId]);
 
   useEffect(() => {
@@ -167,7 +199,7 @@ export function FilePickerDialog({
               aria-label="Search project files"
             />
             <CommandList>
-              {loading ? (
+              {loading || gitLoading ? (
                 <div className="grid place-items-center py-6" role="status">
                   <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-4 animate-spin text-muted-foreground" aria-hidden="true" />
                   <span className="sr-only">Searching project files</span>
@@ -176,12 +208,21 @@ export function FilePickerDialog({
                 <>
                   <CommandEmpty>No matching files</CommandEmpty>
                   <CommandGroup>
-                    {files.map((file) => (
-                      <CommandItem key={file.path} value={file.path} onSelect={() => chooseFile(file.path)}>
-                        <HugeiconsIcon icon={File01Icon} strokeWidth={2} className="text-muted-foreground" />
-                        <span className="min-w-0 truncate">{file.path}</span>
-                      </CommandItem>
-                    ))}
+                    {(query ? files : sortFilesByChangedLines(files, lineDiffs)).map((file) => {
+                      const diff = lineDiffs.get(file.path);
+                      return (
+                        <CommandItem key={file.path} value={file.path} onSelect={() => chooseFile(file.path)}>
+                          <HugeiconsIcon icon={File01Icon} strokeWidth={2} className="shrink-0 text-muted-foreground" />
+                          <span className="min-w-0 flex-1 truncate">{file.path}</span>
+                          {diff && (
+                            <span className="ml-auto flex shrink-0 gap-1.5 font-mono text-[0.6875rem] tabular-nums" aria-label={`${diff.additions} additions, ${diff.deletions} deletions`}>
+                              <span className="text-emerald-600 dark:text-emerald-400">+{diff.additions}</span>
+                              <span className="text-red-600 dark:text-red-400">−{diff.deletions}</span>
+                            </span>
+                          )}
+                        </CommandItem>
+                      );
+                    })}
                   </CommandGroup>
                 </>
               )}

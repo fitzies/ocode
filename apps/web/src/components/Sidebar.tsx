@@ -1,4 +1,4 @@
-import { isGeneralProject } from "@anvil/protocol";
+import { isGeneralProject, type ThreadSearchMatch } from "@anvil/protocol";
 import { sortSessionsByActivity } from "@anvil/state";
 import {
   Archive01Icon,
@@ -79,6 +79,7 @@ interface SidebarProps {
   onSetSessionSettled: (sessionId: string, settled: boolean) => Promise<void>;
   onMarkSessionRead: (sessionId: string) => void;
   onMarkSessionUnread: (sessionId: string) => void;
+  onSearchThreads: (query: string) => Promise<ThreadSearchMatch[]>;
   usage?: {
     fiveHour?: { usedPercent: number; resetAt?: number };
     weekly?: { usedPercent: number; resetAt?: number };
@@ -125,6 +126,13 @@ function capitalizeTitle(value: string) {
   return value[0]!.toLocaleUpperCase() + value.slice(1);
 }
 
+function HighlightedSnippet({ text, query }: { text: string; query: string }) {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const index = text.toLocaleLowerCase().indexOf(normalizedQuery);
+  if (!normalizedQuery || index < 0) return text;
+  return <>{text.slice(0, index)}<mark className="bg-transparent font-semibold text-foreground">{text.slice(index, index + normalizedQuery.length)}</mark>{text.slice(index + normalizedQuery.length)}</>;
+}
+
 function formatUsageReset(resetAt: number | undefined) {
   if (!resetAt) return "Reset time unavailable";
   const remainingMinutes = Math.max(0, Math.ceil((resetAt * 1000 - Date.now()) / 60_000));
@@ -162,7 +170,7 @@ function UsageCircle({
   window: { usedPercent: number; resetAt?: number } | undefined;
 }) {
   const used = Math.max(0, Math.min(100, window?.usedPercent ?? 0));
-  const allowance = Math.max(used, Math.min(100, usageAllowance(window, hours)));
+  const allowance = Math.max(0, Math.min(100, usageAllowance(window, hours)));
   const available = Math.max(0, allowance - used);
   const tone = usageTone(window, hours);
   const usedLabel = window ? `${Math.round(used)}%` : "—";
@@ -251,6 +259,7 @@ export const Sidebar = memo(function Sidebar({
   onSetSessionSettled,
   onMarkSessionRead,
   onMarkSessionUnread,
+  onSearchThreads,
   usage,
 }: SidebarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
@@ -260,6 +269,8 @@ export const Sidebar = memo(function Sidebar({
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
   const [settledOpen, setSettledOpen] = useState(true);
   const [settlementPending, setSettlementPending] = useState<Set<string>>(new Set());
+  const [contentMatches, setContentMatches] = useState<ThreadSearchMatch[]>([]);
+  const [contentSearchPending, setContentSearchPending] = useState(false);
   const { isMobile, setOpenMobile } = useSidebar();
 
   useEffect(() => {
@@ -279,6 +290,28 @@ export const Sidebar = memo(function Sidebar({
     };
   }, []);
 
+  useEffect(() => {
+    const normalizedQuery = query.trim();
+    if (!searchOpen || normalizedQuery.length < 2) {
+      setContentMatches([]);
+      setContentSearchPending(false);
+      return;
+    }
+    let current = true;
+    setContentSearchPending(true);
+    const timer = window.setTimeout(() => {
+      void onSearchThreads(normalizedQuery).then((matches) => {
+        if (current) setContentMatches(matches);
+      }).finally(() => {
+        if (current) setContentSearchPending(false);
+      });
+    }, 150);
+    return () => {
+      current = false;
+      window.clearTimeout(timer);
+    };
+  }, [onSearchThreads, query, searchOpen]);
+
   const closeMobile = () => {
     if (isMobile) setOpenMobile(false);
   };
@@ -290,6 +323,7 @@ export const Sidebar = memo(function Sidebar({
   const visibleSessions = sortedSessions.filter((session) => !projectFilter || session.projectId === projectFilter);
   const unsettledSessions = visibleSessions.filter((session) => !session.settled);
   const settledSessions = visibleSessions.filter((session) => session.settled);
+  const contentMatchBySession = new Map(contentMatches.map((match) => [match.sessionId, match]));
 
   const toggleSettled = async (sessionId: string, settled: boolean) => {
     setSettlementPending((current) => new Set(current).add(sessionId));
@@ -539,7 +573,7 @@ export const Sidebar = memo(function Sidebar({
           />
           <CommandList>
             <CommandEmpty>{snapshot.projects.length === 0 ? "Create a project first." : "No projects found."}</CommandEmpty>
-            {generalProject && (
+            {generalProject && projectQuery.length === 0 && (
               <CommandGroup heading="No project">
                 <CommandItem
                   value={`No project home ${generalProject.path} ~/ questions`}
@@ -555,7 +589,7 @@ export const Sidebar = memo(function Sidebar({
                 </CommandItem>
               </CommandGroup>
             )}
-            {generalProject && regularProjects.length > 0 && <CommandSeparator />}
+            {generalProject && projectQuery.length === 0 && regularProjects.length > 0 && <CommandSeparator />}
             {regularProjects.length > 0 && (
               <CommandGroup heading="Projects">
                 {regularProjects.map((project) => (
@@ -589,7 +623,7 @@ export const Sidebar = memo(function Sidebar({
         description="Search and open a thread"
         className="sm:max-w-lg"
       >
-        <Command shouldFilter>
+        <Command shouldFilter disablePointerSelection>
           <CommandInput
             autoFocus
             value={query}
@@ -598,16 +632,18 @@ export const Sidebar = memo(function Sidebar({
             aria-label="Search threads"
           />
           <CommandList>
-            <CommandEmpty>No threads found.</CommandEmpty>
+            <CommandEmpty>{contentSearchPending ? "Searching thread messages…" : "No threads found."}</CommandEmpty>
             <CommandGroup heading="Threads">
               {sortedSessions.map((session) => {
                 const project = snapshot.projects.find((candidate) => candidate.id === session.projectId);
                 const displayTitle = capitalizeTitle(session.title);
                 const branch = session.branch ?? "unknown";
+                const contentMatch = contentMatchBySession.get(session.id);
                 return (
                   <CommandItem
                     key={session.id}
-                    value={`${displayTitle} ${project?.name ?? "unknown"} ${branch}`}
+                    value={session.id}
+                    keywords={[displayTitle, project?.name ?? "unknown", branch, contentMatch?.snippet ?? ""]}
                     onSelect={() => {
                       onSelectSession(session.id);
                       setSearchOpen(false);
@@ -617,7 +653,15 @@ export const Sidebar = memo(function Sidebar({
                   >
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">{displayTitle}</span>
-                      <span className="block truncate text-[0.625rem] text-muted-foreground">
+                      {contentMatch && (
+                        <span className="block truncate text-[0.6875rem] text-muted-foreground">
+                          <span className={contentMatch.role === "user" ? "text-blue-500 dark:text-blue-400" : "text-emerald-600 dark:text-emerald-400"}>
+                            {contentMatch.role === "user" ? "You:" : "Agent:"}
+                          </span>{" "}
+                          <HighlightedSnippet text={contentMatch.snippet} query={query} />
+                        </span>
+                      )}
+                      <span className="block truncate text-[0.625rem] text-muted-foreground/75">
                         {project?.name.toLowerCase() ?? "unknown"}/{branch}
                       </span>
                     </span>

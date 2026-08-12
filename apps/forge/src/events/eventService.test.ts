@@ -58,6 +58,39 @@ describe("ForgeEventService", () => {
     database.close();
   });
 
+  it("searches user and assistant message text with one bounded snippet per thread", () => {
+    const database = new ForgeDatabase(":memory:");
+    const project = { id: "project-1", name: "Project", path: "/repo" };
+    const service = new ForgeEventService(database, [project]);
+    const session = {
+      id: "session-search", projectId: project.id, title: "Searchable", updatedAt: "2026-01-02T00:00:00.000Z",
+      status: "idle" as const, modelId: "test/model", thinkingLevel: "off" as const,
+    };
+    service.createSession(session, { sessionId: session.id, timestamp: session.updatedAt, type: "session.upserted", payload: { session } });
+    service.append([
+      {
+        sessionId: session.id,
+        timestamp: "2026-01-01T00:00:00.000Z",
+        type: "message.started",
+        payload: { message: { id: "assistant-message", kind: "message", role: "assistant", createdAt: "2026-01-01T00:00:00.000Z", status: "complete", content: [{ id: "assistant-text", type: "text", text: "The callback token is refreshed here." }] } },
+      },
+      {
+        sessionId: session.id,
+        timestamp: "2026-01-01T00:01:00.000Z",
+        type: "message.started",
+        payload: { message: { id: "user-message", kind: "message", role: "user", createdAt: "2026-01-01T00:01:00.000Z", status: "complete", content: [{ id: "user-text", type: "text", text: `Please inspect ${"x".repeat(180)} CALLBACK token handling.` }] } },
+      },
+    ]);
+
+    expect(service.searchThreads("callback")).toEqual([
+      expect.objectContaining({ sessionId: session.id, role: "user" }),
+    ]);
+    expect(service.searchThreads("callback")[0]?.snippet.toLocaleLowerCase()).toContain("callback token handling");
+    expect(service.searchThreads("callback")[0]?.snippet.length).toBeLessThanOrEqual(240);
+    expect(service.searchThreads("c")).toEqual([]);
+    database.close();
+  });
+
   it("restores durable session read state across Forge restarts", () => {
     const directory = mkdtempSync(join(tmpdir(), "anvil-read-state-"));
     const path = join(directory, "forge.sqlite");

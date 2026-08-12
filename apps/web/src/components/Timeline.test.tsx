@@ -284,60 +284,23 @@ describe("Timeline markdown", () => {
     expect(html).toContain("/api/v1/artifacts/01959f7e-7d64-7000-8000-000000000001");
   });
 
-  it("renders reasoning Markdown as semantic HTML", () => {
-    const html = renderToStaticMarkup(
-      <Timeline session={session} entries={[reasoning]} onSuggestion={() => undefined} />,
-    );
-
-    expect(html).toContain("thinking-event thinking-event--complete");
-    expect(html).toContain("Thought process");
-    expect(html).toContain("<strong>Checking:</strong>");
-    expect(html).toContain("<ol>");
-    expect(html).toContain("<li>Types</li>");
-    expect(html).toContain('data-slot="collapsible-trigger"');
-    expect(html).not.toContain("Thinking:");
-    expect(html).not.toContain("**Checking:**");
-  });
-
-  it("formats the active reasoning line as Markdown", () => {
+  it("hides completed and streaming reasoning entries", () => {
     const html = renderToStaticMarkup(
       <Timeline
         session={{ ...session, status: "running" }}
-        entries={[{ ...reasoning, status: "streaming", content: "**Investigating** app name source" }]}
+        entries={[
+          reasoning,
+          { ...reasoning, id: "reasoning-2", status: "streaming", content: "Investigating app name source" },
+          tool({ status: "completed" }),
+        ]}
         onSuggestion={() => undefined}
       />,
     );
 
-    expect(html).toContain("thinking-event--streaming");
-    expect(html).toContain("<strong>Investigating</strong> app name source");
-    expect(html).not.toContain("**Investigating**");
-  });
-
-  it("consolidates reasoning segments for one assistant turn", () => {
-    const html = renderToStaticMarkup(
-      <Timeline session={session} entries={[
-        reasoning,
-        tool({ id: "between-reasoning", status: "completed" }),
-        { ...reasoning, id: "reasoning-2", messageId: "message-2", content: "Running tests" },
-      ]} onSuggestion={() => undefined} />,
-    );
-
-    expect(html.match(/Thought process/g)).toHaveLength(1);
-    expect(html).toContain("2 steps");
-    expect(html).toContain("Running tests");
-  });
-
-  it("starts a new reasoning disclosure at the next user turn", () => {
-    const html = renderToStaticMarkup(
-      <Timeline session={session} entries={[
-        { ...message, id: "user-1", role: "user" },
-        reasoning,
-        { ...message, id: "user-2", role: "user" },
-        { ...reasoning, id: "reasoning-2", messageId: "message-2", content: "Second turn" },
-      ]} onSuggestion={() => undefined} />,
-    );
-
-    expect(html.match(/Thought process/g)).toHaveLength(2);
+    expect(html).not.toContain("Thought process");
+    expect(html).not.toContain("Checking:");
+    expect(html).not.toContain("Investigating app name source");
+    expect(html).toContain("Read apps/web/src/App.tsx");
   });
 });
 

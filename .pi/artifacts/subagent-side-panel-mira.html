@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>ocode — Mira subagent panel</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --background: #0a0a0a;
+    --foreground: #fafafa;
+    --muted: #171717;
+    --muted-foreground: #a1a1aa;
+    --border: #27272a;
+    --accent: #202024;
+    --blue: #60a5fa;
+    --green: #4ade80;
+    --amber: #fbbf24;
+    --red: #f87171;
+    font-family: "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; background: transparent; color: var(--foreground); }
+  body { padding: 20px; }
+  button { color: inherit; font: inherit; }
+  .page { width: min(1120px, 100%); margin: 0 auto; }
+  header.intro { margin: 0 0 18px; }
+  h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.025em; }
+  .intro p { max-width: 680px; margin: 5px 0 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
+  .states { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .state-label { margin: 0 0 7px 2px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+  .panel { display: flex; min-width: 0; height: 580px; flex-direction: column; overflow: hidden; background: var(--background); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 12px 28px rgba(0,0,0,.2); }
+  .tabs { display: flex; height: 36px; flex: 0 0 auto; align-items: center; padding: 4px; border-bottom: 1px solid var(--border); }
+  .tab { display: flex; height: 27px; align-items: center; gap: 6px; padding: 0 8px; color: var(--foreground); font-size: 12px; font-weight: 500; background: var(--muted); border-radius: 6px; }
+  .tab svg { width: 13px; height: 13px; color: var(--muted-foreground); }
+  .tabs .icon-button { margin-left: auto; }
+  .toolbar { display: flex; height: 40px; flex: 0 0 auto; align-items: center; gap: 8px; padding: 6px 8px 6px 10px; border-bottom: 1px solid var(--border); }
+  .toolbar strong { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+  .toolbar-meta { margin-left: auto; color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }
+  .toolbar-copy { min-width: 0; }
+  .toolbar-copy strong { display: block; }
+  .toolbar-copy span { display: block; margin-top: 1px; color: var(--muted-foreground); font-size: 10px; }
+  .icon-button { display: grid; width: 27px; height: 27px; flex: 0 0 auto; place-items: center; padding: 0; color: var(--muted-foreground); background: transparent; border: 0; border-radius: 6px; }
+  .icon-button svg { width: 14px; height: 14px; }
+  .icon-button:hover { color: var(--foreground); background: var(--muted); }
+  .back { margin-left: -3px; }
+  .overview { display: flex; height: 34px; flex: 0 0 auto; align-items: center; padding: 0 11px; color: var(--muted-foreground); font-size: 11px; border-bottom: 1px solid var(--border); }
+  .overview span { display: inline-flex; align-items: center; gap: 6px; }
+  .overview span + span:before { margin: 0 8px; color: #52525b; content: "·"; }
+  .list { padding: 4px; }
+  .section-title { padding: 10px 7px 5px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+  .row { display: grid; width: 100%; min-height: 54px; grid-template-columns: 16px minmax(0,1fr) auto; grid-template-rows: 20px 18px; align-items: center; padding: 7px 8px; column-gap: 7px; border-radius: 6px; }
+  .row:hover, .row.active { background: var(--muted); }
+  .status-icon { display: grid; width: 16px; height: 16px; grid-row: 1 / 3; place-items: center; color: var(--muted-foreground); }
+  .status-icon svg { width: 13px; height: 13px; }
+  .status-icon.live { color: var(--blue); }
+  .status-icon.done { color: var(--green); }
+  .status-icon.attn { color: var(--amber); }
+  .row-title { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+  .row-time { color: var(--muted-foreground); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .row-description { min-width: 0; grid-column: 2 / 4; overflow: hidden; color: var(--muted-foreground); font-size: 11px; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; }
+  .row-description.live { color: #b6c9e5; }
+  .muted-row { opacity: .78; }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 999px; background: var(--blue); }
+  .empty-space { flex: 1; }
+
+  .content { min-height: 0; flex: 1; overflow: hidden; }
+  .task { padding: 12px 12px 11px; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; border-bottom: 1px solid var(--border); }
+  .task strong { display: block; margin-bottom: 3px; color: var(--foreground); font-size: 11px; font-weight: 500; }
+  .stream { padding: 5px 10px 14px; }
+  .message { padding: 11px 2px; color: #d4d4d8; font-size: 12px; line-height: 1.55; }
+  .message + .message { border-top: 1px solid var(--border); }
+  .tool { display: flex; min-height: 32px; align-items: center; gap: 7px; padding: 6px 2px; color: var(--muted-foreground); font-size: 11px; border-top: 1px solid var(--border); }
+  .tool svg { width: 13px; height: 13px; flex: 0 0 auto; }
+  .tool span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tool small { margin-left: auto; color: #71717a; font-size: 10px; white-space: nowrap; }
+  .working { display: flex; align-items: center; gap: 7px; padding: 11px 2px; color: var(--muted-foreground); font-size: 11px; border-top: 1px solid var(--border); }
+  .spinner { width: 13px; height: 13px; color: var(--blue); }
+  .footer { display: flex; min-height: 40px; flex: 0 0 auto; align-items: center; gap: 7px; padding: 6px 8px; border-top: 1px solid var(--border); }
+  .footer-note { margin-right: auto; padding-left: 3px; color: var(--muted-foreground); font-size: 10px; }
+  .button { display: inline-flex; height: 27px; align-items: center; justify-content: center; gap: 5px; padding: 0 8px; color: var(--foreground); font-size: 11px; font-weight: 500; background: transparent; border: 1px solid var(--border); border-radius: 6px; }
+  .button:hover { background: var(--muted); }
+  .button.ghost { border-color: transparent; color: var(--muted-foreground); }
+  .button.danger { color: var(--red); background: rgba(248,113,113,.08); border-color: transparent; }
+  .button svg { width: 12px; height: 12px; }
+
+  .result { padding: 14px 12px 12px; border-bottom: 1px solid var(--border); }
+  .result-status { display: flex; align-items: center; gap: 7px; color: var(--green); font-size: 11px; font-weight: 500; }
+  .result-status svg { width: 14px; height: 14px; }
+  .result p { margin: 7px 0 0; color: #d4d4d8; font-size: 12px; line-height: 1.55; }
+  .detail-section { padding: 12px; border-bottom: 1px solid var(--border); }
+  .detail-heading { display: flex; align-items: center; margin: 0 0 6px; color: var(--foreground); font-size: 11px; font-weight: 500; }
+  .detail-heading span { margin-left: auto; color: var(--muted-foreground); font-weight: 400; }
+  .finding { display: flex; min-height: 32px; align-items: center; gap: 8px; color: #d4d4d8; font-size: 11px; }
+  .finding + .finding { border-top: 1px solid var(--border); }
+  .finding .severity { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--amber); }
+  .finding .severity.ok { background: var(--green); }
+  .finding code { margin-left: auto; color: var(--muted-foreground); font: 10px "Geist Mono", ui-monospace, monospace; }
+  .file { display: flex; min-height: 30px; align-items: center; gap: 7px; color: #d4d4d8; font: 10px "Geist Mono", ui-monospace, monospace; }
+  .file svg { width: 12px; height: 12px; color: var(--muted-foreground); }
+  .file span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file code { margin-left: auto; color: var(--green); font-size: 10px; }
+  .file code i { color: var(--red); font-style: normal; }
+  .more { padding: 11px 12px; color: var(--muted-foreground); font-size: 11px; }
+
+  .note { margin-top: 14px; padding: 11px 12px; color: var(--muted-foreground); font-size: 11px; line-height: 1.55; background: color-mix(in srgb, var(--background) 92%, transparent); border: 1px solid var(--border); border-radius: 8px; }
+  .note strong { color: var(--foreground); font-weight: 500; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .panel { animation: enter .35s ease-out both; }
+    .state:nth-child(2) .panel { animation-delay: .04s; }
+    .state:nth-child(3) .panel { animation-delay: .08s; }
+    .spinner { animation: spin 1s linear infinite; }
+    @keyframes enter { from { opacity: 0; transform: translateY(5px); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  }
+  @media (max-width: 900px) { .states { grid-template-columns: 1fr; } .panel { max-width: 380px; } }
+  @media (max-width: 430px) { body { padding: 8px; } .panel { max-width: none; } }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="intro">
+    <h1>A quieter agent panel</h1>
+    <p>One compact system in three states. Mira-style density, neutral surfaces, small controls, and only the information needed for the current decision.</p>
+  </header>
+
+  <section class="states" aria-label="Subagent side panel states">
+    <article class="state">
+      <p class="state-label">List</p>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 18a4 4 0 1 1 1.5-7.7A5 5 0 1 1 17 17h-1"/><path d="M12 13v7m-3-3 3 3 3-3"/></svg>
+            Agents
+          </div>
+          <button class="icon-button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        </div>
+        <div class="overview"><span><i class="dot"></i>2 active</span><span>4 total</span></div>
+        <div class="list">
+          <div class="section-title">Active</div>
+          <div class="row active">
+            <span class="status-icon live"><svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>
+            <span class="row-title">Scout</span><time class="row-time">1:42</time>
+            <span class="row-description live">Searching Forge route guards…</span>
+          </div>
+          <div class="row">
+            <span class="status-icon live"><svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg></span>
+            <span class="row-title">Builder</span><time class="row-time">0:38</time>
+            <span class="row-description">Adding regression tests</span>
+          </div>
+          <div class="section-title">Recent</div>
+          <div class="row muted-row">
+            <span class="status-icon done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg></span>
+            <span class="row-title">Reviewer</span><time class="row-time">3:08</time>
+            <span class="row-description">Found one remaining symlink race</span>
+          </div>
+          <div class="row muted-row">
+            <span class="status-icon done"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg></span>
+            <span class="row-title">Scout</span><time class="row-time">2:14</time>
+            <span class="row-description">Mapped persisted state boundaries</span>
+          </div>
+        </div>
+        <div class="empty-space"></div>
+      </div>
+    </article>
+
+    <article class="state">
+      <p class="state-label">Running</p>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 18a4 4 0 1 1 1.5-7.7A5 5 0 1 1 17 17h-1"/><path d="M12 13v7m-3-3 3 3 3-3"/></svg>
+            Agents
+          </div>
+          <button class="icon-button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        </div>
+        <div class="toolbar">
+          <button class="icon-button back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m15 18-6-6 6-6"/></svg></button>
+          <div class="toolbar-copy"><strong>Scout</strong><span>Running · 1:42</span></div>
+          <button class="icon-button" aria-label="More"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button>
+        </div>
+        <div class="content">
+          <div class="task"><strong>Task</strong>Inspect project file access for traversal, symlink escapes, and authorization gaps.</div>
+          <div class="stream">
+            <div class="message">I found three file-reading entry points. Two authorize before resolving the final target, so I’m checking whether a project-local symlink can escape the canonical root.</div>
+            <div class="tool">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 18 6-6-6-6"/></svg>
+              <span>Read projectFiles.ts</span><small>Done</small>
+            </div>
+            <div class="tool">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 18 6-6-6-6"/></svg>
+              <span>Search canonicalProject</span><small>12 results</small>
+            </div>
+            <div class="working">
+              <svg class="spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.2-8.6"/></svg>
+              Tracing the final resource read…
+            </div>
+          </div>
+        </div>
+        <footer class="footer"><span class="footer-note">Read-only</span><button class="button danger">Cancel</button></footer>
+      </div>
+    </article>
+
+    <article class="state">
+      <p class="state-label">Complete</p>
+      <div class="panel">
+        <div class="tabs">
+          <div class="tab">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 18a4 4 0 1 1 1.5-7.7A5 5 0 1 1 17 17h-1"/><path d="M12 13v7m-3-3 3 3 3-3"/></svg>
+            Agents
+          </div>
+          <button class="icon-button" aria-label="Close"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+        </div>
+        <div class="toolbar">
+          <button class="icon-button back" aria-label="Back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m15 18-6-6 6-6"/></svg></button>
+          <div class="toolbar-copy"><strong>Reviewer</strong><span>Completed · 3:08</span></div>
+          <button class="icon-button" aria-label="More"><svg viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button>
+        </div>
+        <div class="content">
+          <div class="result">
+            <div class="result-status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg>Review complete</div>
+            <p>The traversal fix is sound. One symlink race remains in the final read and should be resolved at the point of use.</p>
+          </div>
+          <section class="detail-section">
+            <h3 class="detail-heading">Findings <span>2</span></h3>
+            <div class="finding"><i class="severity"></i><span>Resolve target immediately before read</span><code>L184</code></div>
+            <div class="finding"><i class="severity ok"></i><span>Traversal regression is covered</span><code>L92</code></div>
+          </section>
+          <section class="detail-section">
+            <h3 class="detail-heading">Files <span>3</span></h3>
+            <div class="file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span>projectFiles.ts</span><code>+18 <i>−7</i></code></div>
+            <div class="file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span>projectFiles.test.ts</span><code>+42 <i>−0</i></code></div>
+            <div class="file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span>resourceLoader.ts</span><code>+3 <i>−2</i></code></div>
+          </section>
+          <div class="more">Run details are available from the ••• menu.</div>
+        </div>
+        <footer class="footer"><button class="button ghost">Copy</button><button class="button">Open files</button></footer>
+      </div>
+    </article>
+  </section>
+
+  <aside class="note"><strong>The main simplification:</strong> remove the extra panel title, summary strip, role badges, token metrics, activity timeline, and permanent metadata footer. The existing “Agents” tab already supplies the context.</aside>
+</main>
+</body>
+</html>

@@ -10,10 +10,12 @@ const unmodified = {
   shiftKey: false,
 };
 
-describe("file picker shortcut", () => {
-  it("defaults to Cmd+P on Apple platforms", () => {
+describe("file and command palette shortcuts", () => {
+  it("defaults to Cmd+P and Cmd+Shift+P on Apple platforms", () => {
     expect(DEFAULT_SHORTCUTS.openFile).toBe("Mod+KeyP");
+    expect(DEFAULT_SHORTCUTS.openCommand).toBe("Mod+Shift+KeyP");
     expect(matchesShortcut({ ...unmodified, code: "KeyP", metaKey: true }, "openFile", "MacIntel")).toBe(true);
+    expect(matchesShortcut({ ...unmodified, code: "KeyP", metaKey: true, shiftKey: true }, "openCommand", "MacIntel")).toBe(true);
   });
 });
 

@@ -1,5 +1,5 @@
 :root {
-  font-family: "Inter Variable", sans-serif;
+  font-family: var(--font-sans);
   color: var(--foreground);
   background: var(--background);
   font-synthesis: none;

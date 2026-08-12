@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ocode pull request workspace concept</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0c0e;
+    --panel: #0e1013;
+    --panel-2: #111419;
+    --line: #23272e;
+    --line-soft: #1a1e24;
+    --text: #f0f2f4;
+    --muted: #8b929d;
+    --faint: #5e6671;
+    --green: #55d69e;
+    --red: #ff716b;
+    --amber: #f1bd66;
+    --blue: #75a9ff;
+    --violet: #ae92ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: transparent; }
+  body {
+    padding: 18px;
+    color: var(--text);
+    font-family: Geist, "SF Pro Text", "Segoe UI", sans-serif;
+    font-size: 13px;
+  }
+  button, input { font: inherit; }
+  .app {
+    width: min(1440px, 100%);
+    height: min(820px, calc(100vh - 36px));
+    min-height: 620px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 224px minmax(390px, 0.9fr) minmax(480px, 1.12fr);
+    overflow: hidden;
+    border: 1px solid #2a2f37;
+    border-radius: 14px;
+    background: var(--bg);
+    box-shadow: 0 24px 80px rgb(0 0 0 / .48), 0 0 0 1px rgb(255 255 255 / .025) inset;
+    animation: arrive 420ms cubic-bezier(.2,.7,.2,1) both;
+  }
+  @keyframes arrive { from { opacity: 0; transform: translateY(8px) scale(.994); } }
+  @media (prefers-reduced-motion: reduce) { .app { animation: none; } }
+  .sidebar, .inbox, .detail { min-width: 0; min-height: 0; }
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--line);
+    background: #0d0f12;
+  }
+  .brandbar, .topbar, .tabbar {
+    height: 48px;
+    flex: 0 0 48px;
+    display: flex;
+    align-items: center;
+  }
+  .brandbar { padding: 0 14px; gap: 9px; border-bottom: 1px solid var(--line-soft); }
+  .mark {
+    width: 22px; height: 22px; display: grid; place-items: center;
+    border-radius: 6px; background: #eceff2; color: #101215; font: 800 12px/1 ui-monospace, monospace;
+  }
+  .brand { font-weight: 650; letter-spacing: -.02em; }
+  .env { margin-left: auto; color: var(--faint); font-size: 11px; }
+  .nav { padding: 10px 8px; display: grid; gap: 3px; }
+  .nav-item, .session, .repo-row {
+    border: 0; color: var(--muted); background: transparent; text-align: left;
+  }
+  .nav-item {
+    display: flex; align-items: center; gap: 9px; width: 100%; height: 32px;
+    padding: 0 9px; border-radius: 7px;
+  }
+  .nav-item.active { background: #191d23; color: var(--text); }
+  .ico { width: 15px; text-align: center; color: currentColor; font-family: ui-monospace, monospace; }
+  .section-label {
+    padding: 13px 16px 6px; color: var(--faint); font-size: 10px;
+    font-weight: 650; text-transform: uppercase; letter-spacing: .11em;
+  }
+  .sessions { overflow: hidden; }
+  .session { width: 100%; padding: 8px 16px; display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; }
+  .session:hover { background: #13161a; }
+  .session strong { min-width: 0; color: #cdd2d8; font-size: 12px; font-weight: 520; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .session small { grid-column: 1 / -1; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .live { color: var(--green); font-size: 10px; }
+  .sidebar-bottom { margin-top: auto; border-top: 1px solid var(--line-soft); padding: 8px; }
+
+  .inbox { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--bg); }
+  .topbar { padding: 0 17px; border-bottom: 1px solid var(--line-soft); }
+  .topbar h1 { margin: 0; font-size: 13px; font-weight: 620; letter-spacing: -.01em; }
+  .count { margin-left: 8px; color: var(--faint); font-size: 11px; }
+  .refresh { margin-left: auto; color: var(--muted); }
+  .filters { padding: 14px 16px 10px; display: flex; gap: 8px; border-bottom: 1px solid var(--line-soft); }
+  .search {
+    min-width: 0; flex: 1; height: 31px; padding: 0 10px; color: #c7ccd3;
+    border: 1px solid var(--line); border-radius: 7px; background: #0d0f12; outline: none;
+  }
+  .filter {
+    height: 31px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px;
+    background: #111419; color: var(--muted);
+  }
+  .list { overflow: auto; padding: 5px 7px 20px; scrollbar-width: thin; }
+  .group { padding: 11px 9px 5px; color: var(--faint); font-size: 10px; font-weight: 650; text-transform: uppercase; letter-spacing: .1em; }
+  .pr {
+    width: 100%; display: grid; grid-template-columns: 18px minmax(0,1fr) auto;
+    gap: 2px 9px; align-items: center; padding: 10px 10px; border: 1px solid transparent;
+    border-radius: 8px; color: inherit; background: transparent; text-align: left;
+  }
+  .pr + .pr { margin-top: 1px; }
+  .pr:hover { background: #111419; }
+  .pr.selected { background: #171b20; border-color: #252b33; box-shadow: 0 1px 0 rgb(255 255 255 / .025) inset; }
+  .state { grid-row: 1 / 3; align-self: start; padding-top: 1px; color: var(--green); font-size: 15px; }
+  .state.warn { color: var(--red); }
+  .pr-title { min-width: 0; font-weight: 570; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -.01em; }
+  .meta { min-width: 0; color: var(--faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .age { color: var(--faint); font-size: 10px; }
+  .delta { font: 11px/1.2 ui-monospace, "SFMono-Regular", monospace; white-space: nowrap; }
+  .plus { color: var(--green); } .minus { color: var(--red); }
+
+  .detail { display: flex; flex-direction: column; background: var(--panel); }
+  .tabbar { padding: 0 12px; gap: 5px; border-bottom: 1px solid var(--line-soft); }
+  .outer-tab { height: 28px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border-radius: 7px; background: #191d23; color: #dce0e5; }
+  .pr-glyph { color: var(--green); }
+  .tab-close { color: var(--faint); margin-left: 3px; }
+  .add-tab { color: var(--faint); padding: 5px 8px; }
+  .panel-icon { margin-left: auto; color: var(--muted); }
+  .pr-head { padding: 14px 18px 0; border-bottom: 1px solid var(--line); }
+  .repo-line { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+  .repo-line .number { color: var(--green); }
+  .head-actions { margin-left: auto; display: flex; gap: 6px; }
+  .btn {
+    border: 1px solid var(--line); border-radius: 7px; background: #13161b; color: #cfd4da;
+    padding: 6px 9px; font-size: 11px;
+  }
+  .btn.primary { background: #e7ebef; border-color: #e7ebef; color: #111317; font-weight: 650; }
+  .title-row { display: flex; align-items: start; gap: 12px; margin-top: 13px; }
+  .title-block { min-width: 0; flex: 1; }
+  .title-block h2 { margin: 0; font-size: 17px; line-height: 1.3; letter-spacing: -.025em; }
+  .author { margin-top: 5px; color: var(--muted); font-size: 11px; }
+  .branch-row { margin-top: 16px; display: flex; align-items: center; gap: 7px; color: var(--muted); }
+  .branch { padding: 4px 7px; border-radius: 6px; background: #171a1f; color: #c9ced5; font: 11px ui-monospace, monospace; }
+  .stats { margin-left: auto; display: flex; gap: 10px; font-size: 11px; }
+  .inner-tabs { margin-top: 14px; height: 38px; display: flex; align-items: center; gap: 2px; }
+  .inner-tab { padding: 7px 10px; border-radius: 6px; color: var(--muted); }
+  .inner-tab.active { background: #191d22; color: var(--text); }
+  .checks { margin-left: auto; color: var(--red); font-size: 11px; }
+  .content { min-height: 0; overflow: auto; padding: 18px; scrollbar-width: thin; }
+  .overview { display: grid; grid-template-columns: 1fr auto; gap: 12px 20px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+  .label { color: var(--muted); font-size: 11px; }
+  .reviewers { display: flex; align-items: center; gap: 7px; }
+  .avatar { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; background: linear-gradient(135deg,#4a66ce,#c484d8); color: white; font-size: 9px; border: 1px solid #727986; }
+  .description { max-width: 760px; padding-top: 18px; }
+  .description h3 { margin: 0 0 14px; font-size: 12px; color: var(--muted); font-weight: 560; }
+  .description h4 { margin: 19px 0 7px; font-size: 15px; }
+  .description p, .description li { color: #bdc3ca; font-size: 12px; line-height: 1.6; }
+  .description ul { padding-left: 18px; }
+  code { padding: 2px 5px; border-radius: 5px; background: #191d22; color: #d8dce1; font: 11px ui-monospace, monospace; }
+  .agent-callout {
+    margin-top: 22px; display: flex; align-items: center; gap: 12px; padding: 12px;
+    border: 1px solid #293344; border-radius: 9px; background: #111720;
+  }
+  .spark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; background: #1b283a; color: var(--blue); }
+  .agent-copy { min-width: 0; flex: 1; }
+  .agent-copy strong { display: block; font-size: 12px; }
+  .agent-copy span { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }
+
+  @media (max-width: 1050px) {
+    body { padding: 10px; }
+    .app { height: calc(100vh - 20px); grid-template-columns: 60px minmax(330px, .82fr) minmax(430px, 1.18fr); border-radius: 11px; }
+    .brand, .env, .nav-item span:last-child, .sessions, .section-label { display: none; }
+    .brandbar { justify-content: center; padding: 0; }
+    .nav-item { justify-content: center; padding: 0; }
+    .sidebar-bottom { margin-top: auto; }
+  }
+  @media (max-width: 760px) {
+    body { padding: 0; }
+    .app { min-height: 620px; height: 100vh; grid-template-columns: minmax(0,1fr); border: 0; border-radius: 0; }
+    .sidebar, .inbox { display: none; }
+    .detail { display: flex; }
+    .title-block h2 { font-size: 16px; }
+    .head-actions .btn:not(.primary) { display: none; }
+  }
+</style>
+</head>
+<body>
+<main class="app" aria-label="Static concept for an ocode pull request workspace">
+  <aside class="sidebar">
+    <header class="brandbar"><span class="mark">o</span><span class="brand">ocode</span><span class="env">forge</span></header>
+    <nav class="nav" aria-label="Primary">
+      <button class="nav-item"><span class="ico">⌕</span><span>Search</span></button>
+      <button class="nav-item"><span class="ico">□</span><span>All projects</span></button>
+      <button class="nav-item active"><span class="ico">⑂</span><span>Pull requests</span></button>
+    </nav>
+    <div class="section-label">Working</div>
+    <div class="sessions">
+      <button class="session"><strong>ocode</strong><span class="live">● 8m</span><small>Build PR review workspace</small></button>
+      <button class="session"><strong>protocol hardening</strong><span class="live">● 21m</span><small>Bound artifact responses</small></button>
+      <button class="session"><strong>desktop</strong><span class="age">2h</span><small>Updater release checks</small></button>
+    </div>
+    <div class="section-label">Recent</div>
+    <div class="sessions">
+      <button class="session"><strong>forge recovery</strong><span class="age">1d</span><small>Restart reconciliation</small></button>
+      <button class="session"><strong>mobile layout</strong><span class="age">3d</span><small>Surface navigation</small></button>
+    </div>
+    <div class="sidebar-bottom">
+      <button class="nav-item"><span class="ico">⚙</span><span>Settings</span></button>
+    </div>
+  </aside>
+
+  <section class="inbox" aria-label="Pull request inbox">
+    <header class="topbar"><h1>Pull requests</h1><span class="count">12 open</span><span class="refresh">↻</span></header>
+    <div class="filters">
+      <input class="search" value="" placeholder="Search title, branch or repository" aria-label="Search pull requests" />
+      <button class="filter">All ▾</button>
+    </div>
+    <div class="list">
+      <div class="group">Yours</div>
+      <button class="pr selected">
+        <span class="state">⑂</span><span class="pr-title">feat(web): pull-request workspace</span><span class="age">18m</span>
+        <span class="meta">#148 · fitzies/ocode · james · feat/pr-workspace</span><span class="delta"><span class="plus">+642</span> <span class="minus">−87</span></span>
+      </button>
+      <button class="pr">
+        <span class="state warn">△</span><span class="pr-title">forge: recover interrupted agent runs</span><span class="age">2h</span>
+        <span class="meta">#144 · fitzies/ocode · oli · fix/run-recovery</span><span class="delta"><span class="plus">+218</span> <span class="minus">−39</span></span>
+      </button>
+      <button class="pr">
+        <span class="state">⑂</span><span class="pr-title">desktop: improve update verification</span><span class="age">1d</span>
+        <span class="meta">#139 · fitzies/ocode · james · desktop/update-proof</span><span class="delta"><span class="plus">+93</span> <span class="minus">−21</span></span>
+      </button>
+      <div class="group">Review requested</div>
+      <button class="pr">
+        <span class="state warn">△</span><span class="pr-title">protocol: externalize oversized tool output</span><span class="age">34m</span>
+        <span class="meta">#151 · fitzies/ocode · maya · protocol/artifacts</span><span class="delta"><span class="plus">+1,204</span> <span class="minus">−316</span></span>
+      </button>
+      <button class="pr">
+        <span class="state">⑂</span><span class="pr-title">web: keyboard navigation for workspace tabs</span><span class="age">3h</span>
+        <span class="meta">#146 · fitzies/ocode · sam · web/tab-focus</span><span class="delta"><span class="plus">+176</span> <span class="minus">−48</span></span>
+      </button>
+      <button class="pr">
+        <span class="state">⑂</span><span class="pr-title">forge: canonicalize worktree paths</span><span class="age">2d</span>
+        <span class="meta">#133 · fitzies/ocode · oli · forge/worktree-safety</span><span class="delta"><span class="plus">+304</span> <span class="minus">−112</span></span>
+      </button>
+      <div class="group">Others</div>
+      <button class="pr">
+        <span class="state">⑂</span><span class="pr-title">docs: recovery and persistence runbook</span><span class="age">4d</span>
+        <span class="meta">#126 · fitzies/ocode · james · docs/recovery</span><span class="delta"><span class="plus">+89</span> <span class="minus">−6</span></span>
+      </button>
+    </div>
+  </section>
+
+  <article class="detail" aria-label="Pull request 148">
+    <div class="tabbar">
+      <div class="outer-tab"><span class="pr-glyph">⑂</span><span>#148</span><span class="tab-close">×</span></div>
+      <span class="add-tab">＋</span><span class="panel-icon">▣</span>
+    </div>
+    <header class="pr-head">
+      <div class="repo-line">
+        <span>fitzies/ocode</span><span class="number">#148</span>
+        <div class="head-actions"><button class="btn">•••</button><button class="btn">Check out ▾</button><button class="btn primary">Ask Pi</button></div>
+      </div>
+      <div class="title-row">
+        <div class="title-block"><h2>feat(web): pull-request workspace</h2><div class="author">james · updated 18 minutes ago</div></div>
+      </div>
+      <div class="branch-row">
+        <span class="branch">main</span><span>←</span><span class="branch">feat/pr-workspace</span>
+        <span class="stats"><span>18 files</span><span class="plus">+642</span><span class="minus">−87</span></span>
+      </div>
+      <nav class="inner-tabs" aria-label="Pull request views">
+        <span class="inner-tab active">Summary</span><span class="inner-tab">Timeline</span><span class="inner-tab">Code</span>
+        <span class="checks">● 1 of 12 failing</span>
+      </nav>
+    </header>
+    <div class="content">
+      <section class="overview">
+        <div class="reviewers"><span class="label">Reviewers</span><span class="avatar">OL</span><span class="avatar">M</span><span class="label">＋</span></div>
+        <span class="label">15 comments</span>
+      </section>
+      <section class="description">
+        <h3>Description</h3>
+        <h4>What</h4>
+        <p>Adds a Forge-backed pull-request inbox and a persistent review surface beside active ocode sessions. Pull requests can be opened as peer tabs without leaving the agent workspace.</p>
+        <h4>How</h4>
+        <ul>
+          <li>Forge resolves every request against the project’s canonical remote.</li>
+          <li>Summary and activity use short-lived cached reads; large diff slices travel over bounded HTTP responses.</li>
+          <li>The browser stores only shallow surface references such as <code>project/repository#number</code>.</li>
+          <li>Agent handoffs treat PR titles, branches and review text as untrusted context.</li>
+        </ul>
+        <div class="agent-callout">
+          <div class="spark">✦</div>
+          <div class="agent-copy"><strong>Continue with Pi</strong><span>Explain this change, investigate the failing check, or prepare a fix in an isolated worktree.</span></div>
+          <button class="btn primary">Open thread</button>
+        </div>
+      </section>
+    </div>
+  </article>
+</main>
+</body>
+</html>

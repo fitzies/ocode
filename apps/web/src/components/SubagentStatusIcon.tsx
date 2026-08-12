@@ -1,20 +1,49 @@
-import { AlertCircleIcon, Cancel01Icon, Loading03Icon, Tick02Icon } from "@hugeicons/core-free-icons";
+import {
+  AlertCircleIcon,
+  BanIcon,
+  CircleCheckIcon,
+  CircleDotIcon,
+  CircleXIcon,
+  HourglassIcon,
+  Loading03Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 
-import { isActiveSubagentStatus, type SubagentActivityItem } from "../lib/subagentActivity";
+import { Badge } from "@/components/ui/badge";
+import type { SubagentActivityItem } from "../lib/subagentActivity";
+import { subagentStatusLabel } from "../lib/subagentPresentation";
 
 function iconForStatus(item: SubagentActivityItem) {
-  if (isActiveSubagentStatus(item.status)) return Loading03Icon;
-  if (item.status === "completed") return Tick02Icon;
-  if (item.status === "cancelled") return Cancel01Icon;
-  return AlertCircleIcon;
+  switch (item.status) {
+    case "queued": return HourglassIcon;
+    case "starting": return Loading03Icon;
+    case "running": return CircleDotIcon;
+    case "needs_attention": return AlertCircleIcon;
+    case "completed": return CircleCheckIcon;
+    case "cancelled": return BanIcon;
+    case "failed":
+    case "interrupted": return CircleXIcon;
+  }
 }
 
 export function SubagentStatusIcon({ item }: { item: SubagentActivityItem }) {
-  const live = isActiveSubagentStatus(item.status);
   return (
     <span className={`subagent-activity-icon subagent-activity-icon--${item.status}`} aria-hidden="true">
-      <HugeiconsIcon icon={iconForStatus(item)} strokeWidth={2} className={live ? "subagent-activity-icon-spin" : undefined} />
+      {item.status === "running" && <i className="subagent-activity-icon-pulse" />}
+      <HugeiconsIcon
+        icon={iconForStatus(item)}
+        strokeWidth={2}
+        className={item.status === "starting" ? "subagent-activity-icon-spin" : undefined}
+      />
     </span>
+  );
+}
+
+export function SubagentStatusBadge({ item }: { item: SubagentActivityItem }) {
+  return (
+    <Badge variant="secondary" className={`subagent-status-badge subagent-status-badge--${item.status}`}>
+      <SubagentStatusIcon item={item} />
+      {subagentStatusLabel(item.status)}
+    </Badge>
   );
 }

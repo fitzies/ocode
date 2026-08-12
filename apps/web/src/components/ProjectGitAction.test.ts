@@ -16,6 +16,14 @@ describe("ProjectGitAction Mira header control", () => {
     expect(shellStyles).not.toContain(".repository-inline-action");
   });
 
+  it("opens repository status in the shared dialog without a dropdown chevron", () => {
+    expect(actionSource).toContain("<Dialog open={statusOpen}");
+    expect(actionSource).toContain("<DialogTrigger asChild>{trigger}</DialogTrigger>");
+    expect(actionSource).not.toContain("PopoverContent");
+    expect(actionSource).not.toContain("SheetContent");
+    expect(actionSource).not.toContain("ArrowDown01Icon");
+  });
+
   it("stays compact on narrow screens", () => {
     expect(actionSource).toContain("max-[420px]:hidden");
   });
@@ -29,8 +37,10 @@ describe("ProjectGitAction Mira header control", () => {
     expect(actionSource).toContain('action: { label: "View"');
   });
 
-  it("links the footer status label instead of rendering a separate commit action", () => {
-    expect(panelSource).toContain("Status for {commit.shortHash}");
+  it("keeps the repository dialog compact and avoids repeated commit metadata", () => {
+    expect(actionSource).toContain("!max-w-[28rem]");
+    expect(panelSource).not.toContain("Status for {commit.shortHash}");
+    expect(panelSource).not.toContain("not included in this delivery");
     expect(panelSource).not.toContain(">Commit<HugeiconsIcon");
   });
 });

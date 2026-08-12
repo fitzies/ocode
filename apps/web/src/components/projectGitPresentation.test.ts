@@ -63,10 +63,10 @@ describe("project Git presentation", () => {
           checks: [],
         },
       },
-    })).toMatchObject({ label: "PR #42 · Building", action: "commit", actionLabel: "Commit & push" });
+    })).toMatchObject({ label: "main · 2 changed", action: "commit", actionLabel: "Commit & push" });
   });
 
-  it("presents commit delivery status without a pull request", () => {
+  it("keeps commit CI status inside the dialog instead of the header", () => {
     expect(projectGitPresentation({
       ...clean,
       github: {
@@ -83,7 +83,7 @@ describe("project Git presentation", () => {
           complete: true,
         },
       },
-    })).toMatchObject({ label: "main · Deploying", tone: "info", busy: true });
+    })).toMatchObject({ label: "main · Clean", tone: "success", busy: false });
 
     expect(projectGitPresentation({
       ...clean,
@@ -98,7 +98,7 @@ describe("project Git presentation", () => {
           complete: true,
         },
       },
-    })).toMatchObject({ label: "main · Delivery failed", tone: "danger", busy: false });
+    })).toMatchObject({ label: "main · Clean", tone: "success", busy: false });
 
     expect(projectGitPresentation({
       ...clean,
@@ -124,7 +124,7 @@ describe("project Git presentation", () => {
           complete: true,
         },
       },
-    })).toMatchObject({ label: "main · Delivery failed", tone: "danger" });
+    })).toMatchObject({ label: "main · Clean", tone: "success" });
 
     expect(projectGitPresentation({
       ...clean,
@@ -139,7 +139,7 @@ describe("project Git presentation", () => {
           complete: true,
         },
       },
-    })).toMatchObject({ label: "main · Complete", tone: "neutral" });
+    })).toMatchObject({ label: "main · Clean", tone: "success" });
   });
 
   it("summarizes completed, active, and failed checks", () => {

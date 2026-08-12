@@ -65,6 +65,7 @@ import { subagentActivityForSession } from "../lib/subagentActivity";
 import { matchesShortcut } from "../lib/shortcuts";
 import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
 import { Composer, type ComposerAttachment, type ComposerProps, updateComposerDraft } from "./Composer";
+import { CommandPaletteDialog } from "./CommandPaletteDialog";
 import { DesktopUpdateDialog, isOcodeDesktop } from "./DesktopUpdateDialog";
 import { InteractionPanel } from "./InteractionDialog";
 import { InternalSessionFooter } from "./InternalSessionFooter";
@@ -87,13 +88,24 @@ const LEGACY_DISPLAY_PREFERENCES_KEY = "anvil.display-preferences";
 
 type MessageFontSize = "small" | "default" | "large" | "extra-large";
 type MessageWidth = "narrow" | "full";
+type InterfaceFont = "system" | "inter" | "geist";
 
 type DisplayPreferences = {
+  fontFamily: InterfaceFont;
   fontSize: MessageFontSize;
   width: MessageWidth;
 };
 
-const DEFAULT_DISPLAY_PREFERENCES: DisplayPreferences = { fontSize: "default", width: "narrow" };
+const DEFAULT_DISPLAY_PREFERENCES: DisplayPreferences = {
+  fontFamily: "system",
+  fontSize: "default",
+  width: "narrow",
+};
+const INTERFACE_FONT_STACKS: Record<InterfaceFont, string> = {
+  system: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+  inter: '"Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+  geist: '"Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+};
 const ACCENT_OPTIONS: Array<{ value: Accent; label: string; swatch: string }> = [
   { value: "neutral", label: "Neutral", swatch: "bg-neutral-300 dark:bg-neutral-200" },
   { value: "blue", label: "Blue", swatch: "bg-blue-400" },
@@ -118,6 +130,9 @@ function loadDisplayPreferences(): DisplayPreferences {
     }
     const stored = JSON.parse(canonical ?? legacy ?? "null") as Partial<DisplayPreferences> | null;
     return {
+      fontFamily: stored?.fontFamily && ["system", "inter", "geist"].includes(stored.fontFamily)
+        ? stored.fontFamily
+        : "system",
       fontSize: stored?.fontSize && ["small", "default", "large", "extra-large"].includes(stored.fontSize) ? stored.fontSize : "default",
       width: stored?.width && ["narrow", "full"].includes(stored.width) ? stored.width : "narrow",
     };
@@ -228,21 +243,50 @@ function WorkspaceComposer(props: Omit<ComposerProps, "onOpenSubagents">) {
   return <Composer {...props} onOpenSubagents={() => openSidePage("agents")} />;
 }
 
-function FileCloseShortcut({ isMobile }: { isMobile: boolean }) {
-  const { state, closeProjectResource } = useWorkspaceSurfaces();
+function SubagentSurfaceAutoOpen({
+  sessionId,
+  toolCallIds,
+  loading,
+}: {
+  sessionId?: string;
+  toolCallIds: readonly string[];
+  loading: boolean;
+}) {
+  const { state, openSidePage } = useWorkspaceSurfaces();
+  const seenBySession = useRef(new Map<string, Set<string>>());
 
   useEffect(() => {
-    const closeActiveFile = (event: KeyboardEvent) => {
+    if (!sessionId) return;
+    const current = new Set(toolCallIds);
+    const seen = seenBySession.current.get(sessionId);
+    seenBySession.current.set(sessionId, current);
+    if (!seen || loading || !toolCallIds.some((id) => !seen.has(id))) return;
+    if (!state.agentsTabOpen || !state.rightVisible || state.sidePage !== "agents") {
+      openSidePage("agents");
+    }
+  }, [loading, openSidePage, sessionId, state.agentsTabOpen, state.rightVisible, state.sidePage, toolCallIds]);
+
+  return null;
+}
+
+function FileCloseShortcut({ isMobile }: { isMobile: boolean }) {
+  const { state, closeAgentsTab, closeProjectResource } = useWorkspaceSurfaces();
+
+  useEffect(() => {
+    const closeActiveSideTab = (event: KeyboardEvent) => {
       if (isTerminalInputTarget(event.target) || !matchesShortcut(event, "closeThread")) return;
-      const activeFile = projectResourceForCloseShortcut(state, isMobile);
-      if (!activeFile) return;
+      const sidePaneVisible = isMobile ? state.mobileSurface === "resource" : state.rightVisible;
+      const agentsActive = sidePaneVisible && state.sidePage === "agents" && state.agentsTabOpen;
+      const activeFile = agentsActive ? undefined : projectResourceForCloseShortcut(state, isMobile);
+      if (!agentsActive && !activeFile) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      closeProjectResource(activeFile.id);
+      if (agentsActive) closeAgentsTab();
+      else if (activeFile) closeProjectResource(activeFile.id);
     };
-    window.addEventListener("keydown", closeActiveFile, true);
-    return () => window.removeEventListener("keydown", closeActiveFile, true);
-  }, [closeProjectResource, isMobile, state]);
+    window.addEventListener("keydown", closeActiveSideTab, true);
+    return () => window.removeEventListener("keydown", closeActiveSideTab, true);
+  }, [closeAgentsTab, closeProjectResource, isMobile, state]);
 
   return null;
 }
@@ -318,6 +362,7 @@ function AppShellContent() {
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
   const [usageDialogOpen, setUsageDialogOpen] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
@@ -378,6 +423,10 @@ function AppShellContent() {
   ]);
   useEffect(() => {
     localStorage.setItem(DISPLAY_PREFERENCES_KEY, JSON.stringify(displayPreferences));
+    document.documentElement.style.setProperty(
+      "--font-sans",
+      INTERFACE_FONT_STACKS[displayPreferences.fontFamily],
+    );
   }, [displayPreferences]);
 
   const sendSuggestion = useCallback((prompt: string) => anvilClient.sendPrompt(prompt), []);
@@ -628,6 +677,11 @@ function AppShellContent() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      if (matchesShortcut(event, "openCommand")) {
+        event.preventDefault();
+        setCommandPaletteOpen(true);
+        return;
+      }
       if (matchesShortcut(event, "openFile")) {
         event.preventDefault();
         if (activeProject && activeSession) setFilePickerOpen(true);
@@ -703,11 +757,18 @@ function AppShellContent() {
         onSetSessionSettled={anvilClient.setSessionSettled}
         onMarkSessionRead={anvilClient.markSessionRead}
         onMarkSessionUnread={anvilClient.markSessionUnread}
+        onSearchThreads={anvilClient.searchThreads}
       />
 
       <SidebarInset className="workspace">
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
           <LiveProjectResourceAutoOpen />
+          <SubagentSurfaceAutoOpen
+            sessionId={activeSession?.id}
+            toolCallIds={subagents.items.map((item) => item.parentToolCallId)}
+            loading={activeSession ? snapshot.hydratingSessionIds.includes(activeSession.id) : false}
+          />
+          <CommandPaletteDialog open={commandPaletteOpen} onOpenChange={setCommandPaletteOpen} />
           {activeProject && activeSession && (
             <FilePickerDialog
               open={filePickerOpen}
@@ -800,6 +861,16 @@ function AppShellContent() {
                           {option.label}
                         </DropdownMenuRadioItem>
                       ))}
+                    </DropdownMenuRadioGroup>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuLabel>Interface font</DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={displayPreferences.fontFamily}
+                      onValueChange={(fontFamily) => setDisplayPreferences((current) => ({ ...current, fontFamily: fontFamily as InterfaceFont }))}
+                    >
+                      <DropdownMenuRadioItem value="system">System (default)</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="inter">Inter</DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="geist">Geist</DropdownMenuRadioItem>
                     </DropdownMenuRadioGroup>
                     <DropdownMenuSeparator />
                     <DropdownMenuLabel>Text size</DropdownMenuLabel>

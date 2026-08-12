@@ -1,14 +1,15 @@
 import type { ConnectionState } from "@anvil/protocol";
-import { AlertCircleIcon, Cancel01Icon, Loading03Icon } from "@hugeicons/core-free-icons";
+import { Cancel01Icon, WifiOffIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type RefObject, useLayoutEffect } from "react";
 
-import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyTitle } from "@/components/ui/empty";
-import { Item, ItemActions, ItemContent, ItemDescription, ItemGroup, ItemMedia, ItemTitle } from "@/components/ui/item";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { SubagentActivity } from "../lib/subagentActivity";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { isActiveSubagentStatus, type SubagentActivity, type SubagentActivityItem } from "../lib/subagentActivity";
 import {
   cleanSubagentSummary,
   formatSubagentAge,
@@ -21,14 +22,76 @@ import { SubagentStatusIcon } from "./SubagentStatusIcon";
 function ActivityNotice({ connection, loading }: { connection: ConnectionState; loading: boolean }) {
   if (connection !== "connected") {
     return (
-      <div className="subagent-activity-notice" role="status">
-        <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={2} aria-hidden="true" />
-        {connection === "reconnecting" ? "Reconnecting · showing last known activity" : "Forge is offline · showing cached activity"}
-      </div>
+      <Alert className={`subagent-activity-notice subagent-activity-notice--${connection}`} role="status">
+        {connection === "reconnecting"
+          ? <Spinner aria-hidden="true" />
+          : <HugeiconsIcon icon={WifiOffIcon} strokeWidth={2} aria-hidden="true" />}
+        <AlertDescription>
+          {connection === "reconnecting"
+            ? "Reconnecting to the session — showing last-known activity."
+            : "Forge is offline — showing cached activity."}
+        </AlertDescription>
+      </Alert>
     );
   }
   if (!loading) return null;
-  return <div className="subagent-activity-notice" role="status"><HugeiconsIcon icon={Loading03Icon} className="subagent-activity-icon-spin" />Loading activity…</div>;
+  return (
+    <Alert className="subagent-activity-notice" role="status">
+      <Spinner aria-hidden="true" />
+      <AlertDescription>Loading activity…</AlertDescription>
+    </Alert>
+  );
+}
+
+function isLiveItem(item: SubagentActivityItem): boolean {
+  return isActiveSubagentStatus(item.status) || item.status === "needs_attention";
+}
+
+function ActivityRows({ items, now, onSelect }: {
+  items: SubagentActivityItem[];
+  now: number;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <ul className="subagent-activity-rows">
+      {items.map((item) => {
+        const duration = formatSubagentDuration(item, now);
+        return (
+          <li key={item.id}>
+            <button
+              type="button"
+              className="subagent-activity-row"
+              data-subagent-id={item.id}
+              onClick={() => onSelect(item.id)}
+            >
+              <SubagentStatusIcon item={item} />
+              <span className="subagent-activity-copy">
+                <span className="subagent-activity-identity">
+                  <strong className="subagent-activity-name">{subagentRoleLabel(item.role)}</strong>
+                  <span className={`subagent-activity-status subagent-activity-status--${item.status}`}>{subagentStatusLabel(item.status)}</span>
+                </span>
+                <span className="subagent-activity-task">{cleanSubagentSummary(item.task)}</span>
+              </span>
+              <time className="subagent-activity-time">{duration ?? formatSubagentAge(item.updatedAt, now)}</time>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function ActivityListSkeleton() {
+  return (
+    <div className="subagent-list-skeleton" aria-busy="true" aria-label="Loading agent activity">
+      {[0, 1, 2, 3].map((index) => (
+        <div className="subagent-list-skeleton-row" key={index}>
+          <Skeleton className="size-3.5 rounded-full" />
+          <span><Skeleton className="h-2.5 w-20" /><Skeleton className="h-2 w-full" /></span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function SubagentActivityList({ activity, now, connection, loading, restoreFocusId, restoreScrollTop, scrollAreaRef, onSelect, onClose, embedded = false }: {
@@ -51,47 +114,54 @@ export function SubagentActivityList({ activity, now, connection, loading, resto
     (rows.find((candidate) => candidate.dataset.subagentId === restoreFocusId) ?? rows[0])?.focus();
   }, [restoreFocusId, restoreScrollTop, scrollAreaRef]);
 
+  const activeItems = activity.items.filter(isLiveItem);
+  const recentItems = activity.items.filter((item) => !isLiveItem(item));
+  const activeCount = activity.active + activity.needsAttention;
+
   return (
     <>
       {!embedded && (
         <header className="subagent-popover-header">
-          <div>
-            <h2 className="subagent-popover-title">Agents</h2>
-            <span>{activity.items.length} {activity.items.length === 1 ? "run" : "runs"}</span>
-          </div>
+          <h2 className="subagent-popover-title">Agents</h2>
           <Button type="button" variant="ghost" size="icon-sm" onClick={onClose} aria-label="Close Agents">
             <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
           </Button>
         </header>
       )}
-      {activity.items.length > 0 && <ActivityNotice connection={connection} loading={loading} />}
+      <div className="subagent-list-overview" aria-label={`${activeCount} active, ${activity.items.length} total`}>
+        <div>
+          <strong>{activeCount} active</strong>
+          <span aria-hidden="true">·</span>
+          <span>{activity.items.length} total</span>
+        </div>
+      </div>
+      {(activity.items.length > 0 || loading) && <ActivityNotice connection={connection} loading={loading} />}
       <ScrollArea ref={scrollAreaRef} className="subagent-popover-scroll subagent-popover-list-scroll">
-        {activity.items.length ? (
-          <ItemGroup className="subagent-activity-list gap-0">
-            {activity.items.map((item) => {
-              const duration = formatSubagentDuration(item, now);
-              return (
-                <Item key={item.id} asChild size="xs">
-                  <a className="subagent-activity-row" data-subagent-id={item.id} href={`#agent-${item.id}`} onClick={(event) => { event.preventDefault(); onSelect(item.id); }}>
-                    <ItemMedia><SubagentStatusIcon item={item} /></ItemMedia>
-                    <ItemContent className="subagent-activity-copy">
-                      <ItemTitle className="subagent-activity-name">
-                        <strong>{subagentRoleLabel(item.role)}</strong>
-                        {item.source === "legacy" && <span className="subagent-legacy-label">Legacy tool</span>}
-                      </ItemTitle>
-                      <ItemDescription className="subagent-activity-task">{cleanSubagentSummary(item.task)}</ItemDescription>
-                    </ItemContent>
-                    <ItemActions className="subagent-activity-meta">
-                      <Badge variant="secondary" className={`subagent-status-badge subagent-status-badge--${item.status}`}>{subagentStatusLabel(item.status)}</Badge>
-                      <span>{duration ?? formatSubagentAge(item.updatedAt, now)}</span>
-                    </ItemActions>
-                  </a>
-                </Item>
-              );
-            })}
-          </ItemGroup>
+        {loading && activity.items.length === 0 ? (
+          <ActivityListSkeleton />
+        ) : activity.items.length ? (
+          <div className="subagent-activity-list">
+            <section aria-labelledby="subagent-active-heading">
+              <div className="subagent-list-section-heading">
+                <h3 id="subagent-active-heading" className="subagent-list-section-title">Active</h3>
+                <span>{activeItems.length}</span>
+              </div>
+              {activeItems.length
+                ? <ActivityRows items={activeItems} now={now} onSelect={onSelect} />
+                : <p className="subagent-list-section-empty">No agents are currently running.</p>}
+            </section>
+            {recentItems.length > 0 && (
+              <section aria-labelledby="subagent-recent-heading">
+                <div className="subagent-list-section-heading">
+                  <h3 id="subagent-recent-heading" className="subagent-list-section-title">Recent</h3>
+                  <span>{recentItems.length}</span>
+                </div>
+                <ActivityRows items={recentItems} now={now} onSelect={onSelect} />
+              </section>
+            )}
+          </div>
         ) : (
-          <Empty className="h-full min-h-32 rounded-none p-6">
+          <Empty className="h-full min-h-40 rounded-none p-6">
             <EmptyTitle>No Agents</EmptyTitle>
           </Empty>
         )}

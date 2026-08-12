@@ -1,5 +1,5 @@
 export type ShortcutId =
-  | "newThread" | "closeThread" | "openFile" | "search" | "settings" | "terminal" | "toggleSidebar"
+  | "newThread" | "closeThread" | "openFile" | "openCommand" | "search" | "settings" | "terminal" | "toggleSidebar"
   | "nextThread" | "previousThread"
   | `thread${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
@@ -11,6 +11,7 @@ export const DEFAULT_SHORTCUTS: ShortcutMap = {
   newThread: "Mod+KeyN",
   closeThread: "Mod+KeyW",
   openFile: "Mod+KeyP",
+  openCommand: "Mod+Shift+KeyP",
   search: "Mod+KeyK",
   settings: "Mod+Comma",
   terminal: "Ctrl+Backquote",

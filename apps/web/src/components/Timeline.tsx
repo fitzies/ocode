@@ -5,7 +5,6 @@ import type {
   JsonValue,
   MessageEntry,
   ProjectResourceContentBlock,
-  ReasoningEntry,
   SessionSummary,
   SystemEventEntry,
   TimelineEntry,
@@ -501,7 +500,7 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
       : entry.status === "answered" ? CheckmarkCircle02Icon : AlertCircleIcon;
     return (
       <details className={`tool-event tool-event--interaction tool-event--${entry.status}${entranceClass}`}>
-        <summary>
+        <summary className="tool-event-trigger">
           <span className="tool-icon"><HugeiconsIcon icon={HelpCircleIcon} strokeWidth={2} className="size-4" /></span>
           <span className="tool-main">
             <strong>{entry.title}</strong>
@@ -533,36 +532,8 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
 
 type TimelineRow =
   | { key: string; kind: "entry"; entry: TimelineEntry }
-  | { key: string; kind: "reasoning-group"; reasoning: ReasoningEntry[] }
   | { key: string; kind: "tool-batch"; tools: ToolEntry[] }
   | { key: string; kind: "retry"; retry: RetryCycle };
-
-function ReasoningGroup({ entries, entering = false }: { entries: ReasoningEntry[]; entering?: boolean }) {
-  const active = entries.some((entry) => entry.status === "streaming");
-  const latest = entries.at(-1);
-  const populated = entries.filter((entry) => entry.content.trim());
-  const label = latest?.content.trim() || "Getting started…";
-  if (active) {
-    return (
-      <div className={`thinking-event thinking-event--streaming${entering ? " timeline-entry--entering" : ""}`} role="status">
-        <HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="thinking-spinner size-3" />
-        <MarkdownText className="thinking-live-text markdown-body">{label}</MarkdownText>
-      </div>
-    );
-  }
-  return (
-    <Collapsible className={`thinking-event thinking-event--complete${entering ? " timeline-entry--entering" : ""}`}>
-      <CollapsibleTrigger className="thinking-trigger">
-        <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3" />
-        <span>Thought process</span>
-        {populated.length > 1 && <small>{populated.length} steps</small>}
-      </CollapsibleTrigger>
-      <CollapsibleContent className="thinking-history" forceMount>
-        {populated.map((entry) => <MarkdownText key={entry.id} className="thinking-markdown markdown-body">{entry.content}</MarkdownText>)}
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
 
 function takeAssociatedRetryError(rows: TimelineRow[], expectedError: string | undefined): MessageEntry | undefined {
   if (!expectedError) return undefined;
@@ -581,29 +552,12 @@ function takeAssociatedRetryError(rows: TimelineRow[], expectedError: string | u
 
 function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   const rows: TimelineRow[] = [];
-  const reasoningByTurn = new Map<string, ReasoningEntry[]>();
-  const reasoningTurnById = new Map<string, string>();
-  let currentTurnKey = "session-start";
-  for (const entry of entries) {
-    if (entry.kind === "message" && entry.role === "user") currentTurnKey = entry.id;
-    if (entry.kind !== "reasoning") continue;
-    const group = reasoningByTurn.get(currentTurnKey) ?? [];
-    group.push(entry);
-    reasoningByTurn.set(currentTurnKey, group);
-    reasoningTurnById.set(entry.id, currentTurnKey);
-  }
-  const renderedReasoningTurns = new Set<string>();
   let activeRetry: Extract<TimelineRow, { kind: "retry" }> | undefined;
   let index = 0;
   while (index < entries.length) {
     const entry = entries[index]!;
     if (entry.kind === "message" && entry.role === "user") activeRetry = undefined;
     if (entry.kind === "reasoning") {
-      const turnKey = reasoningTurnById.get(entry.id) ?? "session-start";
-      if (!renderedReasoningTurns.has(turnKey)) {
-        renderedReasoningTurns.add(turnKey);
-        rows.push({ key: `reasoning-turn-${turnKey}`, kind: "reasoning-group", reasoning: reasoningByTurn.get(turnKey) ?? [entry] });
-      }
       index += 1;
       continue;
     }
@@ -660,7 +614,6 @@ function TimelineRowView({ row, entering = false, onOpenProjectResource }: {
 }) {
   const animateEntrance = useRef(entering).current;
   if (row.kind === "entry") return <TimelineItem entry={row.entry} entering={animateEntrance} onOpenProjectResource={onOpenProjectResource} />;
-  if (row.kind === "reasoning-group") return <ReasoningGroup entries={row.reasoning} entering={animateEntrance} />;
   if (row.kind === "retry") return <RetryTimelineItem retry={row.retry} entering={animateEntrance} />;
   const completed = row.tools.filter((tool) => tool.status === "completed").length;
   const running = row.tools.filter((tool) => tool.status === "running").length;
@@ -723,7 +676,6 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
     estimateSize: (index) => {
       const row = rows[index];
       if (row?.kind === "tool-batch") return 44 + row.tools.length * 29;
-      if (row?.kind === "reasoning-group") return 34;
       if (row?.kind === "entry" && row.entry.kind === "tool") return 30;
       if (row?.kind === "entry" && row.entry.kind === "message") return 112;
       return 64;

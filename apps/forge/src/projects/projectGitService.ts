@@ -71,15 +71,24 @@ function commandError(error: unknown, fallback: string): ProjectGitError {
   return new ProjectGitError("git_failed", safeErrorMessage(message, fallback), 500);
 }
 
-function parseNumstat(value: string): { additions: number; deletions: number } {
+function parseNumstat(value: string): {
+  additions: number;
+  deletions: number;
+  files: Array<{ path: string; additions: number; deletions: number }>;
+} {
   let additions = 0;
   let deletions = 0;
+  const files = [];
   for (const line of value.split("\n")) {
-    const [added, deleted] = line.split("\t");
-    if (added !== "-") additions += Number(added) || 0;
-    if (deleted !== "-") deletions += Number(deleted) || 0;
+    const [added, deleted, path] = line.split("\t");
+    if (!path) continue;
+    const fileAdditions = added === "-" ? 0 : Number(added) || 0;
+    const fileDeletions = deleted === "-" ? 0 : Number(deleted) || 0;
+    additions += fileAdditions;
+    deletions += fileDeletions;
+    files.push({ path, additions: fileAdditions, deletions: fileDeletions });
   }
-  return { additions, deletions };
+  return { additions, deletions, files };
 }
 
 function commitSubject(value: string): string {
@@ -385,8 +394,8 @@ export class ProjectGitService {
     private readonly messages: CommitMessageGenerator,
   ) {}
 
-  async status(projectId: string): Promise<ProjectGitStatus> {
-    return this.publicStatus(await this.inspect(projectId, true));
+  async status(projectId: string, includeRemoteStatus = true): Promise<ProjectGitStatus> {
+    return this.publicStatus(await this.inspect(projectId, includeRemoteStatus));
   }
 
   async connect(projectId: string, input: ProjectGitConnectRequest): Promise<ProjectGitConnectResult> {
@@ -721,10 +730,8 @@ export class ProjectGitService {
     const ambiguousRemote = !remoteName && safeRemoteNames.length > 1;
     const configuredRemotes = remoteEntries.map(({ name, rawUrl, safe }) => remoteMetadata(name, safe ? rawUrl : undefined));
     const remote = remoteName ? configuredRemotes.find((item) => item.name === remoteName) ?? null : null;
-    const numstat = hasHead
-      ? await this.tryGit(project.path, ["diff", "HEAD", "--numstat", "--no-ext-diff", "--"])
-      : undefined;
-    const { additions, deletions } = parseNumstat(numstat ?? "");
+    const numstat = await this.workingTreeNumstat(project.path, hasHead);
+    const { additions, deletions, files } = parseNumstat(numstat);
 
     const base: Omit<GitState, "action"> = {
       branch,
@@ -732,6 +739,7 @@ export class ProjectGitService {
       additions,
       deletions,
       changedFiles: lines.length,
+      files,
       ahead,
       behind,
       repositoryState: conflicted
@@ -931,6 +939,28 @@ export class ProjectGitService {
     }
     if (!state.hasChanges || state.action !== "commit-and-push") {
       throw new ProjectGitError("nothing_to_commit", "There are no project changes to commit", 409);
+    }
+  }
+
+  private async workingTreeNumstat(cwd: string, hasHead: boolean): Promise<string> {
+    const directory = await mkdtemp(join(tmpdir(), "ocode-git-index-"));
+    const index = join(directory, "index");
+    const env = { GIT_INDEX_FILE: index };
+    try {
+      await this.git(cwd, hasHead ? ["read-tree", "HEAD"] : ["read-tree", "--empty"], 15_000, env);
+      await this.git(cwd, ["add", "-A", "--"], 30_000, env);
+      return await this.git(
+        cwd,
+        hasHead
+          ? ["diff", "--cached", "HEAD", "--numstat", "--no-renames", "--no-ext-diff", "--"]
+          : ["diff", "--cached", "--numstat", "--no-renames", "--no-ext-diff", "--"],
+        30_000,
+        env,
+      );
+    } catch {
+      return "";
+    } finally {
+      await rm(directory, { recursive: true, force: true });
     }
   }
 

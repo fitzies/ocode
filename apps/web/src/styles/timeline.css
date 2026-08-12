@@ -558,9 +558,9 @@
   animation: pulse 1s ease-in-out infinite;
 }
 
-.tool-event { margin: 1px 8% 1px 37px; }
-.thinking-event { margin: 6px 8% 5px 37px; }
-.tool-batch { margin: 5px 8% 5px 37px; }
+.tool-event { margin: 1px 8% 1px -3px; }
+.thinking-event { margin: 6px 8% 5px -3px; }
+.tool-batch { margin: 5px 8% 5px -10px; }
 .system-event,
 .interaction-event { margin: 7px 8% 7px 37px; }
 
@@ -573,7 +573,9 @@
   user-select: none;
 }
 
+.tool-event-trigger::-webkit-details-marker,
 .technical-detail > summary::-webkit-details-marker { display: none; }
+.tool-event-trigger::marker { content: ""; }
 
 .thinking-event {
   color: var(--legacy-text-low);
@@ -691,7 +693,7 @@ details[open] > summary .disclosure-icon { transform: rotate(90deg); }
   color: var(--tool-accent);
 }
 .tool-main { display: flex; min-width: 0; flex: 1; align-items: baseline; gap: 7px; }
-.tool-main strong { min-width: 0; overflow: hidden; color: var(--legacy-text); font-size: 10.5px; font-weight: 570; text-overflow: ellipsis; white-space: nowrap; }
+.tool-main strong { min-width: 0; overflow: hidden; color: var(--legacy-text); font-size: var(--message-font-size, 13px); font-weight: 400; line-height: 1.55; text-overflow: ellipsis; white-space: nowrap; }
 .tool-main > span { min-width: 0; overflow: hidden; color: var(--legacy-text-low); font-family: "Geist Mono Variable", "Geist Mono", monospace; font-size: 8.5px; text-overflow: ellipsis; white-space: nowrap; }
 .tool-main > .tool-failure-summary { color: var(--red); }
 .tool-status-copy { display: none; }

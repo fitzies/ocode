@@ -471,8 +471,7 @@
   white-space: nowrap;
 }
 
-.composer-status-subagents,
-.composer-status-metric {
+.composer-status-subagents {
   display: inline-flex;
   align-items: center;
 }
@@ -506,35 +505,12 @@
 }
 
 .composer-status-subagent-label {
-  color: var(--legacy-text);
-  font-weight: 550;
+  color: inherit;
+  font-weight: inherit;
 }
 
-.composer-status-metric {
-  gap: 2px;
-}
-
-.composer-status-icon {
-  width: 10px;
-  height: 10px;
-  flex: 0 0 auto;
-}
-
-.composer-status-icon--active,
-.composer-status-icon--attention { color: var(--amber); }
-.composer-status-icon--finished { color: var(--green); }
-.composer-status-icon--failed { color: var(--red); }
-
-.composer-status-icon--spinning {
-  animation: composer-status-spin 900ms linear infinite;
-}
-
-@keyframes composer-status-spin {
-  to { transform: rotate(360deg); }
-}
 
 @media (prefers-reduced-motion: reduce) {
-  .composer-status-icon--spinning,
   .subagent-activity-icon-spin,
   .subagent-popover { animation: none !important; transition: none !important; }
 }

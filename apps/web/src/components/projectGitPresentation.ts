@@ -38,22 +38,6 @@ function pullRequestPresentation(pullRequest: ProjectGitPullRequest): Pick<Proje
   }
 }
 
-function commitPresentation(branch: string, checks: readonly ProjectGitCheck[]): Pick<ProjectGitHeaderPresentation, "label" | "tone" | "busy"> | undefined {
-  if (checks.length === 0) return undefined;
-  const summary = projectGitCheckSummary(checks);
-  if (summary.failed > 0) return { label: `${branch} · Delivery failed`, tone: "danger", busy: false };
-  if (summary.running > 0) {
-    const deploying = checks.some((check) => check.kind === "deployment" && (check.state === "running" || check.state === "queued"));
-    return { label: `${branch} · ${deploying ? "Deploying" : "Checks running"}`, tone: "info", busy: true };
-  }
-  if (checks.every((check) => ["passed", "skipped", "neutral"].includes(check.state))) {
-    return checks.some((check) => check.state === "passed")
-      ? { label: `${branch} · Ready`, tone: "success", busy: false }
-      : { label: `${branch} · Complete`, tone: "neutral", busy: false };
-  }
-  return { label: `${branch} · Status incomplete`, tone: "warning", busy: false };
-}
-
 export function projectGitPresentation(status: ProjectGitStatus): ProjectGitHeaderPresentation {
   const branch = status.branch ?? "Git";
   switch (status.repositoryState) {
@@ -80,9 +64,6 @@ export function projectGitPresentation(status: ProjectGitStatus): ProjectGitHead
     : status.action === "push" ? { action: "push" as const, actionLabel: "Push" } : {};
   const pullRequest = status.github?.pullRequest;
   const commit = status.github?.commit;
-  const delivery = commitPresentation(branch, commit?.checks ?? []);
-  if (delivery) return { ...delivery, ...localAction };
-  if (!commit && pullRequest) return { ...pullRequestPresentation(pullRequest), ...localAction };
   if (status.action === "commit-and-push") {
     return {
       label: `${branch} · ${status.changedFiles} changed`,
@@ -102,6 +83,7 @@ export function projectGitPresentation(status: ProjectGitStatus): ProjectGitHead
   if (status.action === "unavailable") {
     return { label: status.reason ?? "Git unavailable", tone: "warning", action: "repair", actionLabel: "View", busy: false };
   }
+  if (!commit && pullRequest) return { ...pullRequestPresentation(pullRequest), ...localAction };
   return {
     label: status.remoteStatusError ? `${branch} · Status stale` : `${branch} · Clean`,
     tone: status.remoteStatusError ? "warning" : "success",

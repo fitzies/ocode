@@ -1,6 +1,5 @@
 import type { ProjectGitStatus } from "@anvil/protocol";
 import {
-  ArrowDown01Icon,
   GitBranchIcon,
   GitPullRequestIcon,
   GithubIcon,
@@ -12,9 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { useIsMobile } from "@/hooks/use-mobile";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import {
   commitAndPushProject,
   generateProjectCommitMessage,
@@ -22,7 +19,7 @@ import {
   ProjectGitRequestError,
 } from "@/lib/projectGit";
 import { ProjectGitConnectDialog } from "./ProjectGitConnectDialog";
-import { projectGitCheckSummary, projectGitDeliveryCompletion, projectGitPresentation } from "./projectGitPresentation";
+import { projectGitDeliveryCompletion, projectGitPresentation } from "./projectGitPresentation";
 import { ProjectGitStatusPanel } from "./ProjectGitStatusPanel";
 
 type GitPhase = "idle" | "generating" | "committing" | "pushing";
@@ -42,28 +39,24 @@ export function ProjectGitAction({
   const [phase, setPhase] = useState<GitPhase>("idle");
   const [statusOpen, setStatusOpen] = useState(false);
   const [connectOpen, setConnectOpen] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
   const operationRef = useRef(false);
   const statusRequestRef = useRef(false);
   const lastPushAtRef = useRef(0);
   const deliveryObservationRef = useRef<{ hash: string; awaiting: boolean } | undefined>(undefined);
   const notifiedDeliveryRef = useRef<string | undefined>(undefined);
-  const isMobile = useIsMobile();
 
-  const refresh = useCallback(async (signal?: AbortSignal, visible = false) => {
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     if (statusRequestRef.current) return;
     statusRequestRef.current = true;
-    if (visible) setRefreshing(true);
     try {
       const next = await getProjectGitStatus(projectId, signal);
       if (!signal?.aborted) setStatus(next);
     } catch (error) {
-      if (!(error instanceof DOMException && error.name === "AbortError") && !signal?.aborted && visible) {
-        toast.error("Repository status unavailable", { description: error instanceof Error ? error.message : String(error) });
+      if (!(error instanceof DOMException && error.name === "AbortError") && !signal?.aborted) {
+        console.warn("Repository status unavailable", error);
       }
     } finally {
       statusRequestRef.current = false;
-      if (!signal?.aborted && visible) setRefreshing(false);
     }
   }, [projectId]);
 
@@ -137,13 +130,23 @@ export function ProjectGitAction({
     else toast.success(title, options);
   }, [projectId, projectName, status?.github?.commit]);
 
-  if (!status) return null;
+  if (!status) {
+    return (
+      <Button
+        type="button"
+        variant="outline"
+        disabled
+        aria-label="Loading repository status"
+        className="repository-header-button max-w-52 min-w-0 animate-pulse font-normal"
+      >
+        <HugeiconsIcon icon={GithubIcon} strokeWidth={1.8} data-icon="inline-start" className="text-muted-foreground" />
+        <span className="truncate max-[420px]:hidden">Loading repository…</span>
+      </Button>
+    );
+  }
 
   const presentation = projectGitPresentation(status);
   const pullRequest = status.github?.pullRequest;
-  const commit = status.github?.commit;
-  const deliveryChecks = commit ? commit.checks : pullRequest?.checks;
-  const checkSummary = deliveryChecks ? projectGitCheckSummary(deliveryChecks) : undefined;
   const busy = phase !== "idle";
 
   const run = async () => {
@@ -211,23 +214,18 @@ export function ProjectGitAction({
       />
       <span className="truncate font-medium max-[420px]:hidden">{primaryStatusLabel}</span>
       {secondaryStatusLabel && <span className="truncate text-muted-foreground max-sm:hidden">· {secondaryStatusLabel}</span>}
-      {checkSummary && checkSummary.total > 0 && <span className="text-[0.625rem] text-muted-foreground max-sm:hidden">{checkSummary.passed}/{checkSummary.total}</span>}
-      {(!checkSummary || checkSummary.total === 0) && !pullRequest && (status.additions > 0 || status.deletions > 0) && (
+      {(status.additions > 0 || status.deletions > 0) && (
         <span className="flex gap-1 font-mono text-[0.625rem] max-sm:hidden"><span className="text-[var(--green)]">+{status.additions}</span><span className="text-[var(--red)]">−{status.deletions}</span></span>
       )}
-      <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} data-icon="inline-end" className="text-muted-foreground max-[420px]:hidden" />
     </Button>
   );
 
   const panel = (
     <ProjectGitStatusPanel
-      projectName={projectName}
       status={status}
-      refreshing={refreshing}
       gitActionLabel={presentation.action === "commit" || presentation.action === "push" ? actionLabel : undefined}
       gitActionBusy={busy}
       onGitAction={presentation.action === "commit" || presentation.action === "push" ? () => void run() : undefined}
-      onRefresh={() => void refresh(undefined, true)}
     />
   );
 
@@ -250,21 +248,17 @@ export function ProjectGitAction({
             />
             <span className="truncate max-[420px]:hidden">{connectLabel}</span>
           </Button>
-        ) : isMobile ? (
-          <Sheet open={statusOpen} onOpenChange={setStatusOpen}>
-            <SheetTrigger asChild>{trigger}</SheetTrigger>
-            <SheetContent side="bottom" className="max-h-[82dvh] overflow-y-auto rounded-t-xl p-0">
-              <SheetHeader className="sr-only"><SheetTitle>Repository status</SheetTitle><SheetDescription>Local Git, commit checks, deployments, pull requests, and agent activity.</SheetDescription></SheetHeader>
-              {panel}
-            </SheetContent>
-          </Sheet>
         ) : (
-          <Popover open={statusOpen} onOpenChange={setStatusOpen}>
-            <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-            <PopoverContent align="end" sideOffset={8} className="w-[400px] max-w-[calc(100vw-1rem)] gap-0 overflow-hidden p-0">
+          <Dialog open={statusOpen} onOpenChange={setStatusOpen}>
+            <DialogTrigger asChild>{trigger}</DialogTrigger>
+            <DialogContent className="w-[calc(100%-2rem)] !max-w-[28rem] max-h-[min(640px,calc(100dvh-2rem))] gap-0 overflow-y-auto p-0">
+              <DialogHeader className="sr-only">
+                <DialogTitle>Repository status</DialogTitle>
+                <DialogDescription>Local changes, latest commit, and CI checks.</DialogDescription>
+              </DialogHeader>
               {panel}
-            </PopoverContent>
-          </Popover>
+            </DialogContent>
+          </Dialog>
         )}
       </div>
 

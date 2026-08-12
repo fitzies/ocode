@@ -72,21 +72,12 @@ describe("Composer workspace status", () => {
     expect(renderComposer(true, { workspaceKind: "general" })).toContain(">home workspace<");
   });
 
-  it("hides inactive subagents and shows only the finished tick", () => {
-    const html = renderComposer(true);
-
-    expect(html).not.toContain("subagents:");
-    expect(html).not.toContain("composer-status-icon--active");
-    expect(html).toContain("composer-status-icon--finished");
-    expect(html).not.toContain('class="sr-only"> active');
-    expect(html).toContain('class="sr-only"> finished');
-  });
-
-  it("shows and spins the activity icon while subagents are active", () => {
+  it("shows a lowercase agents link without activity metrics", () => {
     const html = renderComposer(true, { subagents: { active: 2, finished: 1, failed: 0, needsAttention: 0, items: [] } });
 
-    expect(html).toContain("composer-status-icon--active composer-status-icon--spinning");
-    expect(html).toContain('class="sr-only"> active');
+    expect(html).toContain(">agents</span>");
+    expect(html).not.toContain("composer-status-metric");
+    expect(html).not.toContain("composer-status-icon");
   });
 
   it("keeps the status present during startup and creation errors", () => {

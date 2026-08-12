@@ -26,6 +26,7 @@ import {
   type SessionSummary,
   type SubagentRun,
   type ThinkingLevel,
+  type ThreadSearchMatch,
   type TimelineEntry,
 } from "@anvil/protocol";
 import {
@@ -120,6 +121,7 @@ export interface AnvilClient {
   uploadAttachment(sessionId: string, file: File): Promise<ArtifactReference>;
   deleteAttachment(sessionId: string, artifactId: string): Promise<void>;
   searchFiles(sessionId: string, query: string): Promise<WorkspaceFile[]>;
+  searchThreads(query: string): Promise<ThreadSearchMatch[]>;
   rebuildWebApp(): Promise<void>;
   cancelActiveRun(): void;
   setModel(sessionId: string, modelId: string): void;
@@ -952,6 +954,23 @@ export class FixtureAnvilClient implements AnvilClient {
   };
 
   deleteAttachment = async () => undefined;
+
+  searchThreads = async (query: string): Promise<ThreadSearchMatch[]> => {
+    const normalized = query.trim().toLocaleLowerCase();
+    if (normalized.length < 2) return [];
+    return this.snapshot.sessions.flatMap((session) => {
+      if (session.internal) return [];
+      const match = (this.snapshot.timelines[session.id] ?? []).find((entry) =>
+        entry.kind === "message" &&
+        entry.status === "complete" &&
+        (entry.role === "assistant" || (entry.role === "user" && entry.origin === undefined)) &&
+        entry.content.some((block) => block.type === "text" && block.text.toLocaleLowerCase().includes(normalized))
+      );
+      if (!match || match.kind !== "message" || (match.role !== "user" && match.role !== "assistant")) return [];
+      const text = match.content.filter((block) => block.type === "text").map((block) => block.type === "text" ? block.text : "").join(" ");
+      return [{ sessionId: session.id, role: match.role, snippet: text.slice(0, 240), messageCreatedAt: match.createdAt }];
+    });
+  };
 
   searchFiles = async (_sessionId: string, query: string): Promise<WorkspaceFile[]> => [
     "AGENTS.md",
@@ -1788,6 +1807,24 @@ export class ForgeAnvilClient implements AnvilClient {
     if (!response.ok) {
       throw new Error(result?.message ?? `Web app rebuild failed with HTTP ${response.status}`);
     }
+  };
+
+  searchThreads = async (query: string): Promise<ThreadSearchMatch[]> => {
+    const response = await this.fetcher(`/api/v1/threads/search?q=${encodeURIComponent(query)}`, {
+      headers: { accept: "application/json" },
+    });
+    if (!response.ok) return [];
+    const value = await response.json() as { matches?: unknown };
+    return Array.isArray(value.matches)
+      ? value.matches.filter((item): item is ThreadSearchMatch => {
+          if (!item || typeof item !== "object") return false;
+          const match = item as Partial<ThreadSearchMatch>;
+          return typeof match.sessionId === "string" &&
+            (match.role === "user" || match.role === "assistant") &&
+            typeof match.snippet === "string" &&
+            typeof match.messageCreatedAt === "string";
+        })
+      : [];
   };
 
   searchFiles = async (sessionId: string, query: string): Promise<WorkspaceFile[]> => {

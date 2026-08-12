@@ -318,7 +318,13 @@ if (args[0] === "pr") {
       action: "commit-and-push",
       branch: "main",
       upstream: "origin/main",
+      additions: 2,
+      deletions: 1,
       changedFiles: 2,
+      files: [
+        { path: "greeting.txt", additions: 1, deletions: 1 },
+        { path: "new-file.txt", additions: 1, deletions: 0 },
+      ],
     });
     const generated = await subject.service.generateMessage("project-1", "openai/test-model");
     expect(generated.message).toBe("Update greeting files");

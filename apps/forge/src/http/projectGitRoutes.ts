@@ -77,7 +77,7 @@ export class ProjectGitRoutes {
     try {
       const projectId = decodedProjectId(match[1]!);
       if (operation === "status") {
-        sendJson(response, 200, await this.git.status(projectId));
+        sendJson(response, 200, await this.git.status(projectId, url.searchParams.get("remote") !== "false"));
         return true;
       }
 

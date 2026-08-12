@@ -13,6 +13,12 @@ export function cleanSubagentSummary(value: string): string {
     .trim();
 }
 
+export function cleanSubagentResult(value: string): string {
+  return value
+    .replace(/^\s{0,3}#{1,6}\s+answer\s*:?[ \t]*(?:\r?\n)+/i, "")
+    .trimStart();
+}
+
 export function subagentRoleLabel(role: string): string {
   const clean = role.replace(/[_-]+/g, " ").trim() || "subagent";
   return `${clean.charAt(0).toUpperCase()}${clean.slice(1)}`;

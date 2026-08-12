@@ -18,6 +18,7 @@ function renderSnapshot(snapshot: AnvilClientSnapshot): string {
         onSetSessionSettled={async () => undefined}
         onMarkSessionRead={() => undefined}
         onMarkSessionUnread={() => undefined}
+        onSearchThreads={async () => []}
       />
     </SidebarProvider>,
   );

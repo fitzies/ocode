@@ -150,6 +150,12 @@ export interface ProjectGitHubStatus {
   commit: ProjectGitCommitStatus | null;
 }
 
+export interface ProjectGitFileChange {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
 export interface ProjectGitStatus {
   action: ProjectGitAction;
   branch: string | null;
@@ -157,6 +163,8 @@ export interface ProjectGitStatus {
   additions: number;
   deletions: number;
   changedFiles: number;
+  /** Per-file line counts for tracked working-tree changes. */
+  files?: ProjectGitFileChange[];
   ahead: number;
   reason?: string;
   /** Absent only on responses recorded before repository-state support. */
@@ -215,6 +223,18 @@ export interface ProjectGitApiError extends AnvilApiError {
   committed?: boolean;
   commit?: string;
   commitMessage?: string;
+}
+
+export interface ThreadSearchMatch {
+  sessionId: string;
+  role: "user" | "assistant";
+  snippet: string;
+  messageCreatedAt: string;
+}
+
+export interface ThreadSearchResult {
+  protocolVersion: number;
+  matches: ThreadSearchMatch[];
 }
 
 export interface SessionSummary {

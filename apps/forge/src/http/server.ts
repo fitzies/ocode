@@ -264,6 +264,18 @@ export class ForgeHttpServer {
       sendJson(response, 200, this.options.events.summaryBootstrap());
       return;
     }
+    if (request.method === "GET" && url.pathname === "/api/v1/threads/search") {
+      const query = url.searchParams.get("q")?.trim() ?? "";
+      if (query.length < 2 || query.length > 200) {
+        sendJson(response, 400, apiError("invalid_thread_search", "Search query must contain between 2 and 200 characters"));
+        return;
+      }
+      sendJson(response, 200, {
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        matches: this.options.events.searchThreads(query, 50),
+      });
+      return;
+    }
     const detailMatch = /^\/api\/v1\/sessions\/([^/]+)\/detail$/.exec(url.pathname);
     if (request.method === "GET" && detailMatch) {
       let sessionId: string;

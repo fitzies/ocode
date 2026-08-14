@@ -192,6 +192,14 @@ function lastCommit(value: string | undefined): ProjectGitLastCommit | null {
     : null;
 }
 
+function recentCommits(value: string | undefined): ProjectGitLastCommit[] {
+  if (!value) return [];
+  return value
+    .split("\x1e")
+    .map((record) => lastCommit(record))
+    .filter((commit): commit is ProjectGitLastCommit => Boolean(commit));
+}
+
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value ? value : undefined;
 }
@@ -679,12 +687,16 @@ export class ProjectGitService {
     const latestCommit = hasHead
       ? lastCommit(await this.tryGit(project.path, ["show", "-s", "--format=%H%x00%h%x00%s%x00%aI", "HEAD"]))
       : null;
+    const commitHistory = hasHead
+      ? recentCommits(await this.tryGit(project.path, ["log", "-5", "--format=%H%x00%h%x00%s%x00%aI%x1e"]))
+      : [];
     const branch = (await this.tryGit(project.path, ["symbolic-ref", "--quiet", "--short", "HEAD"]))?.trim() || null;
     if (!branch) {
       return unavailable("detached-head", "Git is in detached HEAD state", {
         hasHead,
         head,
         lastCommit: latestCommit,
+        recentCommits: commitHistory,
       });
     }
 
@@ -697,6 +709,7 @@ export class ProjectGitService {
         hasHead,
         head,
         lastCommit: latestCommit,
+        recentCommits: commitHistory,
         statusError: commandError(error, "Git status could not be read").message,
       });
     }
@@ -750,6 +763,7 @@ export class ProjectGitService {
       remote,
       remotes: configuredRemotes,
       lastCommit: latestCommit,
+      recentCommits: commitHistory,
       statusUpdatedAt: timestamp,
       cwd: project.path,
       hasChanges,

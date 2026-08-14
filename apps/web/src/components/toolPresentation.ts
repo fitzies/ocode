@@ -1,4 +1,5 @@
 import type { JsonValue, ToolEntry } from "@anvil/protocol";
+import toolDisplayRules from "../config/tool-display-rules.json";
 
 export type ToolCategory =
   | "file"
@@ -20,6 +21,152 @@ export interface ToolPresentation {
 }
 
 type JsonRecord = { [key: string]: JsonValue };
+type ToolStatusLabels = Record<ToolEntry["status"], string>;
+
+interface CatalogPresentation {
+  labels: ToolStatusLabels;
+  detail: string;
+}
+
+interface ToolAliasRule extends CatalogPresentation {
+  id: string;
+  names: string[];
+  category: ToolCategory;
+  actions?: Record<string, CatalogPresentation>;
+}
+
+interface ShellDisplayRule extends CatalogPresentation {
+  id: string;
+  executables: string[];
+  auxiliary?: boolean;
+  category: ToolCategory;
+  match: {
+    all?: string[];
+    any?: string[];
+    none?: string[];
+  };
+}
+
+interface ToolDisplayCatalog {
+  version: number;
+  toolAliases: ToolAliasRule[];
+  shellRules: ShellDisplayRule[];
+  shellMultiple: CatalogPresentation;
+  shellFallback: CatalogPresentation;
+}
+
+const TOOL_STATUSES: ToolEntry["status"][] = ["queued", "running", "completed", "failed", "cancelled"];
+const TOOL_CATEGORIES = new Set<ToolCategory>(["file", "edit", "shell", "search", "browser", "agent", "image", "git", "parallel", "generic"]);
+const TEMPLATE_KEYS = new Set(["fileCountLabel"]);
+
+function catalogRecord(value: unknown, location: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${location} must be an object`);
+  return value as Record<string, unknown>;
+}
+
+function catalogString(value: unknown, location: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`${location} must be a non-empty string`);
+  return value;
+}
+
+function validateTemplate(template: string, location: string): void {
+  for (const match of template.matchAll(/\{([A-Za-z0-9_]+)\}/g)) {
+    if (!TEMPLATE_KEYS.has(match[1]!)) throw new Error(`${location} uses unknown template key ${match[1]}`);
+  }
+}
+
+function validateCatalogPresentation(value: unknown, location: string): CatalogPresentation {
+  const source = catalogRecord(value, location);
+  const labelSource = catalogRecord(source.labels, `${location}.labels`);
+  const labels = {} as ToolStatusLabels;
+  for (const status of TOOL_STATUSES) {
+    labels[status] = catalogString(labelSource[status], `${location}.labels.${status}`);
+    validateTemplate(labels[status], `${location}.labels.${status}`);
+  }
+  const detail = catalogString(source.detail, `${location}.detail`);
+  validateTemplate(detail, `${location}.detail`);
+  return { labels, detail };
+}
+
+function validateStringArray(value: unknown, location: string): string[] {
+  if (!Array.isArray(value) || !value.length) throw new Error(`${location} must be a non-empty array`);
+  return value.map((item, index) => catalogString(item, `${location}[${index}]`));
+}
+
+function validateCategory(value: unknown, location: string): ToolCategory {
+  const category = catalogString(value, location) as ToolCategory;
+  if (!TOOL_CATEGORIES.has(category)) throw new Error(`${location} contains unsupported category ${category}`);
+  return category;
+}
+
+function validateDisplayCatalog(value: unknown): ToolDisplayCatalog {
+  const source = catalogRecord(value, "tool display catalog");
+  if (source.version !== 1) throw new Error("tool display catalog has an unsupported version");
+  if (!Array.isArray(source.toolAliases) || !Array.isArray(source.shellRules)) {
+    throw new Error("tool display catalog rules must be arrays");
+  }
+
+  const ids = new Set<string>();
+  const aliases = new Set<string>();
+  const claimId = (id: string, location: string) => {
+    if (ids.has(id)) throw new Error(`${location} duplicates rule ID ${id}`);
+    ids.add(id);
+  };
+
+  const toolAliases = source.toolAliases.map((value, index): ToolAliasRule => {
+    const location = `toolAliases[${index}]`;
+    const rule = catalogRecord(value, location);
+    const id = catalogString(rule.id, `${location}.id`);
+    claimId(id, location);
+    const names = validateStringArray(rule.names, `${location}.names`).map((name) => name.toLowerCase());
+    for (const name of names) {
+      if (aliases.has(name)) throw new Error(`${location} duplicates alias ${name}`);
+      aliases.add(name);
+    }
+    const base = validateCatalogPresentation(rule, location);
+    const actions = rule.actions === undefined ? undefined : Object.fromEntries(
+      Object.entries(catalogRecord(rule.actions, `${location}.actions`)).map(([action, presentation]) => [
+        action.toLowerCase(),
+        validateCatalogPresentation(presentation, `${location}.actions.${action}`),
+      ]),
+    );
+    return { ...base, id, names, category: validateCategory(rule.category, `${location}.category`), actions };
+  });
+
+  const shellRules = source.shellRules.map((value, index): ShellDisplayRule => {
+    const location = `shellRules[${index}]`;
+    const rule = catalogRecord(value, location);
+    const id = catalogString(rule.id, `${location}.id`);
+    claimId(id, location);
+    const matchSource = catalogRecord(rule.match, `${location}.match`);
+    const match: ShellDisplayRule["match"] = {};
+    for (const key of ["all", "any", "none"] as const) {
+      if (matchSource[key] === undefined) continue;
+      const patterns = validateStringArray(matchSource[key], `${location}.match.${key}`);
+      for (const pattern of patterns) new RegExp(pattern, "i");
+      match[key] = patterns;
+    }
+    if (!match.all?.length && !match.any?.length) throw new Error(`${location}.match needs all or any patterns`);
+    return {
+      ...validateCatalogPresentation(rule, location),
+      id,
+      executables: validateStringArray(rule.executables, `${location}.executables`).map((name) => name.toLowerCase()),
+      auxiliary: rule.auxiliary === true || undefined,
+      category: validateCategory(rule.category, `${location}.category`),
+      match,
+    };
+  });
+
+  return {
+    version: 1,
+    toolAliases,
+    shellRules,
+    shellMultiple: validateCatalogPresentation(source.shellMultiple, "shellMultiple"),
+    shellFallback: validateCatalogPresentation(source.shellFallback, "shellFallback"),
+  };
+}
+
+const displayCatalog = validateDisplayCatalog(toolDisplayRules);
 
 function record(value: JsonValue): JsonRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value) ? value : undefined;
@@ -63,6 +210,152 @@ function count(value: JsonValue | undefined): number | undefined {
 
 function plural(value: number, singular: string, pluralForm = `${singular}s`): string {
   return `${value} ${value === 1 ? singular : pluralForm}`;
+}
+
+function toolAliasFor(name: string): ToolAliasRule | undefined {
+  const normalized = name.toLowerCase();
+  const shortName = basename(name);
+  return displayCatalog.toolAliases.find((rule) => rule.names.includes(normalized) || rule.names.includes(shortName));
+}
+
+interface ShellInvocation {
+  executable: string;
+  text: string;
+  words: string[];
+}
+
+function shellWords(value: string): string[] {
+  return value.match(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s]+/g)?.map((word) => {
+    const quotedWord = (word.startsWith('"') && word.endsWith('"')) || (word.startsWith("'") && word.endsWith("'"));
+    return quotedWord ? word.slice(1, -1) : word;
+  }) ?? [];
+}
+
+function shellInvocations(command: string): ShellInvocation[] | undefined {
+  const segments: string[] = [];
+  let current = "";
+  let quote: "'" | '"' | undefined;
+  let escaped = false;
+  let comment = false;
+  const flush = () => {
+    if (current.trim()) segments.push(current.trim());
+    current = "";
+  };
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index]!;
+    const next = command[index + 1];
+    if (comment) {
+      if (character === "\n") {
+        comment = false;
+        flush();
+      }
+      continue;
+    }
+    if (escaped) {
+      current += character;
+      escaped = false;
+      continue;
+    }
+    if (quote) {
+      current += character;
+      if (character === quote) quote = undefined;
+      else if (quote === '"' && character === "\\") escaped = true;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === "#" && (!current || /\s/.test(current.at(-1)!))) {
+      comment = true;
+      continue;
+    }
+    if (character === "`" || (character === "$" && next === "(") || (character === "<" && next === "<")) return undefined;
+    if (character === "\n" || character === ";" || character === "&" || character === "|") {
+      flush();
+      if ((character === "&" || character === "|") && next === character) index += 1;
+      continue;
+    }
+    current += character;
+  }
+  if (quote) return undefined;
+  flush();
+
+  const invocations: ShellInvocation[] = [];
+  for (const segment of segments) {
+    const words = shellWords(segment).filter((word) => !/^\d*[<>]/.test(word));
+    let executableIndex = 0;
+    while (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[executableIndex] ?? "")) executableIndex += 1;
+    if (words[executableIndex] === "env") {
+      executableIndex += 1;
+      while ((words[executableIndex] ?? "").startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[executableIndex] ?? "")) executableIndex += 1;
+    }
+    if (words[executableIndex] === "command") {
+      executableIndex += 1;
+      while ((words[executableIndex] ?? "").startsWith("-")) executableIndex += 1;
+    }
+    if (words[executableIndex] === "corepack") executableIndex += 1;
+    const executableWord = words[executableIndex];
+    if (!executableWord) continue;
+    const executable = executableWord.split("/").filter(Boolean).at(-1)?.toLowerCase() ?? executableWord.toLowerCase();
+    if (["bash", "dash", "eval", "sh", "zsh"].includes(executable) && words.slice(executableIndex + 1).includes("-c")) return undefined;
+    const invocationWords = [executable, ...words.slice(executableIndex + 1)];
+    invocations.push({ executable, text: invocationWords.join(" "), words: invocationWords });
+  }
+  return invocations;
+}
+
+function matchesPattern(pattern: string, invocations: ShellInvocation[]): boolean {
+  const expression = new RegExp(pattern, "i");
+  return invocations.some((invocation) => expression.test(invocation.text));
+}
+
+function matchingShellRules(invocations: ShellInvocation[]): ShellDisplayRule[] {
+  return displayCatalog.shellRules.filter((rule) => {
+    const candidates = invocations.filter((invocation) => rule.executables.includes(invocation.executable));
+    if (!candidates.length) return false;
+    const all = rule.match.all ?? [];
+    const any = rule.match.any ?? [];
+    const none = rule.match.none ?? [];
+    return all.every((pattern) => matchesPattern(pattern, candidates))
+      && (!any.length || any.some((pattern) => matchesPattern(pattern, candidates)))
+      && none.every((pattern) => !matchesPattern(pattern, candidates));
+  });
+}
+
+function gitAddFileLabel(invocations: ShellInvocation[] | undefined): string {
+  const words = invocations?.find((invocation) => invocation.executable === "git" && /^git\s+add\b/i.test(invocation.text))?.words.slice(2);
+  if (!words?.length) return "changes";
+  const targets = words.filter((word) => !word.startsWith("-") && !/^\d*[<>]/.test(word));
+  if (!targets.length || targets.some((word) => word === "." || word === "*")) return "changes";
+  return plural(targets.length, "file");
+}
+
+function templateValues(invocations?: ShellInvocation[]): Record<string, string> {
+  return { fileCountLabel: gitAddFileLabel(invocations) };
+}
+
+function fillTemplate(template: string, values: Record<string, string>): string {
+  return template
+    .replace(/\{([A-Za-z0-9_]+)\}/g, (_match, key: string) => values[key] ?? "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function catalogPresentation(
+  entry: ToolEntry,
+  presentation: CatalogPresentation,
+  category: ToolCategory,
+  values: Record<string, string>,
+): ToolPresentation {
+  return {
+    category,
+    title: fillTemplate(presentation.labels[entry.status], values),
+    detail: fillTemplate(presentation.detail, values),
+    status: statusText(entry),
+  };
 }
 
 function categoryFor(entry: ToolEntry): ToolCategory {
@@ -132,10 +425,17 @@ export function displayToolName(name: string): string {
 }
 
 export function presentTool(entry: ToolEntry): ToolPresentation {
-  const category = categoryFor(entry);
+  const alias = toolAliasFor(entry.name);
+  const category = alias?.category ?? categoryFor(entry);
   const name = basename(entry.name);
   const path = argument(entry, "path");
   const outputDetail = resultDetail(entry);
+
+  if (alias) {
+    const action = argument(entry, "action")?.toLowerCase();
+    const presentation = action ? alias.actions?.[action] ?? alias : alias;
+    return catalogPresentation(entry, presentation, alias.category, templateValues());
+  }
 
   if (category === "file") {
     const offset = count(record(entry.arguments)?.offset);
@@ -165,7 +465,20 @@ export function presentTool(entry: ToolEntry): ToolPresentation {
 
   if (category === "shell") {
     const command = argument(entry, "command") ?? entry.summary;
-    return { category, title: shorten(command, 110), detail: "Shell command", status: statusText(entry) };
+    const invocations = shellInvocations(command);
+    if (!invocations) return catalogPresentation(entry, displayCatalog.shellFallback, category, templateValues());
+    const allMatches = matchingShellRules(invocations);
+    const substantiveMatches = allMatches.filter((rule) => !rule.auxiliary);
+    const matches = substantiveMatches.length ? substantiveMatches : allMatches;
+    const combinedRule = matches.find((rule) => (rule.match.all?.length ?? 0) > 1);
+    if (combinedRule) return catalogPresentation(entry, combinedRule, combinedRule.category, templateValues(invocations));
+    if (matches.length === 1) return catalogPresentation(entry, matches[0]!, matches[0]!.category, templateValues(invocations));
+    if (matches.length > 1) {
+      const firstCategory = matches[0]!.category;
+      const multipleCategory = matches.every((rule) => rule.category === firstCategory) ? firstCategory : category;
+      return catalogPresentation(entry, displayCatalog.shellMultiple, multipleCategory, templateValues(invocations));
+    }
+    return catalogPresentation(entry, displayCatalog.shellFallback, category, templateValues(invocations));
   }
 
   if (category === "search") {

@@ -10,6 +10,14 @@ const unmodified = {
   shiftKey: false,
 };
 
+describe("composer stash shortcut", () => {
+  it("defaults to Cmd+S on Apple platforms and Ctrl+S elsewhere", () => {
+    expect(DEFAULT_SHORTCUTS.stash).toBe("Mod+KeyS");
+    expect(matchesShortcut({ ...unmodified, code: "KeyS", metaKey: true }, "stash", "MacIntel")).toBe(true);
+    expect(matchesShortcut({ ...unmodified, code: "KeyS", ctrlKey: true }, "stash", "Win32")).toBe(true);
+  });
+});
+
 describe("file and command palette shortcuts", () => {
   it("defaults to Cmd+P and Cmd+Shift+P on Apple platforms", () => {
     expect(DEFAULT_SHORTCUTS.openFile).toBe("Mod+KeyP");

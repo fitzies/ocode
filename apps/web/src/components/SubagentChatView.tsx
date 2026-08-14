@@ -29,7 +29,7 @@ import {
   subagentStatusLabel,
 } from "../lib/subagentPresentation";
 import { MarkdownText } from "./MarkdownText";
-import { SubagentStatusBadge, SubagentStatusIcon } from "./SubagentStatusIcon";
+import { SubagentStatusBadge } from "./SubagentStatusIcon";
 
 function textContent(entry: Extract<TimelineEntry, { kind: "message" }>): string {
   return entry.content
@@ -211,7 +211,6 @@ function DetailHeader({ item, duration, onBack }: { item: SubagentActivityItem; 
       <Button type="button" variant="ghost" size="icon-sm" onClick={onBack} aria-label="Back to Agents">
         <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
       </Button>
-      <SubagentStatusIcon item={item} />
       <strong className="subagent-detail-role">{subagentRoleLabel(item.role)}</strong>
       <SubagentStatusBadge item={item} />
       <span className="subagent-detail-timer">
@@ -298,7 +297,6 @@ export function SubagentChatView({
             )}
             <div className="subagent-activity-heading">
               <h3>Activity</h3>
-              {item.status === "running" && <span><i aria-hidden="true" />Live</span>}
             </div>
             {visibleTranscriptEntries(entries).length > 0 ? (
               <ActiveTranscript entries={entries} />

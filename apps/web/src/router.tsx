@@ -2,14 +2,28 @@ import { createRootRoute, createRoute, createRouter } from "@tanstack/react-rout
 
 import { AppShell } from "./components/AppShell";
 
-const rootRoute = createRootRoute();
+function EmptyRoute() {
+  return null;
+}
+
+const rootRoute = createRootRoute({ component: AppShell });
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: AppShell,
+  component: EmptyRoute,
+});
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  component: EmptyRoute,
+});
+const usageRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/usage",
+  component: EmptyRoute,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, settingsRoute, usageRoute]);
 
 export const router = createRouter({ routeTree });
 

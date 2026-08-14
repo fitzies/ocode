@@ -17,7 +17,6 @@ import {
   subagentRoleLabel,
   subagentStatusLabel,
 } from "../lib/subagentPresentation";
-import { SubagentStatusIcon } from "./SubagentStatusIcon";
 
 function ActivityNotice({ connection, loading }: { connection: ConnectionState; loading: boolean }) {
   if (connection !== "connected") {
@@ -64,7 +63,6 @@ function ActivityRows({ items, now, onSelect }: {
               data-subagent-id={item.id}
               onClick={() => onSelect(item.id)}
             >
-              <SubagentStatusIcon item={item} />
               <span className="subagent-activity-copy">
                 <span className="subagent-activity-identity">
                   <strong className="subagent-activity-name">{subagentRoleLabel(item.role)}</strong>
@@ -86,7 +84,6 @@ function ActivityListSkeleton() {
     <div className="subagent-list-skeleton" aria-busy="true" aria-label="Loading agent activity">
       {[0, 1, 2, 3].map((index) => (
         <div className="subagent-list-skeleton-row" key={index}>
-          <Skeleton className="size-3.5 rounded-full" />
           <span><Skeleton className="h-2.5 w-20" /><Skeleton className="h-2 w-full" /></span>
         </div>
       ))}

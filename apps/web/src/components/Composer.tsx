@@ -3,39 +3,57 @@ import type {
   CommandDescriptor,
   ExtensionWidget,
   ModelDescriptor,
-  ProjectWorkspaceKind,
   SessionQueue,
   SessionStatus,
   SkillDescriptor,
   ThinkingLevel,
 } from "@anvil/protocol";
 import {
+  AiMagicIcon,
   ArrowUp02Icon,
   AtIcon,
   Attachment01Icon,
   Cancel01Icon,
   CommandIcon,
+  File01Icon,
   StopIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { toast } from "sonner";
 import {
   type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 
 import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandList,
+  CommandShortcut,
+} from "@/components/ui/command";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DeliveryMode, WorkspaceFile } from "../lib/anvilClient";
-import type { SubagentActivity } from "../lib/subagentActivity";
-import { SubagentActivityPopover } from "./SubagentActivityPopover";
+import { isTerminalInputTarget } from "../lib/keyboardScope";
+import {
+  loadPromptStashes,
+  prependPromptStash,
+  savePromptStashes,
+  type PromptStash,
+} from "../lib/promptStashes";
+import { matchesShortcut } from "../lib/shortcuts";
+import { PromptStashDialog } from "./PromptStashDialog";
 
 export interface ComposerAttachment {
   id: string;
@@ -63,14 +81,10 @@ export interface ComposerProps {
   creationError?: string;
   widgets: ExtensionWidget[];
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
-  workspaceKind?: ProjectWorkspaceKind;
-  subagents: SubagentActivity;
-  subagentsLoading?: boolean;
   attachments: ComposerAttachment[];
   onAttachFiles: (sessionId: string, files: File[]) => void;
   onRemoveAttachment: (sessionId: string, attachmentId: string) => void;
   onSearchFiles: (sessionId: string, query: string) => Promise<WorkspaceFile[]>;
-  onOpenSubagents: () => void;
   onCancel: () => void;
   onDraftConsumed: (sessionId: string) => void;
   onPromptChange: (sessionId: string, prompt: string) => void;
@@ -85,7 +99,18 @@ type SlashItem = {
   label: string;
   description?: string;
   source: "extension" | "prompt" | "skill";
+  skill?: SkillDescriptor;
 };
+
+interface SkillPrompt {
+  skill?: SkillDescriptor;
+  text: string;
+}
+
+interface CommandPrompt {
+  command?: CommandDescriptor;
+  text: string;
+}
 
 export function updateComposerDraft(
   drafts: Record<string, string>,
@@ -126,6 +151,46 @@ function fuzzyScore(value: string, query: string): number {
     cursor = index + 1;
   }
   return score;
+}
+
+function slashItemScore(item: SlashItem, query: string): number {
+  return fuzzyScore(item.label, query);
+}
+
+export function splitSkillPrompt(prompt: string, skills: readonly SkillDescriptor[]): SkillPrompt {
+  const match = /^\/(skill:[^\s]+)(?:([\t\n\r ]+)([\s\S]*))?$/.exec(prompt);
+  if (!match) return { text: prompt };
+
+  const command = match[1]!;
+  const knownSkill = skills.find((skill) => skill.command === command);
+  if (!knownSkill && match[2] === undefined) return { text: prompt };
+
+  return {
+    skill: knownSkill ?? { name: command.replace(/^skill:/, ""), command },
+    text: match[3] ?? "",
+  };
+}
+
+export function joinSkillPrompt(skill: SkillDescriptor, text: string): string {
+  return `/${skill.command} ${text}`;
+}
+
+export function splitCommandPrompt(prompt: string, commands: readonly CommandDescriptor[]): CommandPrompt {
+  const match = /^\/([^\s]+)[\t\n\r ]+([\s\S]*)$/.exec(prompt);
+  if (!match || match[1]?.startsWith("skill:")) return { text: prompt };
+  const command = commands.find((candidate) => candidate.name === match[1]);
+  return command ? { command, text: match[2] ?? "" } : { text: prompt };
+}
+
+export function joinCommandPrompt(command: CommandDescriptor, text: string): string {
+  return `/${command.name} ${text}`;
+}
+
+function workspaceFileParts(path: string): { name: string; directory?: string; extension?: string } {
+  const segments = path.split("/");
+  const name = segments.pop() || path;
+  const extension = name.includes(".") ? name.split(".").pop()?.toUpperCase() : undefined;
+  return { name, directory: segments.join("/") || undefined, extension };
 }
 
 export function activeFileMention(text: string, cursor: number): { start: number; query: string } | undefined {
@@ -220,14 +285,10 @@ export function Composer({
   creationError,
   widgets,
   contextUsage,
-  workspaceKind,
-  subagents,
-  subagentsLoading,
   attachments,
   onAttachFiles,
   onRemoveAttachment,
   onSearchFiles,
-  onOpenSubagents,
   onCancel,
   onDraftConsumed,
   onPromptChange,
@@ -236,61 +297,117 @@ export function Composer({
   onSend,
 }: ComposerProps) {
   const [slashIndex, setSlashIndex] = useState(0);
+  const [slashSelectionQuery, setSlashSelectionQuery] = useState<string>();
+  const [slashMenuDismissed, setSlashMenuDismissed] = useState(false);
   const [cursorPosition, setCursorPosition] = useState(prompt.length);
   const [fileItems, setFileItems] = useState<WorkspaceFile[]>([]);
   const [fileIndex, setFileIndex] = useState(0);
   const [fileMenuDismissed, setFileMenuDismissed] = useState(false);
+  const [fileSearchPending, setFileSearchPending] = useState(false);
   const [fileDropActive, setFileDropActive] = useState(false);
+  const [stashDialogOpen, setStashDialogOpen] = useState(false);
+  const [stashes, setStashes] = useState(loadPromptStashes);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileDragDepthRef = useRef(0);
   const running = status === "running";
   const readyAttachments = attachments.flatMap((attachment) => attachment.reference ? [attachment.reference] : []);
   const uploadsPending = attachments.some((attachment) => attachment.status === "uploading");
-  const hasPrompt = Boolean(prompt.trim()) || readyAttachments.length > 0;
+  const skillPrompt = splitSkillPrompt(prompt, skills);
+  const commandPrompt = skillPrompt.skill ? { text: skillPrompt.text } : splitCommandPrompt(prompt, commands);
+  const selectedSkill = skillPrompt.skill;
+  const selectedCommand = commandPrompt.command;
+  const displayPrompt = selectedSkill ? skillPrompt.text : commandPrompt.text;
+  const hasPrompt = Boolean(displayPrompt.trim()) || Boolean(selectedSkill) || Boolean(selectedCommand) || readyAttachments.length > 0;
   const visibleModels = useMemo(() => selectAnvilModels(models), [models]);
   const model = visibleModels.find((candidate) => candidate.id === modelId);
   const modelsLoading = !modelsReady && status !== "failed";
   const queueCount = queue.steering.length + queue.followUp.length;
   const aboveWidgets = widgets.filter((widget) => widget.placement === "aboveEditor");
   const belowWidgets = widgets.filter((widget) => widget.placement === "belowEditor");
-  const fileMention = activeFileMention(prompt, cursorPosition);
+  const fileMention = activeFileMention(displayPrompt, cursorPosition);
 
-  const slashQuery = prompt.match(/^\/([^\s]*)$/)?.[1];
-  const slashItems = useMemo<SlashItem[]>(() => {
-    if (slashQuery === undefined) return [];
-    return [
-      ...commands.map((command) => ({
-        key: `command-${command.source}-${command.name}`,
-        command: command.name,
-        label: command.name,
-        description: command.description,
-        source: command.source,
-      })),
-      ...skills.map((skill) => ({
-        key: `skill-${skill.command}`,
-        command: skill.command,
-        label: skill.name,
-        description: skill.description,
-        source: "skill" as const,
-      })),
-    ]
-      .map((item) => ({ item, score: fuzzyScore(`${item.label} ${item.description ?? ""}`, slashQuery) }))
+  const slashQuery = displayPrompt.match(/^\/([^\s]*)$/)?.[1];
+  const { slashCommandItems, slashSkillItems } = useMemo(() => {
+    if (slashQuery === undefined) return { slashCommandItems: [], slashSkillItems: [] };
+    const rank = (items: SlashItem[]) => items
+      .map((item) => ({ item, score: slashItemScore(item, slashQuery) }))
       .filter(({ score }) => score >= 0)
-      .sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label))
-      .slice(0, 8)
-      .map(({ item }) => item);
+      .sort((a, b) => b.score - a.score || a.item.label.localeCompare(b.item.label));
+    const rankedCommands = rank(commands.map((command) => ({
+      key: `command-${command.source}-${command.name}`,
+      command: command.name,
+      label: command.name,
+      description: command.description,
+      source: command.source,
+    })));
+    const rankedSkills = rank(skills.map((skill) => ({
+      key: `skill-${skill.command}`,
+      command: skill.command,
+      label: skill.name,
+      description: skill.description,
+      source: "skill" as const,
+      skill,
+    })));
+
+    return {
+      slashCommandItems: rankedCommands.map(({ item }) => item),
+      slashSkillItems: rankedSkills.map(({ item }) => item),
+    };
   }, [commands, skills, slashQuery]);
+  const slashItems = [...slashCommandItems, ...slashSkillItems];
+  const activeSlashIndex = slashItems.length && slashSelectionQuery === slashQuery
+    ? Math.min(slashIndex, slashItems.length - 1)
+    : 0;
+  const fileMenuOpen = Boolean(fileMention && !fileMenuDismissed);
+  const slashMenuOpen = slashQuery !== undefined && !slashMenuDismissed;
 
   useEffect(() => {
     setSlashIndex(0);
+    setSlashSelectionQuery(undefined);
+    setSlashMenuDismissed(false);
     setCursorPosition(0);
     setFileItems([]);
     setFileIndex(0);
     setFileMenuDismissed(false);
+    setFileSearchPending(false);
     setFileDropActive(false);
+    setStashDialogOpen(false);
     fileDragDepthRef.current = 0;
   }, [sessionId]);
+
+  useEffect(() => {
+    const onStashShortcut = (event: globalThis.KeyboardEvent) => {
+      if (!matchesShortcut(event, "stash") || isTerminalInputTarget(event.target)) return;
+      const target = event.target instanceof HTMLElement ? event.target : undefined;
+      if (!stashDialogOpen && target?.closest('[role="dialog"], [role="alertdialog"]')) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.repeat || stashDialogOpen) return;
+
+      if (prompt.length === 0) {
+        setStashDialogOpen(true);
+        return;
+      }
+
+      const next = prependPromptStash(stashes, prompt);
+      if (!savePromptStashes(next)) {
+        toast.error("Could not stash message", {
+          description: "Browser storage rejected the message, so your input was left unchanged.",
+        });
+        return;
+      }
+
+      setStashes(next);
+      onPromptChange(sessionId, "");
+      setCursorPosition(0);
+      toast.success("Message stashed", { description: "Use the stash shortcut with an empty composer to reuse it." });
+    };
+
+    window.addEventListener("keydown", onStashShortcut, true);
+    return () => window.removeEventListener("keydown", onStashShortcut, true);
+  }, [onPromptChange, prompt, sessionId, stashDialogOpen, stashes]);
 
   useEffect(() => {
     const resetFileDrag = () => {
@@ -350,9 +467,13 @@ export function Composer({
     if (!textarea) return;
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
-  }, [prompt]);
+  }, [displayPrompt]);
 
-  useEffect(() => setSlashIndex(0), [slashQuery]);
+  useEffect(() => {
+    setSlashIndex(0);
+    setSlashSelectionQuery(slashQuery);
+    setSlashMenuDismissed(false);
+  }, [slashQuery]);
 
   useEffect(() => {
     setFileIndex(0);
@@ -362,12 +483,20 @@ export function Composer({
   useEffect(() => {
     if (!fileMention || fileMenuDismissed) {
       setFileItems([]);
+      setFileSearchPending(false);
       return;
     }
     let cancelled = false;
+    setFileSearchPending(true);
     const timer = window.setTimeout(() => {
       void onSearchFiles(sessionId, fileMention.query).then((files) => {
-        if (!cancelled) setFileItems(files);
+        if (cancelled) return;
+        setFileItems(files);
+        setFileSearchPending(false);
+      }).catch(() => {
+        if (cancelled) return;
+        setFileItems([]);
+        setFileSearchPending(false);
       });
     }, 90);
     return () => {
@@ -376,20 +505,53 @@ export function Composer({
     };
   }, [fileMention?.query, fileMention?.start, fileMenuDismissed, onSearchFiles, sessionId]);
 
+  const updateDisplayPrompt = (value: string) => {
+    onPromptChange(
+      sessionId,
+      selectedSkill ? joinSkillPrompt(selectedSkill, value) : selectedCommand ? joinCommandPrompt(selectedCommand, value) : value,
+    );
+  };
+
+  const attachSkill = (skill: SkillDescriptor, text: string) => {
+    onPromptChange(sessionId, joinSkillPrompt(skill, text));
+    setCursorPosition(text.length);
+    setSlashIndex(0);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(text.length, text.length);
+    });
+  };
+
+  const clearInvocation = () => {
+    onPromptChange(sessionId, displayPrompt);
+    setCursorPosition(0);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(0, 0);
+    });
+  };
+
   const chooseSlashItem = (item: SlashItem) => {
+    if (item.skill) {
+      attachSkill(item.skill, "");
+      return;
+    }
     const value = `/${item.command} `;
     onPromptChange(sessionId, value);
-    setCursorPosition(value.length);
+    setCursorPosition(0);
     setSlashIndex(0);
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(0, 0);
+    });
   };
 
   const chooseFile = (item: WorkspaceFile) => {
     if (!fileMention) return;
     const value = `${mentionValue(item.path)} `;
-    const next = `${prompt.slice(0, fileMention.start)}${value}${prompt.slice(cursorPosition)}`;
+    const next = `${displayPrompt.slice(0, fileMention.start)}${value}${displayPrompt.slice(cursorPosition)}`;
     const nextCursor = fileMention.start + value.length;
-    onPromptChange(sessionId, next);
+    updateDisplayPrompt(next);
     setCursorPosition(nextCursor);
     setFileItems([]);
     requestAnimationFrame(() => {
@@ -398,14 +560,14 @@ export function Composer({
     });
   };
 
-  const insertMention = () => {
+  const insertToken = (token: "@" | "/") => {
     const textarea = textareaRef.current;
-    const start = textarea?.selectionStart ?? prompt.length;
+    const start = textarea?.selectionStart ?? displayPrompt.length;
     const end = textarea?.selectionEnd ?? start;
-    const prefix = start > 0 && !/\s/.test(prompt[start - 1] ?? "") ? " @" : "@";
-    const next = `${prompt.slice(0, start)}${prefix}${prompt.slice(end)}`;
+    const prefix = start > 0 && !/\s/.test(displayPrompt[start - 1] ?? "") ? ` ${token}` : token;
+    const next = `${displayPrompt.slice(0, start)}${prefix}${displayPrompt.slice(end)}`;
     const nextCursor = start + prefix.length;
-    onPromptChange(sessionId, next);
+    updateDisplayPrompt(next);
     setCursorPosition(nextCursor);
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
@@ -429,6 +591,26 @@ export function Composer({
     onAttachFiles(sessionId, files);
   };
 
+  const restoreStash = (stash: PromptStash) => {
+    const restored = splitSkillPrompt(stash.text, skills);
+    onPromptChange(sessionId, stash.text);
+    setCursorPosition(restored.text.length);
+    setStashDialogOpen(false);
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(restored.text.length, restored.text.length);
+    });
+  };
+
+  const deleteStash = (stash: PromptStash) => {
+    const next = stashes.filter((candidate) => candidate.id !== stash.id);
+    if (!savePromptStashes(next)) {
+      toast.error("Could not delete stash", { description: "Browser storage rejected the update." });
+      return;
+    }
+    setStashes(next);
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (
       event.key === "Tab" &&
@@ -444,18 +626,38 @@ export function Composer({
         return;
       }
     }
-    if (fileMention && fileItems.length && !fileMenuDismissed) {
-      if (event.key === "ArrowDown") {
+    if (
+      event.key === "Backspace" &&
+      (selectedSkill || selectedCommand) &&
+      event.currentTarget.selectionStart === 0 &&
+      event.currentTarget.selectionEnd === 0
+    ) {
+      event.preventDefault();
+      clearInvocation();
+      return;
+    }
+    if (fileMenuOpen) {
+      if (event.key === "ArrowDown" && fileItems.length) {
         event.preventDefault();
         setFileIndex((index) => (index + 1) % fileItems.length);
         return;
       }
-      if (event.key === "ArrowUp") {
+      if (event.key === "ArrowUp" && fileItems.length) {
         event.preventDefault();
         setFileIndex((index) => (index - 1 + fileItems.length) % fileItems.length);
         return;
       }
-      if (event.key === "Tab" || event.key === "Enter") {
+      if (event.key === "Home" && fileItems.length) {
+        event.preventDefault();
+        setFileIndex(0);
+        return;
+      }
+      if (event.key === "End" && fileItems.length) {
+        event.preventDefault();
+        setFileIndex(fileItems.length - 1);
+        return;
+      }
+      if (event.key === "Enter" && fileItems.length) {
         event.preventDefault();
         const item = fileItems[fileIndex];
         if (item) chooseFile(item);
@@ -468,25 +670,40 @@ export function Composer({
         return;
       }
     }
-    if (slashItems.length) {
-      if (event.key === "ArrowDown") {
+    if (slashMenuOpen) {
+      if (event.key === "ArrowDown" && slashItems.length) {
         event.preventDefault();
+        setSlashSelectionQuery(slashQuery);
         setSlashIndex((index) => (index + 1) % slashItems.length);
         return;
       }
-      if (event.key === "ArrowUp") {
+      if (event.key === "ArrowUp" && slashItems.length) {
         event.preventDefault();
+        setSlashSelectionQuery(slashQuery);
         setSlashIndex((index) => (index - 1 + slashItems.length) % slashItems.length);
         return;
       }
-      if (event.key === "Tab" || event.key === "Enter") {
+      if (event.key === "Home" && slashItems.length) {
         event.preventDefault();
-        const item = slashItems[slashIndex];
+        setSlashSelectionQuery(slashQuery);
+        setSlashIndex(0);
+        return;
+      }
+      if (event.key === "End" && slashItems.length) {
+        event.preventDefault();
+        setSlashSelectionQuery(slashQuery);
+        setSlashIndex(slashItems.length - 1);
+        return;
+      }
+      if (event.key === "Enter" && slashItems.length) {
+        event.preventDefault();
+        const item = slashItems[activeSlashIndex];
         if (item) chooseSlashItem(item);
         return;
       }
       if (event.key === "Escape") {
-        onPromptChange(sessionId, "");
+        event.preventDefault();
+        setSlashMenuDismissed(true);
         return;
       }
     }
@@ -502,8 +719,35 @@ export function Composer({
     }
   };
 
+  const composerWrapRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const composerWrap = composerWrapRef.current;
+    const conversation = composerWrap?.closest<HTMLElement>(".conversation-surface");
+    if (!composerWrap || !conversation) return;
+
+    const updateOverlayHeight = () => {
+      conversation.style.setProperty("--composer-overlay-height", `${composerWrap.offsetHeight}px`);
+    };
+    updateOverlayHeight();
+
+    const observer = new ResizeObserver(updateOverlayHeight);
+    observer.observe(composerWrap);
+    return () => {
+      observer.disconnect();
+      conversation.style.removeProperty("--composer-overlay-height");
+    };
+  }, []);
+
   return (
-    <div className="composer-wrap">
+    <div ref={composerWrapRef} className="composer-wrap">
+      <PromptStashDialog
+        open={stashDialogOpen}
+        stashes={stashes}
+        onOpenChange={setStashDialogOpen}
+        onSelect={restoreStash}
+        onDelete={deleteStash}
+      />
       {aboveWidgets.map((widget) => <Widget key={widget.key} widget={widget} />)}
       {queueCount > 0 && (
         <div className="queue-banner" aria-live="polite">
@@ -521,61 +765,109 @@ export function Composer({
           <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} />
           <span><strong>Drop files to attach</strong><small>Release anywhere on this page</small></span>
         </div>
-        {fileMention && fileItems.length > 0 && !fileMenuDismissed && (
-          <div id="file-mention-menu" className="slash-menu file-menu" role="listbox" aria-label="Workspace files">
-            <div className="slash-menu-heading">
-              <span>Workspace files</span>
-              <kbd>↑↓ navigate · ↵ tag</kbd>
-            </div>
-            {fileItems.map((item, index) => (
-              <button
-                id={`file-option-${index}`}
-                type="button"
-                role="option"
-                aria-selected={index === fileIndex}
-                tabIndex={-1}
-                className={index === fileIndex ? "slash-option slash-option--active" : "slash-option"}
-                key={item.path}
-                onPointerDown={(event) => event.preventDefault()}
-                onClick={() => chooseFile(item)}
-              >
-                <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} className="size-3.5" />
-                <span className="slash-option-copy"><strong>{item.path}</strong></span>
-                <span className="slash-source">file</span>
-              </button>
-            ))}
-          </div>
+        {fileMenuOpen && (
+          <Command
+            shouldFilter={false}
+            value={fileItems[fileIndex]?.path}
+            onValueChange={(value) => {
+              const index = fileItems.findIndex((item) => item.path === value);
+              if (index >= 0) setFileIndex(index);
+            }}
+            className="absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-30 h-auto w-auto rounded-lg shadow-md ring-1 ring-foreground/10"
+            aria-label="Workspace files"
+          >
+            <CommandList id="file-mention-menu" className="max-h-[min(20rem,55vh)]">
+              <CommandEmpty className="flex items-center justify-center gap-2 py-5 text-muted-foreground">
+                {fileSearchPending && <Spinner className="size-3" aria-hidden="true" />}
+                {fileSearchPending ? "Searching workspace…" : `No files match “${fileMention?.query ?? ""}”`}
+              </CommandEmpty>
+              {fileItems.length > 0 && (
+                <CommandGroup heading="Workspace files">
+                  {fileItems.map((item, index) => {
+                    const parts = workspaceFileParts(item.path);
+                    return (
+                      <CommandItem
+                        id={`file-option-${index}`}
+                        key={item.path}
+                        value={item.path}
+                        className="min-h-9"
+                        onPointerDown={(event) => event.preventDefault()}
+                        onSelect={() => chooseFile(item)}
+                      >
+                        <HugeiconsIcon icon={File01Icon} strokeWidth={2} className="text-muted-foreground" />
+                        <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] font-medium">{parts.name}</span>
+                        {parts.directory && <span className="hidden min-w-0 flex-1 truncate text-[0.6875rem] text-muted-foreground sm:block">{parts.directory}</span>}
+                        {parts.extension && <CommandShortcut>{parts.extension}</CommandShortcut>}
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
         )}
-        {slashQuery !== undefined && slashItems.length > 0 && (
-          <div id="slash-command-menu" className="slash-menu" role="listbox" aria-label="Commands and skills">
-            <div className="slash-menu-heading">
-              <span>Commands &amp; skills</span>
-              <kbd>↑↓ navigate · ↵ insert</kbd>
-            </div>
-            {slashItems.map((item, index) => (
-              <button
-                id={`slash-option-${index}`}
-                type="button"
-                role="option"
-                aria-selected={index === slashIndex}
-                tabIndex={-1}
-                className={index === slashIndex ? "slash-option slash-option--active" : "slash-option"}
-                key={item.key}
-                onPointerDown={(event) => event.preventDefault()}
-                onClick={() => chooseSlashItem(item)}
-              >
-                <HugeiconsIcon icon={CommandIcon} strokeWidth={2} className="size-3.5" />
-                <span className="slash-option-copy">
-                  <strong>/{item.command}</strong>
-                  {item.description && <small>{item.description}</small>}
-                </span>
-                <span className={`slash-source slash-source--${item.source}`}>{item.source}</span>
-              </button>
-            ))}
-          </div>
+        {slashMenuOpen && (
+          <Command
+            shouldFilter={false}
+            value={slashItems[activeSlashIndex]?.key}
+            onValueChange={(value) => {
+              const index = slashItems.findIndex((item) => item.key === value);
+              if (index >= 0) {
+                setSlashSelectionQuery(slashQuery);
+                setSlashIndex(index);
+              }
+            }}
+            className="absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-30 h-auto w-auto rounded-lg shadow-md ring-1 ring-foreground/10"
+            aria-label="Commands and skills"
+          >
+            <CommandList id="slash-command-menu" className="max-h-[min(20rem,55vh)]">
+              <CommandEmpty>No command or skill matches “{slashQuery}”</CommandEmpty>
+              {slashCommandItems.length > 0 && (
+                <CommandGroup heading="Commands">
+                  {slashCommandItems.map((item, index) => (
+                    <CommandItem
+                      id={`slash-option-${index}`}
+                      key={item.key}
+                      value={item.key}
+                      className="min-h-9"
+                      onPointerDown={(event) => event.preventDefault()}
+                      onSelect={() => chooseSlashItem(item)}
+                    >
+                      <HugeiconsIcon icon={CommandIcon} strokeWidth={2} className="text-muted-foreground" />
+                      <span className="min-w-0 shrink-0 truncate font-mono text-[0.6875rem] font-medium">/{item.command}</span>
+                      {item.description && <span className="min-w-0 flex-1 truncate text-[0.6875rem] text-muted-foreground">{item.description}</span>}
+                      <CommandShortcut>{item.source}</CommandShortcut>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              )}
+              {slashSkillItems.length > 0 && (
+                <CommandGroup heading="Skills">
+                  {slashSkillItems.map((item, skillIndex) => {
+                    const index = slashCommandItems.length + skillIndex;
+                    return (
+                      <CommandItem
+                        id={`slash-option-${index}`}
+                        key={item.key}
+                        value={item.key}
+                        className="min-h-9"
+                        onPointerDown={(event) => event.preventDefault()}
+                        onSelect={() => chooseSlashItem(item)}
+                      >
+                        <HugeiconsIcon icon={AiMagicIcon} strokeWidth={2} className="text-[var(--amber)]" />
+                        <span className="min-w-0 shrink-0 truncate font-mono text-[0.6875rem] font-medium">{item.label}</span>
+                        {item.description && <span className="min-w-0 flex-1 truncate text-[0.6875rem] text-muted-foreground">{item.description}</span>}
+                        <CommandShortcut className="text-[var(--amber)]">skill</CommandShortcut>
+                      </CommandItem>
+                    );
+                  })}
+                </CommandGroup>
+              )}
+            </CommandList>
+          </Command>
         )}
         {attachments.length > 0 && (
-          <div className="composer-attachments" aria-label="Attached files">
+          <div className="composer-attachments" aria-label="Attached files" aria-live="polite">
             {attachments.map((attachment) => (
               <span className={`composer-attachment composer-attachment--${attachment.status}`} key={attachment.id} title={attachment.error}>
                 <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} className="size-3" />
@@ -585,12 +877,23 @@ export function Composer({
             ))}
           </div>
         )}
-        <Textarea
+        <div className="composer-input-row">
+          {selectedSkill && (
+            <button type="button" className="composer-invocation composer-invocation--skill" onClick={clearInvocation} aria-label={`Remove ${selectedSkill.name} skill`}>
+              {selectedSkill.name}
+            </button>
+          )}
+          {selectedCommand && (
+            <button type="button" className="composer-invocation composer-invocation--command" onClick={clearInvocation} aria-label={`Remove ${selectedCommand.name} command`}>
+              {selectedCommand.name}
+            </button>
+          )}
+          <Textarea
           ref={textareaRef}
           rows={1}
-          value={prompt}
+          value={displayPrompt}
           onChange={(event) => {
-            onPromptChange(sessionId, event.target.value);
+            updateDisplayPrompt(event.target.value);
             setCursorPosition(event.target.selectionStart);
           }}
           onSelect={(event) => setCursorPosition(event.currentTarget.selectionStart)}
@@ -602,10 +905,11 @@ export function Composer({
           aria-label="Message Pi"
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={(fileMention && fileItems.length > 0 && !fileMenuDismissed) || slashItems.length > 0}
-          aria-controls={fileMention && fileItems.length > 0 && !fileMenuDismissed ? "file-mention-menu" : slashItems.length ? "slash-command-menu" : undefined}
-          aria-activedescendant={fileMention && fileItems.length > 0 && !fileMenuDismissed ? `file-option-${fileIndex}` : slashItems.length ? `slash-option-${slashIndex}` : undefined}
-        />
+          aria-expanded={fileMenuOpen || slashMenuOpen}
+          aria-controls={fileMenuOpen ? "file-mention-menu" : slashMenuOpen ? "slash-command-menu" : undefined}
+          aria-activedescendant={fileMenuOpen && fileItems.length ? `file-option-${fileIndex}` : slashMenuOpen && slashItems.length ? `slash-option-${activeSlashIndex}` : undefined}
+          />
+        </div>
         <div className="composer-toolbar">
           <div className="composer-tools">
             <input
@@ -630,11 +934,26 @@ export function Composer({
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button type="button" variant="ghost" size="icon-sm" className="composer-icon" aria-label="Tag workspace file" onClick={insertMention}>
+                <Button type="button" variant="ghost" size="icon-sm" className="composer-icon" aria-label="Tag workspace file" onClick={() => insertToken("@")}>
                   <HugeiconsIcon icon={AtIcon} strokeWidth={2} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Tag a workspace file</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  className="composer-icon"
+                  aria-label="Open commands and skills"
+                  onClick={() => insertToken("/")}
+                >
+                  <HugeiconsIcon icon={AiMagicIcon} strokeWidth={2} />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Open commands and skills</TooltipContent>
             </Tooltip>
             <span className="toolbar-divider" />
             <Select value={model?.id} onValueChange={onModelChange} disabled={modelsLoading || visibleModels.length === 0}>
@@ -698,16 +1017,7 @@ export function Composer({
             : "Starting thread… You can type while Forge connects."}
         </div>
       )}
-      <div className="composer-status">
-        <span className="composer-status-workspace">
-          {workspaceKind === "general" ? "home workspace" : workspaceKind === "worktree" ? "worktree" : "main workspace"}
-        </span>
-        <SubagentActivityPopover
-          activity={subagents}
-          loading={subagentsLoading}
-          onOpen={onOpenSubagents}
-        />
-      </div>
+
     </div>
   );
 }

@@ -9,15 +9,20 @@ import { DEFAULT_SHORTCUTS, formatShortcutParts, loadShortcuts, saveShortcuts, s
 const groups: { title: string; items: [ShortcutId, string, string][] }[] = [
   { title: "Threads", items: [
     ["newThread", "New thread", "Start a thread in the current project."],
-    ["closeThread", "Close thread", "Delete the currently selected thread."],
+    ["closeThread", "Settle or delete thread", "Close an open side document, or choose what to do with the current thread."],
+    ["recentlySettled", "Recently settled threads", "Restore a thread settled in the last 15 minutes."],
     ["nextThread", "Next thread", "Move to the next thread in this project."],
     ["previousThread", "Previous thread", "Move to the previous thread in this project."],
+  ] },
+  { title: "Composer", items: [
+    ["stash", "Stash message", "Save composer text, or open your stashes when the composer is empty."],
   ] },
   { title: "Navigation", items: [
     ["openFile", "Open file", "Fuzzy-search project files and open one in the side pane."],
     ["openCommand", "Open command palette", "Search and run workspace commands."],
     ["search", "Search threads", "Open thread search."],
     ["settings", "Open settings", "Open the Forge settings menu."],
+    ["rebuild", "Rebuild web app", "Build the latest interface without restarting Forge."],
     ["toggleSidebar", "Toggle sidebar", "Open or collapse the app sidebar."],
     ["terminal", "Toggle terminal", "Show or hide the project terminal."],
     ...Array.from({ length: 9 }, (_, index) => [`thread${index + 1}` as ShortcutId, `Open thread ${index + 1}`, `Jump to thread ${index + 1} in the list.`] as [ShortcutId, string, string]),

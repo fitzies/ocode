@@ -1,0 +1,438 @@
+{
+  "version": 1,
+  "toolAliases": [
+    {
+      "id": "agent.pi-subagent",
+      "names": ["subagent"],
+      "category": "agent",
+      "labels": {
+        "queued": "Queueing subagent task",
+        "running": "Subagent working",
+        "completed": "Subagent finished",
+        "failed": "Subagent task failed",
+        "cancelled": "Subagent task cancelled"
+      },
+      "detail": "Delegated task"
+    },
+    {
+      "id": "agent.ocode-subagent",
+      "names": ["ocode_subagent"],
+      "category": "agent",
+      "labels": {
+        "queued": "Using subagent",
+        "running": "Using subagent",
+        "completed": "Used subagent",
+        "failed": "Subagent operation failed",
+        "cancelled": "Subagent operation cancelled"
+      },
+      "detail": "Subagent",
+      "actions": {
+        "spawn": {
+          "labels": {
+            "queued": "Queueing subagent task",
+            "running": "Starting subagent",
+            "completed": "Started subagent",
+            "failed": "Couldn’t start subagent",
+            "cancelled": "Cancelled subagent start"
+          },
+          "detail": "Delegated task"
+        },
+        "status": {
+          "labels": {
+            "queued": "Queueing subagent check",
+            "running": "Checking subagent status",
+            "completed": "Checked subagent status",
+            "failed": "Couldn’t check subagent status",
+            "cancelled": "Cancelled subagent check"
+          },
+          "detail": "Subagent run"
+        },
+        "cancel": {
+          "labels": {
+            "queued": "Queueing subagent cancellation",
+            "running": "Cancelling subagent run",
+            "completed": "Cancelled subagent run",
+            "failed": "Couldn’t cancel subagent run",
+            "cancelled": "Subagent cancellation stopped"
+          },
+          "detail": "Subagent run"
+        }
+      }
+    }
+  ],
+  "shellRules": [
+    {
+      "id": "deploy.multi-provider-status",
+      "executables": ["vercel", "railway"],
+      "match": {
+        "all": [
+          "(?:^|[\\s/])vercel\\s+(?:inspect|ls|list)\\b",
+          "(?:^|[\\s/])railway\\s+(?:status|deployment\\s+list)\\b"
+        ]
+      },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing deployment checks",
+        "running": "Checking deployments",
+        "completed": "Checked deployments",
+        "failed": "Deployment checks failed",
+        "cancelled": "Cancelled deployment checks"
+      },
+      "detail": "Vercel · Railway"
+    },
+    {
+      "id": "deploy.railway-up",
+      "executables": ["railway"],
+      "match": { "all": ["(?:^|[\\s/])railway\\s+up\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing Railway deployment",
+        "running": "Deploying on Railway",
+        "completed": "Started Railway deployment",
+        "failed": "Railway deployment failed to start",
+        "cancelled": "Cancelled Railway deployment"
+      },
+      "detail": "Railway · Deployment"
+    },
+    {
+      "id": "deploy.railway-status",
+      "executables": ["railway"],
+      "match": { "all": ["(?:^|[\\s/])railway\\s+(?:status|deployment\\s+list)\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing Railway deployment check",
+        "running": "Checking Railway deployment",
+        "completed": "Checked Railway deployment",
+        "failed": "Railway deployment check failed",
+        "cancelled": "Cancelled Railway deployment check"
+      },
+      "detail": "Railway · Deployment"
+    },
+    {
+      "id": "deploy.vercel-inspect",
+      "executables": ["vercel"],
+      "match": { "all": ["(?:^|[\\s/])vercel\\s+inspect\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Waiting to check Vercel deployment",
+        "running": "Waiting for Vercel deployment",
+        "completed": "Checked Vercel deployment",
+        "failed": "Vercel deployment check failed",
+        "cancelled": "Cancelled Vercel deployment check"
+      },
+      "detail": "Vercel · Deployment"
+    },
+    {
+      "id": "deploy.vercel-list",
+      "executables": ["vercel"],
+      "match": { "all": ["(?:^|[\\s/])vercel\\s+(?:ls|list)\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing deployment check",
+        "running": "Checking Vercel deployments",
+        "completed": "Checked Vercel deployments",
+        "failed": "Couldn’t check Vercel deployments",
+        "cancelled": "Cancelled deployment check"
+      },
+      "detail": "Vercel · Deployments"
+    },
+    {
+      "id": "build.types-and-app",
+      "executables": ["pnpm", "npm", "yarn", "bun"],
+      "match": {
+        "all": [
+          "^(?:pnpm(?:\\s+(?:exec|run))?|npm(?:\\s+(?:exec|run))?|yarn(?:\\s+run)?|bun(?:\\s+run)?)\\s+(?:tsc|typecheck)\\b",
+          "^(?:pnpm|npm|yarn|bun)(?:\\s+run)?\\s+build\\b"
+        ]
+      },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing typecheck and build",
+        "running": "Checking types and building the app",
+        "completed": "Checked types and built the app",
+        "failed": "Typecheck or build failed",
+        "cancelled": "Cancelled typecheck and build"
+      },
+      "detail": "TypeScript · Production build"
+    },
+    {
+      "id": "git.stage",
+      "executables": ["git"],
+      "match": {
+        "all": ["(?:^|[;&|]\\s*)git\\s+add\\b"],
+        "none": ["(?:^|[;&|]\\s*)git\\s+(?:commit|push)\\b"]
+      },
+      "category": "git",
+      "labels": {
+        "queued": "Queueing {fileCountLabel} to stage",
+        "running": "Staging {fileCountLabel}",
+        "completed": "Staged {fileCountLabel}",
+        "failed": "Couldn’t stage {fileCountLabel}",
+        "cancelled": "Cancelled staging changes"
+      },
+      "detail": "Git · {fileCountLabel}"
+    },
+    {
+      "id": "git.commit",
+      "executables": ["git"],
+      "match": {
+        "all": ["(?:^|[;&|]\\s*)git\\s+commit\\b"],
+        "none": ["(?:^|[;&|]\\s*)git\\s+push\\b"]
+      },
+      "category": "git",
+      "labels": {
+        "queued": "Queueing commit",
+        "running": "Creating commit",
+        "completed": "Created commit",
+        "failed": "Couldn’t create commit",
+        "cancelled": "Cancelled commit"
+      },
+      "detail": "Git · Commit"
+    },
+    {
+      "id": "git.push",
+      "executables": ["git"],
+      "match": { "all": ["(?:^|[;&|]\\s*)git\\s+push\\b"] },
+      "category": "git",
+      "labels": {
+        "queued": "Queueing push",
+        "running": "Pushing changes",
+        "completed": "Pushed changes",
+        "failed": "Couldn’t push changes",
+        "cancelled": "Cancelled push"
+      },
+      "detail": "Git · Remote"
+    },
+    {
+      "id": "git.pull-fetch",
+      "executables": ["git"],
+      "match": { "all": ["(?:^|[;&|]\\s*)git\\s+(?:pull|fetch)\\b"] },
+      "category": "git",
+      "labels": {
+        "queued": "Queueing remote update",
+        "running": "Fetching remote changes",
+        "completed": "Fetched remote changes",
+        "failed": "Couldn’t fetch remote changes",
+        "cancelled": "Cancelled remote update"
+      },
+      "detail": "Git · Remote"
+    },
+    {
+      "id": "git.status",
+      "executables": ["git"],
+      "match": { "all": ["(?:^|[;&|]\\s*)git\\s+status\\b"] },
+      "category": "git",
+      "labels": {
+        "queued": "Queueing repository check",
+        "running": "Checking repository status",
+        "completed": "Checked repository status",
+        "failed": "Couldn’t check repository status",
+        "cancelled": "Cancelled repository check"
+      },
+      "detail": "Git · Working tree"
+    },
+    {
+      "id": "git.diff",
+      "executables": ["git"],
+      "match": { "all": ["(?:^|[;&|]\\s*)git\\s+diff\\b"] },
+      "category": "git",
+      "labels": {
+        "queued": "Queueing change review",
+        "running": "Reviewing changes",
+        "completed": "Reviewed changes",
+        "failed": "Couldn’t review changes",
+        "cancelled": "Cancelled change review"
+      },
+      "detail": "Git · Diff"
+    },
+    {
+      "id": "git.history",
+      "executables": ["git"],
+      "match": { "all": ["(?:^|[;&|]\\s*)git\\s+(?:log|show)\\b"] },
+      "category": "git",
+      "labels": {
+        "queued": "Queueing history lookup",
+        "running": "Reading Git history",
+        "completed": "Read Git history",
+        "failed": "Couldn’t read Git history",
+        "cancelled": "Cancelled history lookup"
+      },
+      "detail": "Git · History"
+    },
+    {
+      "id": "git.branch",
+      "executables": ["git"],
+      "match": { "all": ["(?:^|[;&|]\\s*)git\\s+(?:branch|checkout|switch)\\b"] },
+      "category": "git",
+      "labels": {
+        "queued": "Queueing branch operation",
+        "running": "Updating Git branch",
+        "completed": "Updated Git branch",
+        "failed": "Couldn’t update Git branch",
+        "cancelled": "Cancelled branch operation"
+      },
+      "detail": "Git · Branch"
+    },
+    {
+      "id": "quality.tests",
+      "executables": ["pnpm", "npm", "yarn", "bun"],
+      "match": { "all": ["^(?:pnpm|npm|yarn|bun)(?:\\s+run)?\\s+(?:test|vitest)\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing tests",
+        "running": "Running tests",
+        "completed": "Ran tests",
+        "failed": "Tests failed",
+        "cancelled": "Cancelled tests"
+      },
+      "detail": "Quality · Tests"
+    },
+    {
+      "id": "quality.lint",
+      "executables": ["pnpm", "npm", "yarn", "bun"],
+      "match": { "all": ["^(?:pnpm|npm|yarn|bun)(?:\\s+run)?\\s+lint\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing lint check",
+        "running": "Checking code style",
+        "completed": "Checked code style",
+        "failed": "Code style check failed",
+        "cancelled": "Cancelled code style check"
+      },
+      "detail": "Quality · Lint"
+    },
+    {
+      "id": "quality.types",
+      "executables": ["pnpm", "npm", "yarn", "bun"],
+      "match": { "all": ["^(?:pnpm(?:\\s+(?:exec|run))?|npm(?:\\s+(?:exec|run))?|yarn(?:\\s+run)?|bun(?:\\s+run)?)\\s+(?:tsc|typecheck)\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing typecheck",
+        "running": "Checking TypeScript",
+        "completed": "Checked TypeScript",
+        "failed": "Typecheck failed",
+        "cancelled": "Cancelled typecheck"
+      },
+      "detail": "Quality · TypeScript"
+    },
+    {
+      "id": "build.app",
+      "executables": ["pnpm", "npm", "yarn", "bun"],
+      "match": { "all": ["^(?:pnpm|npm|yarn|bun)(?:\\s+run)?\\s+build\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing app build",
+        "running": "Building the app",
+        "completed": "Built the app",
+        "failed": "App build failed",
+        "cancelled": "Cancelled app build"
+      },
+      "detail": "Build"
+    },
+    {
+      "id": "dependencies.install",
+      "executables": ["pnpm", "npm", "yarn", "bun"],
+      "match": { "all": ["^(?:pnpm|npm|yarn|bun)\\s+(?:install|add|i)\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing dependency install",
+        "running": "Installing dependencies",
+        "completed": "Installed dependencies",
+        "failed": "Dependency install failed",
+        "cancelled": "Cancelled dependency install"
+      },
+      "detail": "Dependencies"
+    },
+    {
+      "id": "database.prisma-generate",
+      "executables": ["prisma", "pnpm", "npm", "npx", "yarn", "bun"],
+      "match": { "all": ["^(?:(?:pnpm|npm|npx|yarn|bun)(?:\\s+(?:exec|run))?\\s+)?prisma\\s+generate\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing Prisma generation",
+        "running": "Generating Prisma client",
+        "completed": "Generated Prisma client",
+        "failed": "Prisma generation failed",
+        "cancelled": "Cancelled Prisma generation"
+      },
+      "detail": "Prisma · Client"
+    },
+    {
+      "id": "database.prisma-migrate",
+      "executables": ["prisma", "pnpm", "npm", "npx", "yarn", "bun"],
+      "match": { "all": ["^(?:(?:pnpm|npm|npx|yarn|bun)(?:\\s+(?:exec|run))?\\s+)?prisma\\s+(?:migrate|db\\s+push)\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing database migration",
+        "running": "Updating database schema",
+        "completed": "Updated database schema",
+        "failed": "Database schema update failed",
+        "cancelled": "Cancelled database schema update"
+      },
+      "detail": "Prisma · Database"
+    },
+    {
+      "id": "network.request",
+      "executables": ["curl", "wget"],
+      "match": { "all": ["^(?:curl|wget)\\b"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing network request",
+        "running": "Fetching remote resource",
+        "completed": "Fetched remote resource",
+        "failed": "Network request failed",
+        "cancelled": "Cancelled network request"
+      },
+      "detail": "Network request"
+    },
+    {
+      "id": "search.shell",
+      "executables": ["rg", "grep"],
+      "match": { "all": ["^(?:rg|grep)\\b"] },
+      "category": "search",
+      "labels": {
+        "queued": "Queueing file search",
+        "running": "Searching files",
+        "completed": "Searched files",
+        "failed": "File search failed",
+        "cancelled": "Cancelled file search"
+      },
+      "detail": "Workspace search"
+    },
+    {
+      "id": "wait.timer",
+      "executables": ["sleep"],
+      "auxiliary": true,
+      "match": { "all": ["^\\s*sleep\\s+\\d+(?:\\.\\d+)?\\s*$"] },
+      "category": "shell",
+      "labels": {
+        "queued": "Queueing wait",
+        "running": "Waiting",
+        "completed": "Finished waiting",
+        "failed": "Wait failed",
+        "cancelled": "Cancelled wait"
+      },
+      "detail": "Timer"
+    }
+  ],
+  "shellMultiple": {
+    "labels": {
+      "queued": "Queueing shell operations",
+      "running": "Running shell operations",
+      "completed": "Ran shell operations",
+      "failed": "Shell operations failed",
+      "cancelled": "Cancelled shell operations"
+    },
+    "detail": "Multiple operations"
+  },
+  "shellFallback": {
+    "labels": {
+      "queued": "Queueing shell command",
+      "running": "Running shell command",
+      "completed": "Ran shell command",
+      "failed": "Shell command failed",
+      "cancelled": "Cancelled shell command"
+    },
+    "detail": "Shell"
+  }
+}

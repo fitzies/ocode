@@ -6,7 +6,7 @@ export type WorkspaceLocation = {
 };
 
 export type MobileWorkspaceSurface = "conversation" | "terminal" | "resource";
-export type WorkspaceSidePage = "files" | "agents";
+export type WorkspaceSidePage = "files" | "agents" | "git";
 
 export type ProjectResourceOpenSource = "picker" | "tool" | "timeline" | "terminal";
 
@@ -21,6 +21,7 @@ export type ProjectWorkspaceSurfaceState = {
   mobileSurface: MobileWorkspaceSurface;
   sidePage: WorkspaceSidePage;
   agentsTabOpen: boolean;
+  gitTabOpen: boolean;
   resourceTabs: ProjectResourceTab[];
   activeResourceId: string | null;
 };
@@ -31,6 +32,7 @@ export const DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE: ProjectWorkspaceSurfaceSta
   mobileSurface: "conversation",
   sidePage: "files",
   agentsTabOpen: false,
+  gitTabOpen: false,
   resourceTabs: [],
   activeResourceId: null,
 };

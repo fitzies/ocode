@@ -71,12 +71,14 @@ export function closeProjectResourceInState(
   const activeResourceId = current.activeResourceId === resourceId
     ? resourceTabs[Math.min(index, resourceTabs.length - 1)]?.id ?? null
     : current.activeResourceId;
-  const showAgents = !resourceTabs.length && current.agentsTabOpen;
+  const fallbackPage = !resourceTabs.length
+    ? current.agentsTabOpen ? "agents" as const : current.gitTabOpen ? "git" as const : undefined
+    : undefined;
   return updateProjectWorkspaceSurfaceState(states, projectId, {
     resourceTabs,
     activeResourceId,
-    ...(showAgents
-      ? { sidePage: "agents" as const, rightVisible: true, mobileSurface: "resource" as const }
+    ...(fallbackPage
+      ? { sidePage: fallbackPage, rightVisible: true, mobileSurface: "resource" as const }
       : !resourceTabs.length
         ? { rightVisible: false, mobileSurface: "conversation" as const }
         : {}),
@@ -89,11 +91,26 @@ export function closeAgentsTabInState(
 ): WorkspaceSurfaceStateByProject {
   const current = states[projectId] ?? DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE;
   if (!current.agentsTabOpen) return states;
-  const fallbackToFiles = current.sidePage === "agents" && current.resourceTabs.length > 0;
-  const closeSurface = current.sidePage === "agents" && !current.resourceTabs.length;
+  const fallbackPage = current.resourceTabs.length > 0 ? "files" as const : current.gitTabOpen ? "git" as const : undefined;
+  const closeSurface = current.sidePage === "agents" && !fallbackPage;
   return updateProjectWorkspaceSurfaceState(states, projectId, {
     agentsTabOpen: false,
-    ...(fallbackToFiles ? { sidePage: "files" as const } : {}),
+    ...(current.sidePage === "agents" && fallbackPage ? { sidePage: fallbackPage } : {}),
+    ...(closeSurface ? { rightVisible: false, mobileSurface: "conversation" as const } : {}),
+  });
+}
+
+export function closeGitTabInState(
+  states: WorkspaceSurfaceStateByProject,
+  projectId: string,
+): WorkspaceSurfaceStateByProject {
+  const current = states[projectId] ?? DEFAULT_PROJECT_WORKSPACE_SURFACE_STATE;
+  if (!current.gitTabOpen) return states;
+  const fallbackPage = current.resourceTabs.length > 0 ? "files" as const : current.agentsTabOpen ? "agents" as const : undefined;
+  const closeSurface = current.sidePage === "git" && !fallbackPage;
+  return updateProjectWorkspaceSurfaceState(states, projectId, {
+    gitTabOpen: false,
+    ...(current.sidePage === "git" && fallbackPage ? { sidePage: fallbackPage } : {}),
     ...(closeSurface ? { rightVisible: false, mobileSurface: "conversation" as const } : {}),
   });
 }
@@ -109,6 +126,7 @@ type WorkspaceSurfaceContextValue = {
   selectProjectResource(resourceId: string): void;
   closeProjectResource(resourceId: string): void;
   closeAgentsTab(): void;
+  closeGitTab(): void;
 };
 
 const WorkspaceSurfaceContext = createContext<WorkspaceSurfaceContextValue | null>(null);
@@ -147,6 +165,7 @@ export function WorkspaceSurfaceProvider({
     openSidePage: (sidePage) => update({
       sidePage,
       ...(sidePage === "agents" ? { agentsTabOpen: true } : {}),
+      ...(sidePage === "git" ? { gitTabOpen: true } : {}),
       rightVisible: true,
       mobileSurface: "resource",
     }),
@@ -166,6 +185,10 @@ export function WorkspaceSurfaceProvider({
     closeAgentsTab: () => {
       if (!projectId) return;
       setStates((current) => closeAgentsTabInState(current, projectId));
+    },
+    closeGitTab: () => {
+      if (!projectId) return;
+      setStates((current) => closeGitTabInState(current, projectId));
     },
   }), [activate, projectId, state, update]);
 

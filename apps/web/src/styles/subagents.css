@@ -142,7 +142,7 @@
   display: grid;
   width: 100%;
   min-height: 56px;
-  grid-template-columns: 17px minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   padding: 8px;
   column-gap: 8px;
@@ -207,7 +207,7 @@
 }
 
 .subagent-list-skeleton { display: grid; padding: 14px 12px; gap: 13px; }
-.subagent-list-skeleton-row { display: flex; align-items: center; gap: 10px; }
+.subagent-list-skeleton-row { display: flex; align-items: center; }
 .subagent-list-skeleton-row > span { display: grid; min-width: 0; flex: 1; gap: 7px; }
 
 /* Status */
@@ -439,17 +439,8 @@
   gap: 8px;
 }
 .subagent-activity-heading h3 { margin: 0; }
-.subagent-activity-heading > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--status-info);
-  font-size: 0.625rem;
-  text-transform: lowercase;
-}
-.subagent-activity-heading > span > i { width: 5px; height: 5px; background: currentColor; border-radius: 999px; }
 
-.subagent-chat-stream { display: grid; gap: 8px; }
+.subagent-chat-stream { display: grid; padding: 0; gap: 8px; }
 .subagent-chat-message { min-width: 0; padding: 3px 1px 5px; }
 .subagent-chat-message strong {
   display: block;

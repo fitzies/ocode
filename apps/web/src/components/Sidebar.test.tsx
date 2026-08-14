@@ -2,25 +2,40 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { FixtureAnvilClient, type AnvilClientSnapshot } from "../lib/anvilClient";
 import { Sidebar } from "./Sidebar";
 
-function renderSnapshot(snapshot: AnvilClientSnapshot): string {
+function renderSnapshot(
+  snapshot: AnvilClientSnapshot,
+  activePage: "workspace" | "settings" | "usage" = "workspace",
+  projectChooserMode: "new" | "change" | null = null,
+): string {
   return renderToStaticMarkup(
-    <SidebarProvider>
-      <Sidebar
-        snapshot={snapshot}
-        onSelectSession={() => undefined}
-        onCreateSession={() => undefined}
-        onNewProject={() => undefined}
-        onRequestDeleteSession={() => undefined}
-        onRequestRenameSession={() => undefined}
-        onSetSessionSettled={async () => undefined}
-        onMarkSessionRead={() => undefined}
-        onMarkSessionUnread={() => undefined}
-        onSearchThreads={async () => []}
-      />
-    </SidebarProvider>,
+    <TooltipProvider>
+      <SidebarProvider>
+        <Sidebar
+          snapshot={snapshot}
+          onSelectSession={() => undefined}
+          onCreateSession={() => undefined}
+          onNewProject={() => undefined}
+          onRequestDeleteSession={() => undefined}
+          onRequestRenameSession={() => undefined}
+          onSetSessionSettled={async () => undefined}
+          onMarkSessionRead={() => undefined}
+          onMarkSessionUnread={() => undefined}
+          onSearchThreads={async () => []}
+          activePage={activePage}
+          onOpenSettings={() => undefined}
+          onOpenUsage={() => undefined}
+          onBack={() => undefined}
+          projectChooserMode={projectChooserMode}
+          onProjectChooserModeChange={() => undefined}
+          onChangeProject={async () => undefined}
+          usage={{ fiveHour: { usedPercent: 24 }, weekly: { usedPercent: 51 } }}
+        />
+      </SidebarProvider>
+    </TooltipProvider>,
   );
 }
 
@@ -60,6 +75,28 @@ describe("Sidebar thread ordering", () => {
 
     expect(activeCard).toContain('aria-current="page"');
     expect(markup.match(/aria-current="page"/g)).toHaveLength(1);
+  });
+
+  it("uses compact footer icons in the workspace and a back action on subpages", () => {
+    const client = new FixtureAnvilClient();
+    const workspaceMarkup = renderSnapshot(client.getSnapshot());
+    const settingsMarkup = renderSnapshot(client.getSnapshot(), "settings");
+
+    expect(workspaceMarkup).toContain('aria-label="Settings"');
+    expect(workspaceMarkup).toContain('aria-label="Usage"');
+    expect(workspaceMarkup).toContain('aria-label="Codex usage limits"');
+    expect(workspaceMarkup).not.toContain('aria-label="Hide sidebar"');
+    expect(settingsMarkup).toContain(">Back</span>");
+    expect(settingsMarkup).not.toContain('border-t border-sidebar-border');
+    expect(settingsMarkup).not.toContain('aria-current="page"');
+  });
+
+  it("renders the project replacement chooser when requested by the empty state", () => {
+    const client = new FixtureAnvilClient();
+    const markup = renderSnapshot(client.getSnapshot(), "workspace", "change");
+
+    expect(markup).toContain("Change project");
+    expect(markup).toContain("Choose a project for this new thread");
   });
 
   it("uses the configured project display name rather than the repository directory", () => {

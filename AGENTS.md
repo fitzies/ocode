@@ -1,5 +1,13 @@
 # ocode — Coding Agent Guide
 
+## UI Component Standard — Strict
+
+- Use **shadcn components only** for new or changed web UI. Do not introduce bespoke interactive primitives when a shadcn component exists.
+- Use the **shadcn Mira style strictly** and preserve its tokens, sizing, interaction states, and composition patterns.
+- The authoritative shadcn configuration is [`apps/web/components.json`](apps/web/components.json) (`style: "radix-mira"`).
+- Installed Mira components live in [`apps/web/src/components/ui`](apps/web/src/components/ui); compose those components in product UI rather than recreating them.
+- When a component is missing, add it through the shadcn CLI using the existing configuration, then adapt only what is necessary to match established Mira patterns.
+
 ## Product
 
 ocode is a personal remote interface for persistent [Pi](https://github.com/badlogic/pi-mono) coding-agent sessions running on **Forge**, a dedicated headless server. A user can start work on one device, disconnect, and resume the same session elsewhere without interrupting the underlying Pi process.

@@ -74,6 +74,7 @@ describe("InteractionPanel", () => {
     expect(html).toContain("Choose one");
     expect(html).not.toContain("this thread");
     expect(html).not.toContain('aria-modal="true"');
+    expect(html).toContain("pb-[var(--composer-overlay-height)]");
 
     const multiHtml = renderToStaticMarkup(
       <InteractionPanel

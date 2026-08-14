@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ocode task and changes workflow concept</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page: transparent;
+    --app: #0b0c0f;
+    --sidebar: #0d0f12;
+    --panel: #0e1013;
+    --raised: #13161b;
+    --hover: #171b20;
+    --line: #242830;
+    --soft-line: #1b1f25;
+    --text: #eef0f3;
+    --muted: #969da7;
+    --faint: #606874;
+    --green: #59d79f;
+    --green-bg: #10251c;
+    --red: #ff756e;
+    --amber: #edbd6a;
+    --blue: #78aaff;
+    --violet: #ad97f7;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--page); }
+  body {
+    padding: 16px;
+    color: var(--text);
+    font: 12px/1.45 Geist, "SF Pro Text", "Segoe UI", sans-serif;
+  }
+  button, input { font: inherit; }
+  button { cursor: default; }
+  .app {
+    width: min(1480px, 100%);
+    height: min(860px, calc(100vh - 32px));
+    min-height: 650px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 218px minmax(370px, .86fr) minmax(490px, 1.14fr);
+    overflow: hidden;
+    border: 1px solid #2b3038;
+    border-radius: 12px;
+    background: var(--app);
+    box-shadow: 0 28px 90px rgb(0 0 0 / .52), 0 0 0 1px rgb(255 255 255 / .02) inset;
+    animation: enter .42s cubic-bezier(.2,.7,.2,1) both;
+  }
+  @keyframes enter { from { opacity: 0; transform: translateY(7px) scale(.995); } }
+  @media (prefers-reduced-motion: reduce) { .app { animation: none; } }
+
+  .sidebar, .thread, .changes { min-width: 0; min-height: 0; }
+  .sidebar { display: flex; flex-direction: column; background: var(--sidebar); border-right: 1px solid var(--line); }
+  .brandbar, .thread-head, .changes-tabbar { height: 45px; flex: 0 0 45px; display: flex; align-items: center; }
+  .brandbar { gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--soft-line); }
+  .mark { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 5px; background: #edf0f3; color: #0c0e11; font-weight: 800; }
+  .brand { font-weight: 650; letter-spacing: -.02em; }
+  .forge { margin-left: auto; color: var(--faint); font-size: 10px; }
+  .nav { display: grid; gap: 2px; padding: 8px; }
+  .nav-item { height: 31px; width: 100%; display: flex; align-items: center; gap: 9px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); text-align: left; }
+  .nav-item.active { background: #191d22; color: var(--text); }
+  .nav-icon { width: 14px; color: currentColor; font: 13px/1 ui-monospace, monospace; text-align: center; }
+  .nav-badge { margin-left: auto; color: var(--faint); font-size: 10px; }
+  .section-label { padding: 13px 14px 5px; color: var(--faint); font-size: 9px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; }
+  .task-list { padding: 0 6px; }
+  .task { width: 100%; display: grid; grid-template-columns: 15px minmax(0,1fr) auto; gap: 2px 7px; padding: 8px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: inherit; text-align: left; }
+  .task.active { background: #171a1f; border-color: #242a31; }
+  .task-dot { grid-row: 1/3; width: 7px; height: 7px; margin: 5px 0 0 2px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px rgb(89 215 159 / .08); }
+  .task-dot.wait { background: var(--amber); box-shadow: none; }
+  .task-dot.done { background: var(--faint); box-shadow: none; }
+  .task strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-weight: 560; }
+  .task small { grid-column: 2/4; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+  .task time { color: var(--faint); font-size: 9px; }
+  .sidebar-bottom { margin-top: auto; padding: 8px; border-top: 1px solid var(--soft-line); }
+
+  .thread { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--app); }
+  .thread-head { padding: 0 12px; gap: 8px; border-bottom: 1px solid var(--soft-line); }
+  .crumb { min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .crumb strong { min-width: 0; color: var(--text); font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .slash { color: var(--faint); }
+  .head-actions { margin-left: auto; display: flex; gap: 5px; }
+  .icon-button, .small-button, .primary-button { border: 1px solid var(--line); border-radius: 6px; background: #12151a; color: #cdd2d8; }
+  .icon-button { width: 27px; height: 27px; padding: 0; }
+  .small-button { height: 27px; padding: 0 9px; }
+  .primary-button { height: 27px; padding: 0 10px; background: #edf0f3; border-color: #edf0f3; color: #111317; font-weight: 650; }
+  .task-context { display: flex; align-items: center; gap: 8px; padding: 9px 13px; border-bottom: 1px solid var(--soft-line); background: #0d1014; }
+  .workspace-pill { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 7px; border: 1px solid #293039; border-radius: 6px; background: #14181d; color: #cbd0d6; font: 10px/1.2 ui-monospace, monospace; }
+  .workspace-pill i { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+  .base { color: var(--faint); font-size: 10px; }
+  .flow { margin-left: auto; display: flex; align-items: center; gap: 4px; color: var(--faint); font-size: 9px; }
+  .flow-step { padding: 3px 5px; border-radius: 4px; }
+  .flow-step.current { color: var(--green); background: var(--green-bg); }
+  .flow-arrow { color: #3f4650; }
+  .timeline { flex: 1; min-height: 0; overflow: auto; padding: 20px 20px 8px; scrollbar-width: thin; }
+  .message { display: grid; grid-template-columns: 24px minmax(0,1fr); gap: 9px; max-width: 720px; margin: 0 auto 22px; }
+  .avatar { width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 6px; background: #15191f; color: var(--muted); font-size: 9px; font-weight: 700; }
+  .avatar.user { background: #1b2432; color: #a9c5ff; }
+  .message-head { display: flex; align-items: baseline; gap: 6px; margin: 1px 0 5px; }
+  .message-head strong { font-size: 11px; }
+  .message-head time { color: var(--faint); font-size: 9px; }
+  .message p { margin: 0 0 8px; color: #c4c9cf; font-size: 11px; line-height: 1.62; }
+  code { padding: 1px 4px; border-radius: 4px; background: #191d22; color: #dce0e5; font: 10px ui-monospace, monospace; }
+  .tool-row { margin-top: 8px; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; background: #0e1115; }
+  .tool-head { display: flex; align-items: center; gap: 7px; padding: 7px 9px; color: var(--muted); }
+  .tool-head strong { color: #d3d7dc; font-size: 10px; font-weight: 560; }
+  .tool-head .ok { color: var(--green); }
+  .tool-head .meta { margin-left: auto; color: var(--faint); font: 9px ui-monospace, monospace; }
+  .turn-summary { max-width: 720px; margin: -6px auto 20px 33px; display: flex; align-items: center; gap: 7px; padding: 8px 10px; border: 1px solid #26313e; border-radius: 7px; background: #10161e; color: var(--muted); }
+  .turn-summary strong { color: #cfd5dc; font-size: 10px; }
+  .turn-summary .stat { margin-left: auto; font: 10px ui-monospace, monospace; }
+  .plus { color: var(--green); } .minus { color: var(--red); }
+  .composer-wrap { padding: 10px 13px 12px; }
+  .composer { border: 1px solid #303641; border-radius: 9px; background: #101318; box-shadow: 0 8px 25px rgb(0 0 0 / .18); }
+  .composer textarea { width: 100%; height: 58px; resize: none; padding: 11px; border: 0; outline: 0; background: transparent; color: #d9dde2; font: inherit; }
+  .composer-foot { height: 33px; display: flex; align-items: center; gap: 6px; padding: 0 7px; border-top: 1px solid var(--soft-line); }
+  .composer-chip { padding: 3px 6px; border-radius: 5px; background: #171b21; color: var(--muted); font-size: 9px; }
+  .send { margin-left: auto; width: 23px; height: 23px; border: 0; border-radius: 6px; background: #e8ebee; color: #101216; }
+
+  .changes { display: flex; flex-direction: column; background: var(--panel); }
+  .changes-tabbar { gap: 4px; padding: 0 9px; border-bottom: 1px solid var(--soft-line); }
+  .outer-tab { height: 27px; display: flex; align-items: center; gap: 7px; padding: 0 9px; border-radius: 6px; color: var(--muted); }
+  .outer-tab.active { background: #191d23; color: var(--text); }
+  .tab-count { min-width: 15px; height: 15px; display: grid; place-items: center; border-radius: 5px; background: #262c34; color: #bac0c8; font-size: 9px; }
+  .close-tab { color: var(--faint); }
+  .panel-close { margin-left: auto; color: var(--muted); }
+  .changes-head { padding: 13px 15px 0; border-bottom: 1px solid var(--line); }
+  .changes-top { display: flex; align-items: center; gap: 8px; }
+  .changes-top h2 { margin: 0; font-size: 13px; font-weight: 620; letter-spacing: -.01em; }
+  .scope-button { margin-left: auto; height: 27px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: #12151a; color: var(--muted); }
+  .scope-row { display: flex; align-items: center; gap: 7px; margin-top: 11px; color: var(--muted); }
+  .branch { padding: 4px 6px; border-radius: 5px; background: #181c22; color: #cbd0d6; font: 10px ui-monospace, monospace; }
+  .file-stat { margin-left: auto; display: flex; gap: 9px; font-size: 10px; }
+  .inner-tabs { display: flex; align-items: center; gap: 2px; margin-top: 11px; height: 34px; }
+  .inner-tab { padding: 6px 9px; border-radius: 5px; color: var(--muted); }
+  .inner-tab.active { background: #1a1e24; color: var(--text); }
+  .review-cta { margin-left: auto; }
+  .diff-toolbar { height: 40px; flex: 0 0 40px; display: flex; align-items: center; gap: 7px; padding: 0 11px; border-bottom: 1px solid var(--soft-line); }
+  .filter-input { width: 150px; height: 26px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: #0d1014; color: #cfd3d8; outline: 0; }
+  .view-toggle { margin-left: auto; display: flex; padding: 2px; border: 1px solid var(--line); border-radius: 6px; }
+  .view-toggle span { padding: 3px 6px; border-radius: 4px; color: var(--faint); font-size: 9px; }
+  .view-toggle .active { background: #242a31; color: #d5d9de; }
+  .diff-scroll { min-height: 0; flex: 1; overflow: auto; scrollbar-width: thin; }
+  .file { border-bottom: 1px solid var(--line); }
+  .file-header { position: sticky; top: 0; z-index: 2; height: 34px; display: flex; align-items: center; gap: 7px; padding: 0 10px; border-bottom: 1px solid var(--soft-line); background: #12151a; }
+  .chev { color: var(--faint); }
+  .file-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 10px ui-monospace, monospace; color: #d2d6db; }
+  .file-loc { margin-left: auto; font: 9px ui-monospace, monospace; }
+  .code-row { display: grid; grid-template-columns: 32px 32px 18px minmax(0,1fr); min-height: 20px; font: 10px/20px ui-monospace, "SFMono-Regular", monospace; }
+  .code-row .old, .code-row .new { padding-right: 7px; text-align: right; color: #515a66; user-select: none; }
+  .code-row .sign { text-align: center; color: #5b6470; }
+  .code-row .code { padding: 0 10px; overflow: hidden; white-space: pre; color: #adb4bc; }
+  .code-row.add { background: rgb(47 141 91 / .13); }
+  .code-row.add .sign, .code-row.add .code { color: #9edebc; }
+  .code-row.del { background: rgb(191 65 65 / .13); }
+  .code-row.del .sign, .code-row.del .code { color: #efaaa7; }
+  .code-row.hunk { background: #121822; }
+  .code-row.hunk .code { color: #7ea8e3; }
+  .finding { margin: 7px 10px 9px 82px; border: 1px solid #4c3822; border-radius: 7px; background: #1a1510; overflow: hidden; }
+  .finding-head { display: flex; align-items: center; gap: 7px; padding: 7px 9px; }
+  .severity { color: var(--amber); font-size: 9px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+  .finding-head strong { font-size: 10px; }
+  .finding p { margin: 0; padding: 0 9px 8px; color: #b8b0a6; font-size: 10px; }
+  .finding-actions { display: flex; gap: 4px; padding: 6px 7px; border-top: 1px solid #33281c; }
+  .finding-actions button { padding: 3px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 9px; }
+  .finding-actions .fix { color: #e8d2a9; background: #292014; }
+  .review-dock { flex: 0 0 43px; display: flex; align-items: center; gap: 8px; padding: 0 11px; border-top: 1px solid var(--line); background: #101318; }
+  .review-status { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+  .review-status i { width: 7px; height: 7px; border: 2px solid #4d607a; border-top-color: var(--blue); border-radius: 50%; }
+  .review-status strong { color: #c9d3e0; font-size: 10px; }
+  .review-dock .primary-button { margin-left: auto; }
+
+  @media (max-width: 1050px) {
+    body { padding: 8px; }
+    .app { height: calc(100vh - 16px); grid-template-columns: 58px minmax(340px,.86fr) minmax(450px,1.14fr); border-radius: 9px; }
+    .brand, .forge, .nav-item span:not(.nav-icon), .section-label, .task-list { display: none; }
+    .brandbar { justify-content: center; padding: 0; }
+    .nav-item { justify-content: center; padding: 0; }
+    .sidebar-bottom { margin-top: auto; }
+  }
+  @media (max-width: 760px) {
+    body { padding: 0; }
+    .app { height: 100vh; min-height: 620px; grid-template-columns: 1fr; border: 0; border-radius: 0; }
+    .sidebar, .thread { display: none; }
+    .changes { display: flex; }
+    .changes-tabbar::before { content: "‹ Task"; margin-right: 4px; color: var(--muted); }
+    .changes-head { padding-top: 10px; }
+    .finding { margin-left: 42px; }
+  }
+</style>
+</head>
+<body>
+<main class="app" aria-label="Static concept for an ocode isolated task with live changes and agent review">
+  <aside class="sidebar">
+    <header class="brandbar"><span class="mark">o</span><span class="brand">ocode</span><span class="forge">forge</span></header>
+    <nav class="nav" aria-label="Primary navigation">
+      <button class="nav-item active"><span class="nav-icon">◫</span><span>Threads</span></button>
+      <button class="nav-item"><span class="nav-icon">±</span><span>Changes</span><span class="nav-badge">8</span></button>
+      <button class="nav-item"><span class="nav-icon">⑂</span><span>Pull requests</span><span class="nav-badge">3</span></button>
+    </nav>
+    <div class="section-label">Working</div>
+    <div class="task-list">
+      <button class="task active"><i class="task-dot"></i><strong>Commit review workflow</strong><time>8m</time><small>ocode · worktree/commit-review</small></button>
+      <button class="task"><i class="task-dot wait"></i><strong>Forge restart recovery</strong><time>24m</time><small>ocode · needs approval</small></button>
+      <button class="task"><i class="task-dot"></i><strong>Mobile terminal layout</strong><time>1h</time><small>desktop · agent working</small></button>
+    </div>
+    <div class="section-label">Recent</div>
+    <div class="task-list">
+      <button class="task"><i class="task-dot done"></i><strong>Bound artifact reads</strong><time>1d</time><small>protocol · PR #142</small></button>
+      <button class="task"><i class="task-dot done"></i><strong>Workspace surfaces</strong><time>3d</time><small>ocode · merged</small></button>
+    </div>
+    <div class="sidebar-bottom"><button class="nav-item"><span class="nav-icon">⚙</span><span>Settings</span></button></div>
+  </aside>
+
+  <section class="thread" aria-label="Task conversation">
+    <header class="thread-head">
+      <div class="crumb"><span>ocode</span><span class="slash">/</span><strong>Commit review workflow</strong></div>
+      <div class="head-actions"><button class="icon-button" aria-label="Terminal">⌁</button><button class="icon-button" aria-label="Files">▤</button></div>
+    </header>
+    <div class="task-context">
+      <span class="workspace-pill"><i></i> worktree/commit-review</span>
+      <span class="base">from main</span>
+      <div class="flow"><span class="flow-step current">Working</span><span class="flow-arrow">›</span><span class="flow-step">Review</span><span class="flow-arrow">›</span><span class="flow-step">PR</span></div>
+    </div>
+    <div class="timeline">
+      <article class="message">
+        <span class="avatar user">YOU</span>
+        <div><div class="message-head"><strong>You</strong><time>10:42</time></div><p>Add a project-wide Changes page where I can inspect commits, see file and line changes, and dispatch Pi to review any change.</p></div>
+      </article>
+      <article class="message">
+        <span class="avatar">PI</span>
+        <div>
+          <div class="message-head"><strong>Pi</strong><time>10:43</time></div>
+          <p>I’ll start by adding the shared change-target model and the commit list. The same target can later power working-tree, branch, and pull-request reviews.</p>
+          <div class="tool-row"><div class="tool-head"><span class="ok">✓</span><strong>Read repository architecture</strong><span class="meta">14 files</span></div></div>
+          <div class="tool-row"><div class="tool-head"><span class="ok">✓</span><strong>Updated protocol and Forge routes</strong><span class="meta">6 files</span></div></div>
+          <div class="tool-row"><div class="tool-head"><span class="ok">✓</span><strong>Added Changes page shell</strong><span class="meta">9 files</span></div></div>
+        </div>
+      </article>
+      <div class="turn-summary"><span>✦</span><strong>Latest turn changed 15 files</strong><span class="stat"><span class="plus">+418</span>&nbsp; <span class="minus">−72</span></span></div>
+      <article class="message">
+        <span class="avatar">PI</span>
+        <div><div class="message-head"><strong>Pi</strong><time>10:51</time></div><p>The first slice is ready. I kept commit history read-only and reused the existing project/workspace boundaries. The diff is open on the right.</p></div>
+      </article>
+    </div>
+    <div class="composer-wrap">
+      <div class="composer">
+        <textarea aria-label="Message Pi" placeholder="Ask Pi to continue, explain, or fix a finding…"></textarea>
+        <div class="composer-foot"><span class="composer-chip">worktree</span><span class="composer-chip">main ← commit-review</span><span class="composer-chip">1 reviewer running</span><button class="send" aria-label="Send">↑</button></div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="changes" aria-label="Changes and agent review panel">
+    <div class="changes-tabbar">
+      <div class="outer-tab active"><span>±</span><span>Changes</span><span class="tab-count">15</span><span class="close-tab">×</span></div>
+      <div class="outer-tab"><span>✦</span><span>Agents</span><span class="tab-count">1</span></div>
+      <span class="panel-close">▣</span>
+    </div>
+    <header class="changes-head">
+      <div class="changes-top"><h2>Latest turn</h2><button class="scope-button">Latest turn ▾</button></div>
+      <div class="scope-row"><span class="branch">main</span><span>←</span><span class="branch">worktree/commit-review</span><span class="file-stat"><span>15 files</span><span class="plus">+418</span><span class="minus">−72</span></span></div>
+      <nav class="inner-tabs" aria-label="Change views"><span class="inner-tab">Summary</span><span class="inner-tab active">Code</span><span class="inner-tab">Commits</span><button class="primary-button review-cta">Review with Pi</button></nav>
+    </header>
+    <div class="diff-toolbar">
+      <input class="filter-input" value="" placeholder="Filter files…" aria-label="Filter changed files" />
+      <button class="small-button">15 files ▾</button>
+      <div class="view-toggle"><span class="active">Unified</span><span>Split</span></div>
+    </div>
+    <div class="diff-scroll">
+      <section class="file">
+        <header class="file-header"><span class="chev">⌄</span><span class="file-path">packages/protocol/src/index.ts</span><span class="file-loc"><span class="plus">+46</span>&nbsp; <span class="minus">−3</span></span></header>
+        <div class="code-row hunk"><span class="old">148</span><span class="new">148</span><span class="sign"></span><span class="code">@@ -148,6 +148,15 @@ export interface ProjectGitStatus {</span></div>
+        <div class="code-row"><span class="old">148</span><span class="new">148</span><span class="sign"> </span><span class="code">  github?: ProjectGitHubStatus;</span></div>
+        <div class="code-row add"><span class="old"></span><span class="new">149</span><span class="sign">+</span><span class="code">  changeTarget?: ProjectChangeTarget;</span></div>
+        <div class="code-row add"><span class="old"></span><span class="new">150</span><span class="sign">+</span><span class="code">  review?: ProjectChangeReviewSummary;</span></div>
+        <div class="code-row add"><span class="old"></span><span class="new">151</span><span class="sign">+</span><span class="code">  workspaceId?: string;</span></div>
+        <div class="code-row"><span class="old">149</span><span class="new">152</span><span class="sign"> </span><span class="code">  statusUpdatedAt?: string;</span></div>
+        <div class="finding">
+          <div class="finding-head"><span class="severity">Medium</span><strong>Persisted targets need immutable revisions</strong></div>
+          <p>A branch name alone can move while review is running. Store the resolved head SHA with every review target and mark findings stale if it changes.</p>
+          <div class="finding-actions"><button>Ask Pi</button><button class="fix">Fix in this task</button><button>Dismiss</button></div>
+        </div>
+      </section>
+      <section class="file">
+        <header class="file-header"><span class="chev">⌄</span><span class="file-path">apps/forge/src/projects/changeReviewService.ts</span><span class="file-loc"><span class="plus">+181</span>&nbsp; <span class="minus">−21</span></span></header>
+        <div class="code-row hunk"><span class="old">62</span><span class="new">62</span><span class="sign"></span><span class="code">@@ -62,8 +62,16 @@ export class ChangeReviewService {</span></div>
+        <div class="code-row"><span class="old">62</span><span class="new">62</span><span class="sign"> </span><span class="code">  async dispatch(input: ReviewInput) {</span></div>
+        <div class="code-row add"><span class="old"></span><span class="new">63</span><span class="sign">+</span><span class="code">    const target = await this.resolveTarget(input);</span></div>
+        <div class="code-row add"><span class="old"></span><span class="new">64</span><span class="sign">+</span><span class="code">    await this.assertWorkspaceBoundary(target);</span></div>
+        <div class="code-row add"><span class="old"></span><span class="new">65</span><span class="sign">+</span><span class="code">    return this.reviews.create(target);</span></div>
+        <div class="code-row"><span class="old">63</span><span class="new">66</span><span class="sign"> </span><span class="code">  }</span></div>
+      </section>
+      <section class="file">
+        <header class="file-header"><span class="chev">›</span><span class="file-path">apps/web/src/components/changes/ChangesPage.tsx</span><span class="file-loc"><span class="plus">+96</span>&nbsp; <span class="minus">−18</span></span></header>
+      </section>
+    </div>
+    <footer class="review-dock"><span class="review-status"><i></i><strong>Pi is reviewing latest turn</strong><span>· 1 finding so far</span></span><button class="primary-button">View review</button></footer>
+  </aside>
+</main>
+</body>
+</html>

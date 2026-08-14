@@ -174,6 +174,8 @@ export interface ProjectGitStatus {
   /** All configured remotes, used when the current branch has no unambiguous selection. */
   remotes?: ProjectGitRemote[];
   lastCommit?: ProjectGitLastCommit | null;
+  /** Most recent local commits, newest first. */
+  recentCommits?: ProjectGitLastCommit[];
   github?: ProjectGitHubStatus;
   statusUpdatedAt?: string;
   statusError?: string;

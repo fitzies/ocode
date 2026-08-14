@@ -1,11 +1,21 @@
-import type { ModelDescriptor, ProjectWorkspaceKind, SessionStatus } from "@anvil/protocol";
+import type { CommandDescriptor, ModelDescriptor, SessionStatus, SkillDescriptor } from "@anvil/protocol";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
 import { TooltipProvider } from "@/components/ui/tooltip";
-import type { SubagentActivity } from "../lib/subagentActivity";
-import { Composer, activeFileMention, isFileDrag, nextThinkingLevel, selectAnvilModels, updateComposerDraft } from "./Composer";
+import {
+  Composer,
+  activeFileMention,
+  isFileDrag,
+  joinCommandPrompt,
+  joinSkillPrompt,
+  nextThinkingLevel,
+  selectAnvilModels,
+  splitCommandPrompt,
+  splitSkillPrompt,
+  updateComposerDraft,
+} from "./Composer";
 
 const model = (id: string, name: string): ModelDescriptor => ({
   id,
@@ -18,10 +28,11 @@ const model = (id: string, name: string): ModelDescriptor => ({
 
 function renderComposer(modelsReady: boolean, options: {
   status?: SessionStatus;
-  workspaceKind?: ProjectWorkspaceKind;
   pending?: boolean;
   creationError?: string;
-  subagents?: SubagentActivity;
+  prompt?: string;
+  commands?: CommandDescriptor[];
+  skills?: SkillDescriptor[];
 } = {}): string {
   return renderToStaticMarkup(createElement(TooltipProvider, null, createElement(Composer, {
     sessionId: "session-1",
@@ -30,20 +41,17 @@ function renderComposer(modelsReady: boolean, options: {
     status: options.status ?? "idle",
     models: [],
     modelsReady,
-    commands: [],
-    skills: [],
+    commands: options.commands ?? [],
+    skills: options.skills ?? [],
     queue: { steering: [], followUp: [] },
-    prompt: "",
+    prompt: options.prompt ?? "",
     pending: options.pending,
     creationError: options.creationError,
     widgets: [],
-    workspaceKind: "workspaceKind" in options ? options.workspaceKind : "worktree",
-    subagents: options.subagents ?? { active: 0, finished: 3, failed: 0, needsAttention: 0, items: [] },
     attachments: [],
     onAttachFiles: () => undefined,
     onRemoveAttachment: () => undefined,
     onSearchFiles: async () => [],
-    onOpenSubagents: () => undefined,
     onCancel: () => undefined,
     onDraftConsumed: () => undefined,
     onPromptChange: () => undefined,
@@ -53,36 +61,15 @@ function renderComposer(modelsReady: boolean, options: {
   })));
 }
 
-describe("Composer workspace status", () => {
-  it("shows workspace context without repeating the project name", () => {
+describe("Composer footer", () => {
+  it("does not repeat workspace or agent navigation below the input", () => {
     const html = renderComposer(true);
 
-    expect(html).toContain(">worktree<");
-    expect(html).not.toContain("anvil ·");
-    expect(html).not.toContain("Pi has full Forge access");
-  });
-
-  it("uses main workspace for primary, folder, and legacy workspace metadata", () => {
-    expect(renderComposer(true, { workspaceKind: "main" })).toContain(">main workspace<");
-    expect(renderComposer(true, { workspaceKind: "folder" })).toContain(">main workspace<");
-    expect(renderComposer(true, { workspaceKind: undefined })).toContain(">main workspace<");
-  });
-
-  it("labels the built-in General project as the home workspace", () => {
-    expect(renderComposer(true, { workspaceKind: "general" })).toContain(">home workspace<");
-  });
-
-  it("shows a lowercase agents link without activity metrics", () => {
-    const html = renderComposer(true, { subagents: { active: 2, finished: 1, failed: 0, needsAttention: 0, items: [] } });
-
-    expect(html).toContain(">agents</span>");
-    expect(html).not.toContain("composer-status-metric");
-    expect(html).not.toContain("composer-status-icon");
-  });
-
-  it("keeps the status present during startup and creation errors", () => {
-    expect(renderComposer(true, { pending: true })).toContain(">worktree<");
-    expect(renderComposer(true, { creationError: "failed" })).toContain("composer-status-subagents");
+    expect(html).not.toContain("main workspace");
+    expect(html).not.toContain("worktree");
+    expect(html).not.toContain("home workspace");
+    expect(html).not.toContain("composer-status");
+    expect(html).not.toContain(">agents</span>");
   });
 });
 
@@ -109,6 +96,92 @@ describe("updateComposerDraft", () => {
     drafts = updateComposerDraft(drafts, "session-b", "");
 
     expect(drafts).toEqual({ "session-a": "Message for A" });
+  });
+});
+
+describe("skill prompts", () => {
+  const skill = {
+    name: "frontend-design",
+    command: "skill:frontend-design",
+    description: "Create and review interfaces",
+    location: "user" as const,
+  };
+
+  it("keeps Pi's canonical syntax outside the visible composer text", () => {
+    const prompt = joinSkillPrompt(skill, "Improve the composer");
+
+    expect(prompt).toBe("/skill:frontend-design Improve the composer");
+    expect(splitSkillPrompt(prompt, [skill])).toEqual({ skill, text: "Improve the composer" });
+  });
+
+  it("recovers persisted skills before the capability catalog loads", () => {
+    expect(splitSkillPrompt("/skill:frontend-design Review this", [])).toEqual({
+      skill: { name: "frontend-design", command: "skill:frontend-design" },
+      text: "Review this",
+    });
+  });
+
+  it("does not turn an incomplete manual skill query into a chip", () => {
+    expect(splitSkillPrompt("/skill:front", [skill])).toEqual({ text: "/skill:front" });
+  });
+
+  it("renders friendly skill results and shows attached skills as inline colored text", () => {
+    const menu = renderComposer(true, { prompt: "/front", skills: [skill] });
+    const attached = renderComposer(true, {
+      prompt: "/skill:frontend-design Improve the composer",
+      skills: [skill],
+    });
+
+    expect(menu).toContain("Skills");
+    expect(menu).toContain("frontend-design");
+    expect(menu).not.toContain("/skill:frontend-design");
+    expect(attached).toContain("composer-invocation--skill");
+    expect(attached).toContain("Remove frontend-design skill");
+    expect(attached).toContain(">frontend-design</button>");
+    expect(attached).toContain("Improve the composer");
+    expect(attached).not.toContain("/skill:frontend-design");
+  });
+
+  it("renders commands as a distinct inline color while preserving canonical submission syntax", () => {
+    const command = { name: "reload", description: "Reload extensions", source: "extension" as const };
+    const prompt = joinCommandPrompt(command, "now");
+    const attached = renderComposer(true, { prompt, commands: [command] });
+
+    expect(prompt).toBe("/reload now");
+    expect(splitCommandPrompt(prompt, [command])).toEqual({ command, text: "now" });
+    expect(attached).toContain("composer-invocation--command");
+    expect(attached).toContain("Remove reload command");
+    expect(attached).toContain(">reload</button>");
+    expect(attached).not.toContain(">/reload</button>");
+  });
+
+  it("matches skill names without letting unrelated descriptions replace the intended skill", () => {
+    const railway = {
+      name: "use-railway",
+      command: "skill:use-railway",
+      description: "Operate Railway infrastructure and create frontend services for users",
+    };
+    const menu = renderComposer(true, { prompt: "/front", skills: [railway, skill] });
+
+    expect(menu).toContain("frontend-design");
+    expect(menu).not.toContain("use-railway");
+  });
+
+  it("does not truncate the capability catalog before or after searching", () => {
+    const skills = [
+      skill,
+      ...["github-investigation", "google-fonts-cli", "grill-me", "use-railway", "release-notes"]
+        .map((name) => ({ name, command: `skill:${name}`, description: `${name} skill` })),
+    ];
+    const commands = [{ name: "reload", description: "Reload extensions", source: "extension" as const }];
+
+    const initialMenu = renderComposer(true, { prompt: "/", skills, commands });
+    const skillSearch = renderComposer(true, { prompt: "/front", skills, commands });
+    const commandSearch = renderComposer(true, { prompt: "/reload", skills, commands });
+
+    for (const candidate of skills) expect(initialMenu).toContain(candidate.name);
+    expect(skillSearch).toContain("frontend-design");
+    expect(commandSearch).toContain("/reload");
   });
 });
 

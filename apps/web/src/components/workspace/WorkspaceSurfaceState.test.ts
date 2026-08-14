@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   activateProjectWorkspaceSurface,
   closeAgentsTabInState,
+  closeGitTabInState,
   closeProjectResourceInState,
   openProjectResourceInState,
   updateProjectWorkspaceSurfaceState,
@@ -25,6 +26,7 @@ describe("project workspace surface state", () => {
       mobileSurface: "terminal",
       sidePage: "files",
       agentsTabOpen: false,
+      gitTabOpen: false,
       resourceTabs: [],
       activeResourceId: null,
     });
@@ -34,6 +36,7 @@ describe("project workspace surface state", () => {
       mobileSurface: "resource",
       sidePage: "files",
       agentsTabOpen: false,
+      gitTabOpen: false,
       resourceTabs: [],
       activeResourceId: null,
     });
@@ -53,6 +56,7 @@ describe("project workspace surface state", () => {
       mobileSurface: "resource",
       sidePage: "files",
       agentsTabOpen: false,
+      gitTabOpen: false,
       resourceTabs: [],
       activeResourceId: null,
     });
@@ -118,6 +122,23 @@ describe("project workspace surface state", () => {
     states = closeAgentsTabInState(states, "project-a");
     expect(states["project-a"]).toMatchObject({
       agentsTabOpen: false,
+      rightVisible: false,
+      mobileSurface: "conversation",
+    });
+  });
+
+  it("opens and closes GitHub activity like a side-pane tab", () => {
+    let states = updateProjectWorkspaceSurfaceState({}, "project-a", {
+      gitTabOpen: true,
+      sidePage: "git",
+      rightVisible: true,
+      mobileSurface: "resource",
+    });
+
+    states = closeGitTabInState(states, "project-a");
+
+    expect(states["project-a"]).toMatchObject({
+      gitTabOpen: false,
       rightVisible: false,
       mobileSurface: "conversation",
     });

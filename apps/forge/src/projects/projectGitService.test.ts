@@ -100,6 +100,7 @@ describe("ProjectGitService", () => {
         repository: "repository",
       },
       lastCommit: { subject: "Initial commit" },
+      recentCommits: [expect.objectContaining({ subject: "Initial commit" })],
     });
     expect(status.statusUpdatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(JSON.stringify(status)).not.toContain("secret");

@@ -80,6 +80,8 @@ describe("SubagentChatView", () => {
     expect(html).toContain("Updating the shared workspace state.");
     expect(html).toContain("Edited WorkspaceSurfaceState.tsx");
     expect(html).toContain(">Read-only</span>");
+    expect(html).not.toContain(">Live</span>");
+    expect(html).not.toContain("subagent-activity-icon--running");
     expect(html).not.toContain("Open full thread");
   });
 

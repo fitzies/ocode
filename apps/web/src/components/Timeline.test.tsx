@@ -3,6 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Timeline } from "./Timeline";
 
+const nodeFsSpecifier = "node:fs";
+const { readFileSync } = await import(nodeFsSpecifier);
+const timelineSource = readFileSync(new URL("./Timeline.tsx", import.meta.url), "utf8");
+const appShellSource = readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
+
 const session: SessionSummary = {
   id: "session-markdown",
   projectId: "project-1",
@@ -35,6 +40,35 @@ const reasoning: ReasoningEntry = {
   createdAt: "2026-03-22T00:00:00.000Z",
   content: "**Checking:**\n\n1. Types\n2. Tests",
 };
+
+describe("Timeline empty state", () => {
+  it("prompts with the current project as a project-changing action", () => {
+    const html = renderToStaticMarkup(
+      <Timeline session={session} projectName="ocode" entries={[]} onSuggestion={() => undefined} />,
+    );
+
+    expect(html).toContain("What are we building in");
+    expect(html).toContain('aria-label="Change project from ocode"');
+    expect(html).toContain(">ocode</button>");
+    expect(html).not.toContain("Let’s build");
+  });
+
+  it("uses an explicit AppShell callback instead of a global project-change event", () => {
+    expect(timelineSource).toContain("onClick={onRequestProjectChange}");
+    expect(appShellSource).toContain('onRequestProjectChange={() => setProjectChooserMode("change")}');
+    expect(timelineSource).not.toContain("ocode:change-project");
+    expect(appShellSource).toContain("changeEmptySessionProject");
+  });
+
+  it("switches to the selected project before deleting the previous empty thread", () => {
+    const start = appShellSource.indexOf("const changeEmptySessionProject");
+    const end = appShellSource.indexOf("const markGitActionComplete", start);
+    const changeSource = appShellSource.slice(start, end);
+
+    expect(changeSource.indexOf("startSession(projectId)")).toBeLessThan(changeSource.indexOf("anvilClient.deleteSession(previousSessionId)"));
+    expect(changeSource).not.toContain("await anvilClient.deleteSession");
+  });
+});
 
 describe("Timeline message actions", () => {
   it("shows copy only for complete assistant text", () => {
@@ -138,6 +172,50 @@ describe("Timeline markdown", () => {
     expect(html).toContain("Copy this message");
   });
 
+  it("renders skill invocations as friendly context instead of Pi command syntax", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          role: "user",
+          content: [{
+            id: "skill-prompt",
+            type: "text",
+            text: "/skill:frontend-design Improve the composer",
+          }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Skill: frontend-design");
+    expect(html).toContain("user-invocation--skill");
+    expect(html).toContain("frontend-design");
+    expect(html).toContain("Improve the composer");
+    expect(html).not.toContain("/skill:frontend-design");
+  });
+
+  it("renders commands inline without their slash using a distinct color", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          role: "user",
+          content: [{ id: "command-prompt", type: "text", text: "/reload now" }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Command: reload");
+    expect(html).toContain("user-invocation--command");
+    expect(html).toContain(">reload</span>");
+    expect(html).toContain("now");
+    expect(html).not.toContain("/reload");
+  });
+
   it("hides synthetic image attachment markers from user messages", () => {
     const html = renderToStaticMarkup(
       <Timeline
@@ -164,6 +242,8 @@ describe("Timeline markdown", () => {
     expect(html).toContain("Review this image");
     expect(html).toContain("Attached screenshot");
     expect(html).toContain('class="image-block"');
+    expect(html).toContain('aria-label="Open Attached screenshot"');
+    expect(html).toContain('aria-haspopup="dialog"');
     expect(html).toContain("example.png");
     expect(html).not.toContain("attached.png");
   });
@@ -409,7 +489,7 @@ describe("Timeline tool presentation", () => {
       />,
     );
 
-    expect(html).toContain("Researcher agent");
+    expect(html).toContain("Subagent finished");
     expect(html).toContain("tool-event--agent");
     expect(html).toContain(">Message<");
     expect(html).toContain("<strong>Review</strong>");
@@ -437,7 +517,7 @@ describe("Timeline tool presentation", () => {
       />,
     );
 
-    expect(html).toContain("Scout agent");
+    expect(html).toContain("Subagent working");
     expect(html).toContain("Find the relevant files");
     expect(html).toContain("Waiting for response…");
     expect(html).not.toContain("Raw RPC event");

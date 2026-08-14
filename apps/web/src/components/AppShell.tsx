@@ -10,21 +10,17 @@ import {
 import { sortSessionsByActivity } from "@anvil/state";
 import {
   Cancel01Icon,
-  ComputerIcon,
   ComputerTerminal01Icon,
-  DatabaseSettingIcon,
   Folder01Icon,
-  Moon02Icon,
   RefreshIcon,
   ServerStack01Icon,
-  Settings01Icon,
-  Sun03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 
-import { type Accent, useTheme } from "@/components/theme-provider";
+import { useTheme } from "@/components/theme-provider";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -35,20 +31,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { anvilClient, type DeliveryMode } from "../lib/anvilClient";
@@ -64,7 +46,7 @@ import { equalAppShellSnapshots, selectAppShellSnapshot } from "../lib/appShellS
 import { subagentActivityForSession } from "../lib/subagentActivity";
 import { matchesShortcut } from "../lib/shortcuts";
 import { useExternalStoreSelector } from "../lib/useExternalStoreSelector";
-import { Composer, type ComposerAttachment, type ComposerProps, updateComposerDraft } from "./Composer";
+import { Composer, type ComposerAttachment, updateComposerDraft } from "./Composer";
 import { CommandPaletteDialog } from "./CommandPaletteDialog";
 import { DesktopUpdateDialog, isOcodeDesktop } from "./DesktopUpdateDialog";
 import { InteractionPanel } from "./InteractionDialog";
@@ -72,10 +54,17 @@ import { InternalSessionFooter } from "./InternalSessionFooter";
 import { FilePickerDialog } from "./FilePickerDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { ProjectGitAction } from "./ProjectGitAction";
+import { RecentlySettledDialog } from "./RecentlySettledDialog";
+import { SettleOrDeleteThreadDialog } from "./SettleOrDeleteThreadDialog";
 import { Sidebar } from "./Sidebar";
+import {
+  type DisplayPreferences,
+  type InterfaceFont,
+  SettingsPage,
+} from "./SettingsPage";
 import { ShortcutsDialog } from "./ShortcutsDialog";
 import { Timeline } from "./Timeline";
-import { UsageDialog } from "./UsageDialog";
+import { UsagePage } from "./UsagePage";
 import { ProjectResourceSurface } from "./resource/ProjectResourceSurface";
 import { ProjectTerminalSurface } from "./terminal/ProjectTerminalSurface";
 import { WorkspaceLayout } from "./workspace/WorkspaceLayout";
@@ -85,16 +74,6 @@ import { DeleteThreadDialog, ManageProjectsDialog, ProjectsRootDialog, RenameThr
 const EMPTY_CATALOG: CapabilityCatalog = { models: [], commands: [], skills: [] };
 const DISPLAY_PREFERENCES_KEY = "ocode.display-preferences";
 const LEGACY_DISPLAY_PREFERENCES_KEY = "anvil.display-preferences";
-
-type MessageFontSize = "small" | "default" | "large" | "extra-large";
-type MessageWidth = "narrow" | "full";
-type InterfaceFont = "system" | "inter" | "geist";
-
-type DisplayPreferences = {
-  fontFamily: InterfaceFont;
-  fontSize: MessageFontSize;
-  width: MessageWidth;
-};
 
 const DEFAULT_DISPLAY_PREFERENCES: DisplayPreferences = {
   fontFamily: "system",
@@ -106,17 +85,6 @@ const INTERFACE_FONT_STACKS: Record<InterfaceFont, string> = {
   inter: '"Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
   geist: '"Geist Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
 };
-const ACCENT_OPTIONS: Array<{ value: Accent; label: string; swatch: string }> = [
-  { value: "neutral", label: "Neutral", swatch: "bg-neutral-300 dark:bg-neutral-200" },
-  { value: "blue", label: "Blue", swatch: "bg-blue-400" },
-  { value: "cyan", label: "Cyan", swatch: "bg-cyan-400" },
-  { value: "emerald", label: "Emerald", swatch: "bg-emerald-400" },
-  { value: "amber", label: "Amber", swatch: "bg-amber-400" },
-  { value: "rose", label: "Rose", swatch: "bg-rose-400" },
-  { value: "pink", label: "Pink", swatch: "bg-pink-400" },
-  { value: "purple", label: "Purple", swatch: "bg-purple-400" },
-];
-
 function loadDisplayPreferences(): DisplayPreferences {
   try {
     const canonical = localStorage.getItem(DISPLAY_PREFERENCES_KEY);
@@ -150,19 +118,23 @@ type LiveIndicators = {
   };
 };
 
-function TimelineWithResources({ session, entries, loading, onSuggestion }: {
+function TimelineWithResources({ session, projectName, entries, loading, onSuggestion, onRequestProjectChange }: {
   session: SessionSummary;
+  projectName: string;
   entries: TimelineEntry[];
   loading: boolean;
   onSuggestion: (prompt: string) => void;
+  onRequestProjectChange: () => void;
 }) {
   const { openProjectResource } = useWorkspaceSurfaces();
   return (
     <Timeline
       session={session}
+      projectName={projectName}
       entries={entries}
       loading={loading}
       onSuggestion={onSuggestion}
+      onRequestProjectChange={onRequestProjectChange}
       onOpenProjectResource={(block: ProjectResourceContentBlock) => {
         openProjectResource(resolveProjectResourceReference(block, session), "timeline");
       }}
@@ -196,29 +168,6 @@ function TerminalSurfaceToggle({ isMobile }: { isMobile: boolean }) {
     else setBottomVisible(!state.bottomVisible);
   };
   return (
-    <Button
-      type="button"
-      variant={active ? "secondary" : "ghost"}
-      size="icon-sm"
-      className="header-outline-control"
-      aria-label={active ? "Hide project terminals" : "Show project terminals"}
-      aria-pressed={active}
-      title="Project terminal (Ctrl+`)"
-      onClick={toggle}
-    >
-      <HugeiconsIcon icon={ComputerTerminal01Icon} strokeWidth={2} />
-    </Button>
-  );
-}
-
-function FileSurfaceToggle({ isMobile }: { isMobile: boolean }) {
-  const { state, setRightVisible, openSidePage } = useWorkspaceSurfaces();
-  const active = isWorkspaceSidePaneVisible(state, isMobile);
-  const toggle = () => {
-    if (active) setRightVisible(false);
-    else openSidePage("files");
-  };
-  return (
     <Tooltip>
       <TooltipTrigger asChild>
         <Button
@@ -226,21 +175,43 @@ function FileSurfaceToggle({ isMobile }: { isMobile: boolean }) {
           variant={active ? "secondary" : "ghost"}
           size="icon-sm"
           className="header-outline-control"
-          aria-label={active ? "Close side pane" : "Show files"}
+          aria-label={active ? "Hide project terminals" : "Show project terminals"}
           aria-pressed={active}
+          onClick={toggle}
+        >
+          <HugeiconsIcon icon={ComputerTerminal01Icon} strokeWidth={2} />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">Project terminal (Ctrl+`)</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function FileSurfaceToggle({ isMobile }: { isMobile: boolean }) {
+  const { state, setRightVisible, openSidePage } = useWorkspaceSurfaces();
+  const filesActive = isWorkspaceSidePaneVisible(state, isMobile) && state.sidePage === "files";
+  const toggle = () => {
+    if (filesActive) setRightVisible(false);
+    else openSidePage("files");
+  };
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant={filesActive ? "secondary" : "ghost"}
+          size="icon-sm"
+          className="header-outline-control"
+          aria-label={filesActive ? "Hide files" : "Show files"}
+          aria-pressed={filesActive}
           onClick={toggle}
         >
           <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
         </Button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">{active ? "Close side pane" : "Files"}</TooltipContent>
+      <TooltipContent side="bottom">{filesActive ? "Hide files" : "Files"}</TooltipContent>
     </Tooltip>
   );
-}
-
-function WorkspaceComposer(props: Omit<ComposerProps, "onOpenSubagents">) {
-  const { openSidePage } = useWorkspaceSurfaces();
-  return <Composer {...props} onOpenSubagents={() => openSidePage("agents")} />;
 }
 
 function SubagentSurfaceAutoOpen({
@@ -270,23 +241,25 @@ function SubagentSurfaceAutoOpen({
 }
 
 function FileCloseShortcut({ isMobile }: { isMobile: boolean }) {
-  const { state, closeAgentsTab, closeProjectResource } = useWorkspaceSurfaces();
+  const { state, closeAgentsTab, closeGitTab, closeProjectResource } = useWorkspaceSurfaces();
 
   useEffect(() => {
     const closeActiveSideTab = (event: KeyboardEvent) => {
       if (isTerminalInputTarget(event.target) || !matchesShortcut(event, "closeThread")) return;
       const sidePaneVisible = isMobile ? state.mobileSurface === "resource" : state.rightVisible;
       const agentsActive = sidePaneVisible && state.sidePage === "agents" && state.agentsTabOpen;
-      const activeFile = agentsActive ? undefined : projectResourceForCloseShortcut(state, isMobile);
-      if (!agentsActive && !activeFile) return;
+      const gitActive = sidePaneVisible && state.sidePage === "git" && state.gitTabOpen;
+      const activeFile = agentsActive || gitActive ? undefined : projectResourceForCloseShortcut(state, isMobile);
+      if (!agentsActive && !gitActive && !activeFile) return;
       event.preventDefault();
       event.stopImmediatePropagation();
       if (agentsActive) closeAgentsTab();
+      else if (gitActive) closeGitTab();
       else if (activeFile) closeProjectResource(activeFile.id);
     };
     window.addEventListener("keydown", closeActiveSideTab, true);
     return () => window.removeEventListener("keydown", closeActiveSideTab, true);
-  }, [closeAgentsTab, closeProjectResource, isMobile, state]);
+  }, [closeAgentsTab, closeGitTab, closeProjectResource, isMobile, state]);
 
   return null;
 }
@@ -327,7 +300,7 @@ function ProjectWorkspace({
       bottom={state.bottomVisible ? bottom : undefined}
       right={state.rightVisible ? right : undefined}
       mobileSurface={state.mobileSurface}
-      mobileResourceTitle={state.sidePage === "agents" ? "Agents" : "Files"}
+      mobileResourceTitle={state.sidePage === "agents" ? "Agents" : state.sidePage === "git" ? "GitHub" : "Files"}
       onMobileSurfaceChange={setMobileSurface}
     />
   );
@@ -354,19 +327,24 @@ function AppShellContent() {
   );
   const { isMobile, setOpenMobile } = useSidebar();
   const { theme, setTheme, accent, setAccent } = useTheme();
+  const navigate = useNavigate();
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const activePage = pathname === "/settings" ? "settings" : pathname === "/usage" ? "usage" : "workspace";
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   const [manageProjectsDialogOpen, setManageProjectsDialogOpen] = useState(false);
   const [projectsRootDialogOpen, setProjectsRootDialogOpen] = useState(false);
   const [shortcutsDialogOpen, setShortcutsDialogOpen] = useState(false);
-  const [usageDialogOpen, setUsageDialogOpen] = useState(false);
   const [filePickerOpen, setFilePickerOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectChooserMode, setProjectChooserMode] = useState<"new" | "change" | null>(null);
+  const [recentlySettledOpen, setRecentlySettledOpen] = useState(false);
+  const [sessionPendingClose, setSessionPendingClose] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
   const [indicators, setIndicators] = useState<LiveIndicators>({});
+  const [gitStatusGeneration, setGitStatusGeneration] = useState(0);
   const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
   const [desktopUpdateDialogOpen, setDesktopUpdateDialogOpen] = useState(false);
   const [rebuildState, setRebuildState] = useState<"idle" | "rebuilding">("idle");
@@ -431,6 +409,10 @@ function AppShellContent() {
 
   const sendSuggestion = useCallback((prompt: string) => anvilClient.sendPrompt(prompt), []);
   const openNewProject = useCallback(() => setNewProjectOpen(true), []);
+  const requestCloseSession = useCallback((sessionId: string) => {
+    const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
+    if (session) setSessionPendingClose({ id: session.id, title: session.title });
+  }, [snapshot.sessions]);
   const requestDeleteSession = useCallback((sessionId: string) => {
     const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
     if (session) setSessionPendingDeletion({ id: session.id, title: session.title });
@@ -498,30 +480,70 @@ function AppShellContent() {
       setComposerAttachments((current) => ({ ...current, [sessionId]: [] }));
     }
   }, []);
+  const selectSession = useCallback((sessionId: string) => {
+    anvilClient.selectSession(sessionId);
+    void navigate({ to: "/" });
+  }, [navigate]);
   const startSession = useCallback((projectId: string) => {
     anvilClient.createSession(projectId);
+    void navigate({ to: "/" });
     if (isMobile) setOpenMobile(false);
     requestAnimationFrame(() => {
       document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Message Pi']")?.focus();
     });
-  }, [isMobile, setOpenMobile]);
+  }, [isMobile, navigate, setOpenMobile]);
+  const changeEmptySessionProject = useCallback((projectId: string) => {
+    if (!activeSession || projectId === activeProject?.id) return;
+    const latestTimeline = anvilClient.getSnapshot().timelines[activeSession.id] ?? [];
+    if (latestTimeline.length > 0) {
+      toast.error("Project can’t be changed", { description: "This thread is no longer empty." });
+      return;
+    }
+
+    const previousSessionId = activeSession.id;
+    startSession(projectId);
+    setComposerDrafts((current) => {
+      const { [previousSessionId]: _removed, ...remaining } = current;
+      return remaining;
+    });
+    setComposerAttachments((current) => {
+      const { [previousSessionId]: _removed, ...remaining } = current;
+      return remaining;
+    });
+    void anvilClient.deleteSession(previousSessionId).catch((error) => {
+      toast.error("Project changed, but the old thread remains", { description: error instanceof Error ? error.message : String(error) });
+    });
+  }, [activeProject?.id, activeSession, startSession]);
   const markGitActionComplete = useCallback(() => {
     const projectId = activeProject?.id;
     if (!projectId) return;
     const git = { additions: 0, deletions: 0 };
     gitIndicatorsByProject.current.set(projectId, git);
     setIndicators((current) => ({ ...current, git }));
+    setGitStatusGeneration((current) => current + 1);
   }, [activeProject?.id]);
   const rebuildWebApp = useCallback(async () => {
     setRebuildState("rebuilding");
     setRebuildError(undefined);
+    toast.loading("Rebuilding web app…", {
+      id: "web-app-rebuild",
+      description: "Running threads will not be interrupted.",
+    });
     try {
       await anvilClient.rebuildWebApp();
       setRebuildDialogOpen(false);
-      toast.success("Web app rebuilt", { description: "Reloading the updated interface…" });
+      toast.success("Web app rebuilt", {
+        id: "web-app-rebuild",
+        description: "Reloading the updated interface…",
+      });
       window.setTimeout(() => window.location.reload(), 500);
     } catch (error) {
-      setRebuildError(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      setRebuildError(message);
+      toast.error("Web app rebuild failed", {
+        id: "web-app-rebuild",
+        description: message,
+      });
     } finally {
       setRebuildState("idle");
     }
@@ -534,6 +556,18 @@ function AppShellContent() {
       Array.from(document.querySelectorAll<HTMLButtonElement>("[data-session-id]"))
         .find((element) => element.dataset.sessionId === sessionId)
         ?.focus();
+    });
+  };
+  const closeThreadActionDialog = (result?: "settled" | "deleted") => {
+    const sessionId = sessionPendingClose?.id;
+    setSessionPendingClose(null);
+    if (!sessionId) return;
+    requestAnimationFrame(() => {
+      const triggers = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-session-id]"));
+      const target = result === "deleted"
+        ? triggers.find((element) => element.dataset.sessionId !== sessionId)
+        : triggers.find((element) => element.dataset.sessionId === sessionId);
+      (target ?? document.querySelector<HTMLButtonElement>("[aria-label='New project']"))?.focus();
     });
   };
   const closeDeleteDialog = (deleted = false) => {
@@ -593,8 +627,14 @@ function AppShellContent() {
   }, [activeSession?.id, activeSession?.status]);
 
   useEffect(() => {
-    document.title = activeSession?.title ? `${activeSession.title} · ocode` : "ocode";
-  }, [activeSession?.title]);
+    document.title = activePage === "settings"
+      ? "Settings · ocode"
+      : activePage === "usage"
+        ? "Usage · ocode"
+        : activeSession?.title
+          ? `${activeSession.title} · ocode`
+          : "ocode";
+  }, [activePage, activeSession?.title]);
 
   useEffect(() => setFilePickerOpen(false), [activeProject?.id, activeSession?.id]);
 
@@ -632,7 +672,7 @@ function AppShellContent() {
           });
           notification.onclick = () => {
             window.focus();
-            anvilClient.selectSession(session.id);
+            selectSession(session.id);
             anvilClient.markSessionRead(session.id);
             notification.close();
           };
@@ -647,13 +687,13 @@ function AppShellContent() {
         action: {
           label: "View",
           onClick: () => {
-            anvilClient.selectSession(session.id);
+            selectSession(session.id);
             anvilClient.markSessionRead(session.id);
           },
         },
       });
     }
-  }, [snapshot.sessions]);
+  }, [selectSession, snapshot.sessions]);
 
   useEffect(() => {
     const markVisibleCompletionRead = () => {
@@ -688,21 +728,31 @@ function AppShellContent() {
         else toast.info("Select a thread to browse project files");
         return;
       }
+      if (matchesShortcut(event, "recentlySettled")) {
+        event.preventDefault();
+        setRecentlySettledOpen(true);
+        return;
+      }
+      if (matchesShortcut(event, "rebuild")) {
+        event.preventDefault();
+        if (rebuildState === "idle") void rebuildWebApp();
+        return;
+      }
       if (matchesShortcut(event, "settings")) {
         event.preventDefault();
-        setSettingsOpen(true);
+        void navigate({ to: "/settings" });
         return;
       }
       if (isTerminalInputTarget(event.target)) return;
       if (matchesShortcut(event, "newThread")) {
         event.preventDefault();
-        window.dispatchEvent(new Event("ocode:new-thread"));
+        setProjectChooserMode("new");
         return;
       }
       if (matchesShortcut(event, "closeThread")) {
         event.preventDefault();
-        if (activeSession?.internal && activeSession.parentSessionId) anvilClient.selectSession(activeSession.parentSessionId);
-        else if (activeSession) requestDeleteSession(activeSession.id);
+        if (activeSession?.internal && activeSession.parentSessionId) selectSession(activeSession.parentSessionId);
+        else if (activeSession) requestCloseSession(activeSession.id);
         return;
       }
       const threadIndex = threadNumberShortcutIndex(event);
@@ -710,7 +760,7 @@ function AppShellContent() {
         const target = numberedThreadTarget(sortSessionsByActivity(ordinarySessions), threadIndex);
         if (target) {
           event.preventDefault();
-          anvilClient.selectSession(target.id);
+          selectSession(target.id);
           if (isMobile) setOpenMobile(false);
         }
         return;
@@ -726,14 +776,14 @@ function AppShellContent() {
         );
         if (target) {
           event.preventDefault();
-          anvilClient.selectSession(target.id);
+          selectSession(target.id);
           if (isMobile) setOpenMobile(false);
         }
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProject, activeSession, isMobile, ordinarySessions, requestDeleteSession, setOpenMobile, snapshot.activeSessionId]);
+  }, [activeProject, activeSession, isMobile, navigate, ordinarySessions, rebuildState, rebuildWebApp, requestCloseSession, selectSession, setOpenMobile, snapshot.activeSessionId]);
 
   if (!snapshot.workspaceLocation && snapshot.connection !== "connected") {
     return (
@@ -748,9 +798,16 @@ function AppShellContent() {
     <div className="app-shell">
       <Sidebar
         snapshot={sidebarSnapshot}
-        onSelectSession={anvilClient.selectSession}
+        onSelectSession={selectSession}
         onCreateSession={startSession}
         onNewProject={openNewProject}
+        activePage={activePage}
+        onOpenSettings={() => void navigate({ to: "/settings" })}
+        onOpenUsage={() => void navigate({ to: "/usage" })}
+        onBack={() => void navigate({ to: "/" })}
+        projectChooserMode={projectChooserMode}
+        onProjectChooserModeChange={setProjectChooserMode}
+        onChangeProject={changeEmptySessionProject}
         usage={indicators.usage}
         onRequestDeleteSession={requestDeleteSession}
         onRequestRenameSession={requestRenameSession}
@@ -761,6 +818,28 @@ function AppShellContent() {
       />
 
       <SidebarInset className="workspace">
+        {activePage === "settings" ? (
+          <SettingsPage
+            theme={theme}
+            accent={accent}
+            displayPreferences={displayPreferences}
+            desktopClient={desktopClient}
+            rebuildState={rebuildState}
+            onThemeChange={setTheme}
+            onAccentChange={setAccent}
+            onDisplayPreferencesChange={setDisplayPreferences}
+            onOpenShortcuts={() => setShortcutsDialogOpen(true)}
+            onManageProjects={() => setManageProjectsDialogOpen(true)}
+            onProjectsRoot={() => setProjectsRootDialogOpen(true)}
+            onDesktopUpdates={() => setDesktopUpdateDialogOpen(true)}
+            onRebuild={() => {
+              setRebuildError(undefined);
+              setRebuildDialogOpen(true);
+            }}
+          />
+        ) : activePage === "usage" ? (
+          <UsagePage />
+        ) : (
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
           <LiveProjectResourceAutoOpen />
           <SubagentSurfaceAutoOpen
@@ -786,6 +865,8 @@ function AppShellContent() {
             right={activeProject ? (
               <ProjectResourceSurface
                 projectId={activeProject.id}
+                projectName={activeProject.name}
+                sessionId={activeSession?.id}
                 subagents={subagents}
                 connection={snapshot.connection}
                 subagentsLoading={activeSession ? snapshot.hydratingSessionIds.includes(activeSession.id) : false}
@@ -794,6 +875,7 @@ function AppShellContent() {
                 hydratingChildSessionIds={activeSession ? snapshot.hydratingSessionIds.filter((id) => id !== activeSession.id) : []}
                 onCancelSubagent={(runId) => activeSession ? anvilClient.cancelSubagent(activeSession.id, runId) : Promise.resolve()}
                 onLoadSubagentChild={(item) => activeSession ? anvilClient.loadSubagentSession(activeSession.id, item.id) : Promise.reject(new Error("No active parent session"))}
+                onGitActionComplete={markGitActionComplete}
               />
             ) : undefined}
             main={<div
@@ -819,123 +901,11 @@ function AppShellContent() {
                 key={activeProject.id}
                 projectId={activeProject.id}
                 projectName={activeProject.name}
-                sessionId={activeSession?.id}
-                onComplete={markGitActionComplete}
+                refreshGeneration={gitStatusGeneration}
               />
             )}
             {activeProject && <TerminalSurfaceToggle isMobile={isMobile} />}
             {activeProject && <FileSurfaceToggle isMobile={isMobile} />}
-            <DropdownMenu
-              open={settingsOpen}
-              onOpenChange={(open) => {
-                setSettingsOpen(open);
-                if (open) setRebuildError(undefined);
-              }}
-            >
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" className="header-outline-control" aria-label="Forge settings">
-                  <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel>Forge runtime</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    {theme === "dark" ? <HugeiconsIcon icon={Moon02Icon} strokeWidth={2} /> : theme === "light" ? <HugeiconsIcon icon={Sun03Icon} strokeWidth={2} /> : <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />}
-                    Display
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent className="w-48">
-                    <DropdownMenuLabel>Theme</DropdownMenuLabel>
-                    <DropdownMenuRadioGroup value={theme} onValueChange={(value) => setTheme(value as "system" | "light" | "dark")}>
-                      <DropdownMenuRadioItem value="system"><HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />System</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="light"><HugeiconsIcon icon={Sun03Icon} strokeWidth={2} />Light</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="dark"><HugeiconsIcon icon={Moon02Icon} strokeWidth={2} />Dark</DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>Accent</DropdownMenuLabel>
-                    <DropdownMenuRadioGroup value={accent} onValueChange={(value) => setAccent(value as Accent)}>
-                      {ACCENT_OPTIONS.map((option) => (
-                        <DropdownMenuRadioItem key={option.value} value={option.value}>
-                          <span className={`size-2.5 rounded-full ring-1 ring-black/10 ${option.swatch}`} aria-hidden="true" />
-                          {option.label}
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>Interface font</DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
-                      value={displayPreferences.fontFamily}
-                      onValueChange={(fontFamily) => setDisplayPreferences((current) => ({ ...current, fontFamily: fontFamily as InterfaceFont }))}
-                    >
-                      <DropdownMenuRadioItem value="system">System (default)</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="inter">Inter</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="geist">Geist</DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>Text size</DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
-                      value={displayPreferences.fontSize}
-                      onValueChange={(fontSize) => setDisplayPreferences((current) => ({ ...current, fontSize: fontSize as MessageFontSize }))}
-                    >
-                      <DropdownMenuRadioItem value="small">Small</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="default">Default</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="large">Large</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="extra-large">Extra large</DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuLabel>Message width</DropdownMenuLabel>
-                    <DropdownMenuRadioGroup
-                      value={displayPreferences.width}
-                      onValueChange={(width) => setDisplayPreferences((current) => ({ ...current, width: width as MessageWidth }))}
-                    >
-                      <DropdownMenuRadioItem value="narrow">Normal</DropdownMenuRadioItem>
-                      <DropdownMenuRadioItem value="full">Full</DropdownMenuRadioItem>
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => setShortcutsDialogOpen(true)}>
-                  <span className="text-base leading-none" aria-hidden="true">⌨</span>
-                  Keyboard shortcuts
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setUsageDialogOpen(true)}>
-                  <HugeiconsIcon icon={DatabaseSettingIcon} strokeWidth={2} />
-                  Usage
-                </DropdownMenuItem>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <HugeiconsIcon icon={Folder01Icon} strokeWidth={2} />
-                    Projects
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    <DropdownMenuItem onSelect={() => setManageProjectsDialogOpen(true)}>Manage projects</DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => setProjectsRootDialogOpen(true)}>Projects root</DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger>
-                    <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-                    Maintenance
-                  </DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    {desktopClient && (
-                      <DropdownMenuItem onSelect={() => setDesktopUpdateDialogOpen(true)}>
-                        <HugeiconsIcon icon={ComputerIcon} strokeWidth={2} />
-                        Desktop updates
-                      </DropdownMenuItem>
-                    )}
-                    <DropdownMenuItem
-                      disabled={rebuildState === "rebuilding"}
-                      onSelect={() => setRebuildDialogOpen(true)}
-                    >
-                      <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-                      Rebuild web app
-                    </DropdownMenuItem>
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </header>
 
@@ -970,19 +940,21 @@ function AppShellContent() {
             <TimelineWithResources
               key={activeSession.id}
               session={activeSession}
+              projectName={activeProject?.name ?? "this project"}
               entries={timeline}
               loading={snapshot.hydratingSessionIds.includes(activeSession.id)}
               onSuggestion={sendSuggestion}
+              onRequestProjectChange={() => setProjectChooserMode("change")}
             />
 
             <InteractionPanel requests={pendingInteractions} onRespond={anvilClient.respondToInteraction} />
 
             {activeSession.internal ? (
               <InternalSessionFooter
-                onReturn={activeSession.parentSessionId ? () => anvilClient.selectSession(activeSession.parentSessionId!) : undefined}
+                onReturn={activeSession.parentSessionId ? () => selectSession(activeSession.parentSessionId!) : undefined}
               />
             ) : (
-            <WorkspaceComposer
+            <Composer
               sessionId={activeSession.id}
               modelId={activeSession.modelId}
               thinkingLevel={activeSession.thinkingLevel}
@@ -998,9 +970,6 @@ function AppShellContent() {
               creationError={activeSessionCreationError}
               widgets={widgets}
               contextUsage={indicators.context}
-              workspaceKind={activeProject?.workspaceKind}
-              subagents={subagents}
-              subagentsLoading={snapshot.hydratingSessionIds.includes(activeSession.id)}
               attachments={composerAttachments[activeSession.id] ?? []}
               onAttachFiles={attachFiles}
               onRemoveAttachment={removeAttachment}
@@ -1032,10 +1001,20 @@ function AppShellContent() {
             </div>}
           />
         </WorkspaceSurfaceProvider>
+        )}
       </SidebarInset>
 
       <ShortcutsDialog open={shortcutsDialogOpen} onOpenChange={setShortcutsDialogOpen} />
-      <UsageDialog open={usageDialogOpen} onOpenChange={setUsageDialogOpen} />
+      <RecentlySettledDialog
+        open={recentlySettledOpen}
+        sessions={ordinarySessions}
+        projects={snapshot.projects}
+        onOpenChange={setRecentlySettledOpen}
+        onRestore={async (sessionId) => {
+          await anvilClient.setSessionSettled(sessionId, false);
+          selectSession(sessionId);
+        }}
+      />
       {newProjectOpen && (
         <NewProjectDialog
           onClose={() => setNewProjectOpen(false)}
@@ -1078,6 +1057,14 @@ function AppShellContent() {
           onRename={(title) => anvilClient.renameSession(sessionPendingRename.id, title)}
         />
       )}
+      {sessionPendingClose && (
+        <SettleOrDeleteThreadDialog
+          title={sessionPendingClose.title}
+          onClose={closeThreadActionDialog}
+          onSettle={() => anvilClient.setSessionSettled(sessionPendingClose.id, true)}
+          onDelete={() => anvilClient.deleteSession(sessionPendingClose.id)}
+        />
+      )}
       {sessionPendingDeletion && (
         <DeleteThreadDialog
           title={sessionPendingDeletion.title}
@@ -1088,22 +1075,33 @@ function AppShellContent() {
       {desktopClient && (
         <DesktopUpdateDialog open={desktopUpdateDialogOpen} onOpenChange={setDesktopUpdateDialogOpen} />
       )}
+      <Outlet />
       <AlertDialog open={rebuildDialogOpen} onOpenChange={(open) => !open && rebuildState !== "rebuilding" && setRebuildDialogOpen(false)}>
         <AlertDialogContent onEscapeKeyDown={(event) => rebuildState === "rebuilding" && event.preventDefault()}>
           <AlertDialogHeader>
-            <AlertDialogTitle>Rebuild the web app?</AlertDialogTitle>
+            <AlertDialogTitle>{rebuildState === "rebuilding" ? "Rebuilding web app…" : "Rebuild the web app?"}</AlertDialogTitle>
             <AlertDialogDescription>
-              This builds the latest React changes and reloads the updated interface. Running threads will not be interrupted.
+              {rebuildState === "rebuilding"
+                ? "Building the latest interface. Running threads will not be interrupted."
+                : "This builds the latest React changes and reloads the updated interface. Running threads will not be interrupted."}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {rebuildState === "rebuilding" && (
+            <div className="flex items-center gap-2 py-2 text-sm text-muted-foreground" role="status" aria-live="polite">
+              <span className="forge-spinner size-4" aria-hidden="true" />
+              Rebuilding…
+            </div>
+          )}
           {rebuildError && <p className="text-xs text-destructive" role="alert">{rebuildError}</p>}
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={rebuildState === "rebuilding"}>Cancel</AlertDialogCancel>
-            <Button disabled={rebuildState === "rebuilding"} onClick={() => void rebuildWebApp()}>
-              <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
-              {rebuildState === "rebuilding" ? "Rebuilding…" : "Rebuild"}
-            </Button>
-          </AlertDialogFooter>
+          {rebuildState !== "rebuilding" && (
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <Button onClick={() => void rebuildWebApp()}>
+                <HugeiconsIcon icon={RefreshIcon} strokeWidth={2} />
+                Rebuild
+              </Button>
+            </AlertDialogFooter>
+          )}
         </AlertDialogContent>
       </AlertDialog>
     </div>

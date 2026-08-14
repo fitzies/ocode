@@ -42,7 +42,6 @@ export function SubagentStatusIcon({ item }: { item: SubagentActivityItem }) {
 export function SubagentStatusBadge({ item }: { item: SubagentActivityItem }) {
   return (
     <Badge variant="secondary" className={`subagent-status-badge subagent-status-badge--${item.status}`}>
-      <SubagentStatusIcon item={item} />
       {subagentStatusLabel(item.status)}
     </Badge>
   );

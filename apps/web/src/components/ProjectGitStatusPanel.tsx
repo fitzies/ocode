@@ -5,15 +5,15 @@ import {
   Clock03Icon,
   CloudUploadIcon,
   ExternalLinkIcon,
+  GitBranchIcon,
   GitCommitIcon,
   Loading03Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useState } from "react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { projectGitCheckSummary } from "./projectGitPresentation";
 
@@ -132,84 +132,172 @@ function Checks({ checks }: { checks: ProjectGitCheck[] }) {
   );
 }
 
+type GitPanelView = "changes" | "commits" | "checks";
+
+function pathParts(path: string): { directory: string; name: string } {
+  const separator = path.lastIndexOf("/");
+  return separator < 0
+    ? { directory: "", name: path }
+    : { directory: path.slice(0, separator + 1), name: path.slice(separator + 1) };
+}
+
 export function ProjectGitStatusPanel({
   status,
   gitActionLabel,
   gitActionBusy = false,
   onGitAction,
+  onOpenFile,
 }: {
   status: ProjectGitStatus;
   gitActionLabel?: string;
   gitActionBusy?: boolean;
   onGitAction?: () => void;
+  onOpenFile?: (path: string) => void;
 }) {
   const pullRequest = status.github?.pullRequest;
   const commit = status.github?.commit;
-  const checks = commit ? commit.checks : pullRequest?.checks ?? [];
+  const checks = (commit ? commit.checks : pullRequest?.checks ?? []).filter((check) => check.kind === "check");
+  const commits = status.recentCommits?.length ? status.recentCommits : status.lastCommit ? [status.lastCommit] : [];
+  const [view, setView] = useState<GitPanelView>(status.changedFiles > 0 ? "changes" : "commits");
+  const repositoryLabel = status.remote?.provider === "github" && status.remote.owner && status.remote.repository
+    ? `${status.remote.owner}/${status.remote.repository}`
+    : status.upstream ?? "Local repository";
+
+  const tabs: Array<{ id: GitPanelView; label: string; count: number }> = [
+    { id: "changes", label: "Changes", count: status.changedFiles },
+    { id: "commits", label: "Commits", count: commits.length },
+    { id: "checks", label: "Checks", count: checks.length },
+  ];
 
   return (
     <div className="min-w-0 text-popover-foreground">
-      {commit && (
-        <div className="px-4 py-3 pr-12">
-          <div className="mb-1.5 text-[0.5625rem] font-medium uppercase tracking-[0.1em] text-muted-foreground">Latest commit</div>
-          <div className="flex items-start justify-between gap-3">
-            <strong className="min-w-0 truncate text-[0.75rem] font-medium text-foreground">{commit.subject}</strong>
-            <a className="shrink-0 font-mono text-[0.625rem] text-[var(--status-info)] hover:underline" href={commit.url} target="_blank" rel="noreferrer">{commit.shortHash}</a>
+      <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-[0.75rem] font-medium text-foreground">
+            <HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} className="size-3.5 text-muted-foreground" />
+            <span className="truncate">{status.branch ?? "Repository"}</span>
           </div>
+          <div className="mt-0.5 truncate text-[0.625rem] text-muted-foreground">{repositoryLabel}</div>
         </div>
-      )}
-
-      {pullRequest && (
-        <div className={cn("border-b border-border bg-muted/20 px-4 py-3", !commit && "border-t")}>
-          <div className="flex items-start justify-between gap-3">
-            <a className="min-w-0 truncate font-medium text-foreground hover:underline" href={pullRequest.url} target="_blank" rel="noreferrer">
-              PR #{pullRequest.number} · {pullRequest.title}
-            </a>
-            <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[0.5625rem] capitalize">{pullRequest.isDraft ? "Draft" : pullRequest.state}</Badge>
-          </div>
-          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[0.625rem] text-muted-foreground">
-            <span>{reviewLabel(pullRequest)}</span><span>{mergeLabel(pullRequest)}</span><span>Updated {relativeTime(pullRequest.updatedAt)}</span>
-          </div>
-        </div>
-      )}
-
-      <div className={cn("flex items-end justify-between gap-3 px-4 py-3", commit ? "border-t border-border" : "pr-12")}>
-        <div>
-          <div className="mb-1.5 text-[0.5625rem] font-medium uppercase tracking-[0.1em] text-muted-foreground">Local changes</div>
-          <span className="text-[0.6875rem] text-foreground">{status.changedFiles > 0 ? `${status.changedFiles} changed ${status.changedFiles === 1 ? "file" : "files"}` : "Working tree clean"}</span>
-        </div>
-        {(status.additions > 0 || status.deletions > 0) && (
-          <span className="shrink-0 font-mono text-[0.6875rem]"><span className="text-[var(--green)]">+{status.additions}</span>&nbsp;&nbsp;<span className="text-[var(--red)]">−{status.deletions}</span></span>
+        {onGitAction && gitActionLabel && (
+          <Button size="xs" onClick={onGitAction} disabled={gitActionBusy} aria-label={gitActionLabel}>
+            <HugeiconsIcon icon={gitActionBusy ? Loading03Icon : GitCommitIcon} strokeWidth={2} className={cn(gitActionBusy && "animate-spin")} />
+            {gitActionLabel}
+          </Button>
         )}
       </div>
 
+      {pullRequest && (
+        <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/20 px-3 py-2">
+          <div className="min-w-0">
+            <a className="block truncate text-[0.6875rem] font-medium text-foreground hover:underline" href={pullRequest.url} target="_blank" rel="noreferrer">
+              PR #{pullRequest.number} · {pullRequest.title}
+            </a>
+            <div className="mt-0.5 flex gap-2 text-[0.5625rem] text-muted-foreground">
+              <span>{reviewLabel(pullRequest)}</span><span>·</span><span>{mergeLabel(pullRequest)}</span>
+            </div>
+          </div>
+          <Button asChild variant="outline" size="icon-xs">
+            <a href={pullRequest.url} target="_blank" rel="noreferrer" aria-label={`Open pull request ${pullRequest.number}`}><HugeiconsIcon icon={ExternalLinkIcon} strokeWidth={2} /></a>
+          </Button>
+        </div>
+      )}
+
+      <div className="flex items-center gap-1 border-b border-border px-2 py-1.5" role="tablist" aria-label="Repository activity">
+        {tabs.map((tab) => (
+          <Button
+            type="button"
+            id={`git-activity-tab-${tab.id}`}
+            role="tab"
+            aria-controls={`git-activity-panel-${tab.id}`}
+            aria-selected={view === tab.id}
+            variant={view === tab.id ? "secondary" : "ghost"}
+            size="sm"
+            className="h-7 gap-1.5 px-2.5 text-[0.6875rem] font-normal"
+            onClick={() => setView(tab.id)}
+            key={tab.id}
+          >
+            {tab.label}<span className="text-muted-foreground tabular-nums">{tab.count}</span>
+          </Button>
+        ))}
+      </div>
+
       {(status.reason || status.statusError) && status.repositoryState !== "no-remote" && status.repositoryState !== "not-a-repository" && (
-        <div className="px-4 pb-3">
+        <div className="px-3 pt-3">
           <Alert variant="destructive"><HugeiconsIcon icon={Alert02Icon} strokeWidth={2} /><AlertTitle>Repository needs attention</AlertTitle><AlertDescription>{status.statusError ?? status.reason}</AlertDescription></Alert>
         </div>
       )}
 
       {status.remoteStatusError && (
-        <div className="px-4 pb-3">
+        <div className="px-3 pt-3">
           <Alert><HugeiconsIcon icon={CloudUploadIcon} strokeWidth={2} /><AlertTitle>{commit && !commit.complete ? "Some delivery status unavailable" : "Remote status unavailable"}</AlertTitle><AlertDescription>{status.remoteStatusError}</AlertDescription></Alert>
         </div>
       )}
 
-      {(commit || pullRequest) && checks.some((check) => check.kind === "check") && <><Separator /><Checks checks={checks} /></>}
+      {view === "changes" && (
+        <section id="git-activity-panel-changes" role="tabpanel" aria-labelledby="git-activity-tab-changes" className="py-1.5">
+          {status.files?.length ? status.files.map((file) => {
+            const parts = pathParts(file.path);
+            const changeTone = file.additions > 0 && file.deletions > 0
+              ? "border-[var(--amber)] text-[var(--amber)]"
+              : file.deletions > 0
+                ? "border-[var(--red)] text-[var(--red)]"
+                : "border-[var(--green)] text-[var(--green)]";
+            return (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-9 w-full min-w-0 justify-start gap-2 rounded-none px-3 font-normal"
+                key={file.path}
+                title={file.path}
+                onClick={() => onOpenFile?.(file.path)}
+              >
+                <span className="flex min-w-0 flex-1 items-baseline text-left text-[0.75rem]">
+                  {parts.directory && <span className="min-w-0 truncate text-muted-foreground">{parts.directory}</span>}
+                  <span className="max-w-[62%] shrink-0 truncate text-foreground">{parts.name}</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1.5 text-[0.625rem] tabular-nums">
+                  {file.additions > 0 && <span className="text-[var(--green)]">+{file.additions}</span>}
+                  {file.deletions > 0 && <span className="text-[var(--red)]">−{file.deletions}</span>}
+                  {file.additions === 0 && file.deletions === 0 && <span className="text-muted-foreground">binary</span>}
+                  <span className={cn("flex size-3 items-center justify-center rounded-[2px] border text-[0.5rem] leading-none", changeTone)} aria-hidden="true">
+                    {file.additions > 0 && file.deletions > 0 ? "·" : file.deletions > 0 ? "−" : "+"}
+                  </span>
+                </span>
+              </Button>
+            );
+          }) : (
+            <p className="px-3 py-6 text-center text-[0.6875rem] text-muted-foreground">Working tree clean.</p>
+          )}
+        </section>
+      )}
 
-      <div className="flex items-center justify-end border-t border-border px-3 py-2">
-        <div className="flex items-center gap-1">
-          {onGitAction && gitActionLabel && (
-            <Button variant="ghost" size="xs" className="bg-transparent" onClick={onGitAction} disabled={gitActionBusy} aria-label={gitActionLabel}>
-              <HugeiconsIcon icon={gitActionBusy ? Loading03Icon : GitCommitIcon} strokeWidth={2} className={cn(gitActionBusy && "animate-spin")} />
-              {gitActionLabel}
-            </Button>
-          )}
-          {pullRequest && (
-            <Button asChild variant="ghost" size="xs"><a href={pullRequest.url} target="_blank" rel="noreferrer">PR<HugeiconsIcon icon={ExternalLinkIcon} strokeWidth={2} /></a></Button>
-          )}
-        </div>
-      </div>
+      {view === "commits" && (
+        <section id="git-activity-panel-commits" role="tabpanel" aria-label="Recent commits" className="py-1.5">
+          {commits.map((item) => {
+            const url = status.remote?.provider === "github" && status.remote.webUrl ? `${status.remote.webUrl}/commit/${item.hash}` : undefined;
+            const content = (
+              <>
+                <HugeiconsIcon icon={GitCommitIcon} strokeWidth={2} className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1 truncate text-left text-[0.75rem] font-normal">{item.subject}</span>
+                <span className="shrink-0 text-[0.625rem] text-muted-foreground">{item.shortHash}</span>
+                <span className="w-10 shrink-0 text-right text-[0.5625rem] text-muted-foreground">{relativeTime(item.authoredAt)}</span>
+              </>
+            );
+            return url ? (
+              <Button asChild variant="ghost" size="sm" className="h-9 w-full justify-start gap-2 rounded-none px-3" key={item.hash}>
+                <a href={url} target="_blank" rel="noreferrer">{content}</a>
+              </Button>
+            ) : (
+              <div className="flex h-9 items-center gap-2 px-3" key={item.hash}>{content}</div>
+            );
+          })}
+          {commits.length === 0 && <p className="px-3 py-6 text-center text-[0.6875rem] text-muted-foreground">No commits yet.</p>}
+        </section>
+      )}
+
+      {view === "checks" && <div id="git-activity-panel-checks" role="tabpanel" aria-labelledby="git-activity-tab-checks"><Checks checks={checks} /></div>}
     </div>
   );
 }

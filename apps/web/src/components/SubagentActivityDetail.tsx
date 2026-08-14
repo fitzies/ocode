@@ -46,7 +46,6 @@ export function SubagentActivityDetail({ item, now, copied, cancelling, actionEr
         <Button ref={backButtonRef} type="button" variant="ghost" size="icon-sm" onClick={onBack} aria-label="Back to Agents">
           <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
         </Button>
-        <SubagentStatusIcon item={item} />
         <strong className="subagent-detail-role">{subagentRoleLabel(item.role)}</strong>
         <SubagentStatusBadge item={item} />
         <span className="subagent-detail-timer">

@@ -31,19 +31,23 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef } from "react";
 import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
 import { MarkdownText } from "./MarkdownText";
 import { MessageActions } from "./MessageActions";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
+import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./ui/dialog";
+import { useTimelineScroll } from "./timelineScroll";
 import { displayToolName, presentTool, type ToolCategory } from "./toolPresentation";
 
 interface TimelineProps {
   session: SessionSummary;
+  projectName?: string;
   entries: TimelineEntry[];
   loading?: boolean;
   onSuggestion: (prompt: string) => void;
+  onRequestProjectChange?: () => void;
   onOpenProjectResource?: (block: ProjectResourceContentBlock) => void;
 }
 
@@ -96,14 +100,38 @@ function titleCase(value: string): string {
 }
 
 const EMPTY_FILE_ATTACHMENT_MARKER = /^<file name="[^"\r\n]*"><\/file>\r?$/gm;
+const SKILL_INVOCATION_PREFIX = /^\/skill:([^\s]+)(?:[\t\n\r ]+|$)/;
+const COMMAND_INVOCATION_PREFIX = /^\/([^\s:]+)[\t\n\r ]+/;
+
+function userSkillName(blocks: ContentBlock[]): string | undefined {
+  for (const block of blocks) {
+    if (block.type !== "text") continue;
+    return SKILL_INVOCATION_PREFIX.exec(block.text)?.[1];
+  }
+  return undefined;
+}
+
+function userCommandName(blocks: ContentBlock[]): string | undefined {
+  for (const block of blocks) {
+    if (block.type !== "text") continue;
+    return COMMAND_INVOCATION_PREFIX.exec(block.text)?.[1];
+  }
+  return undefined;
+}
 
 function userVisibleContent(blocks: ContentBlock[]): ContentBlock[] {
   const hasImage = blocks.some((block) => block.type === "image");
-  if (!hasImage) return blocks.filter((block) => block.type !== "toolCall");
+  let checkedSkillPrefix = false;
   return blocks.flatMap<ContentBlock>((block) => {
     if (block.type === "toolCall") return [];
     if (block.type !== "text") return [block];
-    const text = block.text.replace(EMPTY_FILE_ATTACHMENT_MARKER, "");
+
+    let text = block.text;
+    if (!checkedSkillPrefix) {
+      text = text.replace(SKILL_INVOCATION_PREFIX, "");
+      checkedSkillPrefix = true;
+    }
+    if (hasImage) text = text.replace(EMPTY_FILE_ATTACHMENT_MARKER, "");
     if (text === block.text) return [block];
     return text.trim() ? [{ ...block, text }] : [];
   });
@@ -160,6 +188,27 @@ function JsonDetails({ label, value }: { label: string; value?: JsonValue }) {
   );
 }
 
+function ImageBlock({ source, alt, caption }: { source?: string; alt: string; caption?: string }) {
+  return (
+    <figure className="image-block">
+      {source ? (
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button type="button" variant="ghost" className="image-block__trigger" aria-label={`Open ${caption ?? alt}`}>
+              <img src={source} alt={alt} />
+            </Button>
+          </DialogTrigger>
+          <DialogContent showCloseButton={false} className="image-lightbox w-auto rounded-none bg-transparent p-0 ring-0" aria-describedby={undefined}>
+            <DialogTitle className="sr-only">{caption ?? alt}</DialogTitle>
+            <img src={source} alt={alt} />
+          </DialogContent>
+        </Dialog>
+      ) : <div className="image-placeholder">Image data unavailable</div>}
+      {caption && <figcaption>{caption}</figcaption>}
+    </figure>
+  );
+}
+
 function ContentBlocks({ blocks, compact = false, onOpenProjectResource }: {
   blocks: ContentBlock[];
   compact?: boolean;
@@ -190,12 +239,7 @@ function ContentBlocks({ blocks, compact = false, onOpenProjectResource }: {
         }
         if (block.type === "image") {
           const source = block.url ?? (block.data ? `data:${block.mimeType};base64,${block.data}` : undefined);
-          return (
-            <figure className="image-block" key={block.id}>
-              {source ? <img src={source} alt={block.alt ?? block.name ?? "Tool output"} /> : <div className="image-placeholder">Image data unavailable</div>}
-              {(block.name || block.alt) && <figcaption>{block.name ?? block.alt}</figcaption>}
-            </figure>
-          );
+          return <ImageBlock key={block.id} source={source} alt={block.alt ?? block.name ?? "Tool output"} caption={block.name ?? block.alt} />;
         }
         if (block.type === "data") return <JsonDetails key={block.id} label={block.label ?? "Structured data"} value={block.data} />;
         if (block.type === "toolCall") return null;
@@ -305,7 +349,7 @@ function RetryTimelineItem({ retry, entering }: { retry: RetryCycle; entering: b
 
   return (
     <details className={`tool-event retry-event retry-event--${state} tool-event--${active ? "running" : succeeded ? "completed" : "failed"}${entering ? " timeline-entry--entering" : ""}`}>
-      <summary>
+      <summary className="tool-event-trigger">
         <span className="tool-icon">
           <HugeiconsIcon icon={active ? Loading03Icon : CloudUploadIcon} strokeWidth={2} className={`${active ? "spin " : ""}size-3.5`} />
         </span>
@@ -376,10 +420,12 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
         </article>
       );
     }
+    const skillName = entry.role === "user" ? userSkillName(entry.content) : undefined;
+    const commandName = entry.role === "user" && !skillName ? userCommandName(entry.content) : undefined;
     const visibleContent = entry.role === "user"
       ? userVisibleContent(entry.content)
       : entry.content.filter((block) => block.type !== "toolCall");
-    if (!visibleContent.length && !entry.error && entry.status !== "streaming") return null;
+    if (!visibleContent.length && !skillName && !commandName && !entry.error && entry.status !== "streaming") return null;
     const messageClass = entry.role === "user" ? "user-message" : entry.role === "assistant" ? "assistant-message" : "system-message";
     const responseMarkdown = entry.role === "assistant" && entry.status === "complete"
       ? entry.content
@@ -390,7 +436,17 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
     const showResponseActions = responseMarkdown.trim().length > 0;
     return (
       <article className={`${messageClass} message-status--${entry.status}${entranceClass}`}>
-        <ContentBlocks blocks={visibleContent} onOpenProjectResource={onOpenProjectResource} />
+        {skillName || commandName ? (
+          <div className="user-invocation-message">
+            {skillName && <span className="user-invocation user-invocation--skill" aria-label={`Skill: ${skillName}`}>{skillName}</span>}
+            {commandName && <span className="user-invocation user-invocation--command" aria-label={`Command: ${commandName}`}>{commandName}</span>}
+            <ContentBlocks blocks={skillName ? visibleContent : visibleContent.map((block, index) => (
+              index === 0 && block.type === "text" ? { ...block, text: block.text.replace(COMMAND_INVOCATION_PREFIX, "") } : block
+            ))} onOpenProjectResource={onOpenProjectResource} />
+          </div>
+        ) : (
+          <ContentBlocks blocks={visibleContent} onOpenProjectResource={onOpenProjectResource} />
+        )}
         {entry.status === "streaming" && entry.role === "user" && entry.id.startsWith("optimistic-")
           ? <span className="message-pending" role="status">
               {entry.raw && typeof entry.raw === "object" && !Array.isArray(entry.raw) && entry.raw.delivery === "steer" ? "Queueing…" : "Sending…"}
@@ -651,13 +707,10 @@ function TimelineRowView({ row, entering = false, onOpenProjectResource }: {
   );
 }
 
-export const Timeline = memo(function Timeline({ session, entries, loading = false, onOpenProjectResource = () => undefined }: TimelineProps) {
+export const Timeline = memo(function Timeline({ session, projectName = "this project", entries, loading = false, onRequestProjectChange = () => undefined, onOpenProjectResource = () => undefined }: TimelineProps) {
+  const hasEntries = entries.length > 0;
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-  const scrollFrame = useRef<number | undefined>(undefined);
-  const followingRef = useRef(true);
-  const [following, setFollowing] = useState(true);
   const rows = useMemo(() => timelineRows(entries), [entries]);
   const seenRowKeys = useRef<Set<string> | null>(null);
   if (seenRowKeys.current === null) seenRowKeys.current = new Set(rows.map((row) => row.key));
@@ -683,8 +736,33 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
     getItemKey: (index) => rows[index]?.key ?? index,
     overscan: 8,
   });
-  // The CSS bottom anchor owns follow behavior; virtual measurements must not issue competing scroll corrections.
-  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = () => false;
+  const { following, isFollowingRef, followLatest, handlers: scrollHandlers } = useTimelineScroll({
+    sessionId: session.id,
+    hasEntries,
+    loading,
+    scrollRef,
+    contentRef,
+    getAnchor: virtualized ? () => {
+      const scroller = scrollRef.current;
+      if (!scroller) return undefined;
+      const item = virtualizer.getVirtualItemForOffset(scroller.scrollTop);
+      return item ? { key: String(item.key), offset: scroller.scrollTop - item.start } : undefined;
+    } : undefined,
+    restoreAnchor: virtualized ? (anchor) => {
+      const index = rows.findIndex((row) => row.key === anchor.key);
+      if (index < 0) return false;
+      const target = virtualizer.getOffsetForIndex(index, "start");
+      if (!target) return false;
+      virtualizer.scrollToOffset(target[0] + anchor.offset, { align: "start" });
+      return true;
+    } : undefined,
+  });
+  // The scroll controller owns live following; TanStack only preserves a detached reader's viewport.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
+    !isFollowingRef.current &&
+    instance.scrollDirection !== "backward" &&
+    item.start < (instance.scrollOffset ?? 0)
+  );
   const activeTool = entries.some((entry) => entry.kind === "tool" && (entry.status === "running" || entry.status === "queued"));
   const activeRetry = rows.some((row) => row.kind === "retry" && !row.retry.end);
   const streamingResponse = entries.some((entry) => (
@@ -696,78 +774,15 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
   const lastUserMessage = [...entries].reverse().find(isHumanUserMessage);
   const showWorkingStatus = session.status === "running" && !activeTool && !activeRetry && !streamingResponse;
   const statusMessage = workingMessage(`${session.id}:${lastUserMessage?.id ?? "start"}`);
-  const hasEntries = entries.length > 0;
-
-  const updateFollowing = useCallback((next: boolean) => {
-    if (followingRef.current === next) return;
-    followingRef.current = next;
-    setFollowing(next);
-  }, []);
-
-  const scheduleScrollToLatest = useCallback(() => {
-    if (scrollFrame.current !== undefined) return;
-    scrollFrame.current = requestAnimationFrame(() => {
-      scrollFrame.current = undefined;
-      if (!followingRef.current) return;
-      bottomRef.current?.scrollIntoView({ block: "end", inline: "nearest" });
-    });
-  }, []);
-
-  const followLatest = useCallback(() => {
-    updateFollowing(true);
-    scheduleScrollToLatest();
-  }, [scheduleScrollToLatest, updateFollowing]);
 
   const previousUserMessageId = useRef(lastUserMessage?.id);
   useLayoutEffect(() => {
     const currentId = lastUserMessage?.id;
     if (currentId !== previousUserMessageId.current && currentId?.startsWith("optimistic-")) {
-      followLatest();
+      followLatest(false);
     }
     previousUserMessageId.current = currentId;
   }, [followLatest, lastUserMessage?.id]);
-
-  const previousRowCount = useRef(rows.length);
-  useLayoutEffect(() => {
-    if (!hasEntries) {
-      previousRowCount.current = 0;
-      updateFollowing(true);
-      return;
-    }
-    if (previousRowCount.current === 0 || rows.length > previousRowCount.current) {
-      scheduleScrollToLatest();
-    }
-    previousRowCount.current = rows.length;
-  }, [hasEntries, rows.length, scheduleScrollToLatest, updateFollowing]);
-
-  useLayoutEffect(() => {
-    const scroller = scrollRef.current;
-    const bottom = bottomRef.current;
-    if (!hasEntries || !scroller || !bottom || typeof IntersectionObserver === "undefined") return;
-
-    const observer = new IntersectionObserver(([entry]) => {
-      updateFollowing(entry?.isIntersecting ?? false);
-    }, { root: scroller, threshold: 0 });
-    observer.observe(bottom);
-    scheduleScrollToLatest();
-    return () => observer.disconnect();
-  }, [hasEntries, scheduleScrollToLatest, updateFollowing]);
-
-  useLayoutEffect(() => {
-    const content = contentRef.current;
-    const supportsScrollAnchoring = typeof CSS !== "undefined" && CSS.supports("overflow-anchor", "auto");
-    if (!hasEntries || !content || supportsScrollAnchoring || typeof ResizeObserver === "undefined") return;
-
-    const observer = new ResizeObserver(() => {
-      if (followingRef.current) scheduleScrollToLatest();
-    });
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [hasEntries, scheduleScrollToLatest]);
-
-  useLayoutEffect(() => () => {
-    if (scrollFrame.current !== undefined) cancelAnimationFrame(scrollFrame.current);
-  }, []);
 
   if (!hasEntries) {
     return (
@@ -778,7 +793,18 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
               <span className="forge-spinner" aria-hidden="true" />
             </div>
           ) : (
-            <h2>Let’s build</h2>
+            <h2>
+              What are we building in{" "}
+              <Button
+                type="button"
+                variant="link"
+                className="timeline-empty-project"
+                aria-label={`Change project from ${projectName}`}
+                onClick={onRequestProjectChange}
+              >
+                {projectName}
+              </Button>
+            </h2>
           )}
         </div>
       </div>
@@ -789,10 +815,8 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
     <div className="timeline-frame">
       <div
         ref={scrollRef}
-        className={`timeline${following ? "" : " timeline--detached"}`}
-        onWheel={(event) => {
-          if (event.deltaY < 0) updateFollowing(false);
-        }}
+        className={`timeline${virtualized ? " timeline--virtualized" : ""}${following ? "" : " timeline--detached"}`}
+        {...scrollHandlers}
       >
         <div ref={contentRef} className="timeline-inner">
           <div className="timeline-date"><span>Recorded session</span></div>
@@ -823,11 +847,11 @@ export const Timeline = memo(function Timeline({ session, entries, loading = fal
             </div>
           )}
           <div className="timeline-follow-space" aria-hidden="true" />
-          <div ref={bottomRef} className="timeline-bottom-anchor" aria-hidden="true" />
+          <div className="timeline-bottom-anchor" aria-hidden="true" />
         </div>
       </div>
       {!following && (
-        <button type="button" className="timeline-jump-latest" onClick={followLatest}>
+        <button type="button" className="timeline-jump-latest" onClick={() => followLatest()}>
           <HugeiconsIcon icon={ArrowDown01Icon} strokeWidth={2} className="size-3.5" />
           Jump to latest
         </button>

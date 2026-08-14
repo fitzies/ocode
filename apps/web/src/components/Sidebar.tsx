@@ -4,6 +4,7 @@ import {
   Archive01Icon,
   ArchiveRestoreIcon,
   ArrowDown01Icon,
+  ArrowLeft01Icon,
   Delete02Icon,
   FileEditIcon,
   FolderAddIcon,
@@ -12,6 +13,8 @@ import {
   MailOpen01Icon,
   MessageAdd01Icon,
   Search01Icon,
+  DatabaseSettingIcon,
+  Settings01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { memo, useEffect, useState } from "react";
@@ -47,6 +50,7 @@ import {
 } from "@/components/ui/select";
 import { ProjectFavicon } from "@/components/ProjectFavicon";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { UsageLimitProgress } from "./UsageLimitProgress";
 
 function projectDisplayName(project: { name: string }): string {
   return project.name;
@@ -57,6 +61,9 @@ import {
   SidebarFooter,
   SidebarHeader,
   SidebarInput,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
@@ -80,6 +87,13 @@ interface SidebarProps {
   onMarkSessionRead: (sessionId: string) => void;
   onMarkSessionUnread: (sessionId: string) => void;
   onSearchThreads: (query: string) => Promise<ThreadSearchMatch[]>;
+  activePage: "workspace" | "settings" | "usage";
+  onOpenSettings: () => void;
+  onOpenUsage: () => void;
+  onBack: () => void;
+  projectChooserMode: "new" | "change" | null;
+  onProjectChooserModeChange: (mode: "new" | "change" | null) => void;
+  onChangeProject: (projectId: string) => void;
   usage?: {
     fiveHour?: { usedPercent: number; resetAt?: number };
     weekly?: { usedPercent: number; resetAt?: number };
@@ -103,24 +117,6 @@ function RunningElapsed({ since }: { since: string }) {
   return <span>{minutes > 0 ? `${minutes}m ${remainder}s` : `${seconds}s`}</span>;
 }
 
-function usageAllowance(window: { usedPercent: number; resetAt?: number } | undefined, hours: number) {
-  if (!window?.resetAt) return 100;
-  const duration = hours * 60 * 60;
-  const remaining = Math.max(0, window.resetAt - Date.now() / 1000);
-  return ((duration - Math.min(duration, remaining)) / duration) * 100;
-}
-
-function usageTone(window: { usedPercent: number; resetAt?: number } | undefined, hours: number) {
-  if (!window) return "muted";
-  if (!window.resetAt) return window.usedPercent >= 90 ? "danger" : window.usedPercent >= 80 ? "warning" : "success";
-  const expected = usageAllowance(window, hours);
-  if (window.usedPercent > expected) return "danger";
-  const remaining = expected - window.usedPercent;
-  const closeThreshold = hours <= 5 ? 5 : 3;
-  if (remaining <= closeThreshold) return "warning";
-  return "success";
-}
-
 function capitalizeTitle(value: string) {
   if (!value) return value;
   return value[0]!.toLocaleUpperCase() + value.slice(1);
@@ -133,120 +129,12 @@ function HighlightedSnippet({ text, query }: { text: string; query: string }) {
   return <>{text.slice(0, index)}<mark className="bg-transparent font-semibold text-foreground">{text.slice(index, index + normalizedQuery.length)}</mark>{text.slice(index + normalizedQuery.length)}</>;
 }
 
-function formatUsageReset(resetAt: number | undefined) {
-  if (!resetAt) return "Reset time unavailable";
-  const remainingMinutes = Math.max(0, Math.ceil((resetAt * 1000 - Date.now()) / 60_000));
-  if (remainingMinutes < 1) return "Resets shortly";
-  const days = Math.floor(remainingMinutes / (24 * 60));
-  const hours = Math.floor((remainingMinutes % (24 * 60)) / 60);
-  const minutes = remainingMinutes % 60;
-  if (days > 0) return `Resets in ${days}d${hours > 0 ? ` ${hours}h` : ""}`;
-  if (hours > 0) return `Resets in ${hours}h${minutes > 0 ? ` ${minutes}m` : ""}`;
-  return `Resets in ${minutes}m`;
-}
-
 function formatUpdatedAt(value: string) {
   const elapsedMinutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60_000));
   if (elapsedMinutes < 1) return "Now";
   if (elapsedMinutes < 60) return `${elapsedMinutes}m`;
   if (elapsedMinutes < 24 * 60) return `${Math.floor(elapsedMinutes / 60)}h`;
   return `${Math.floor(elapsedMinutes / (24 * 60))}d`;
-}
-
-const usageStrokeClass = {
-  success: "stroke-[var(--green)]",
-  warning: "stroke-amber-600 dark:stroke-amber-400",
-  danger: "stroke-destructive",
-  muted: "stroke-muted-foreground/25",
-} as const;
-
-function UsageCircle({
-  label,
-  hours,
-  window,
-}: {
-  label: string;
-  hours: number;
-  window: { usedPercent: number; resetAt?: number } | undefined;
-}) {
-  const used = Math.max(0, Math.min(100, window?.usedPercent ?? 0));
-  const allowance = Math.max(0, Math.min(100, usageAllowance(window, hours)));
-  const available = Math.max(0, allowance - used);
-  const tone = usageTone(window, hours);
-  const usedLabel = window ? `${Math.round(used)}%` : "—";
-  const availableLabel = window ? `${Math.round(available)}% available` : "Unavailable";
-  const paceCopy = !window
-    ? "Usage data is currently unavailable."
-    : !window.resetAt
-      ? `${usedLabel} of this limit has been used.`
-      : available > 0
-        ? `${usedLabel} used. You can use ${Math.round(available)}% more right now and stay evenly paced.`
-        : used > allowance
-          ? `${usedLabel} used. This is ${Math.round(used - allowance)}% ahead of an even pace.`
-          : `${usedLabel} used. You are at the current pace target.`;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className="flex min-w-0 items-center gap-2 rounded-md p-1 text-left outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-          aria-label={`${label} usage: ${usedLabel} used, ${availableLabel}`}
-        >
-          <span className="relative grid size-10 shrink-0 place-items-center" aria-hidden="true">
-            <svg className="absolute inset-0 size-full -rotate-90" viewBox="0 0 44 44">
-              <circle className="fill-none stroke-foreground/8 [stroke-width:4]" cx="22" cy="22" r="17" pathLength="100" />
-              {allowance > 0 && (
-                <circle
-                  className="fill-none stroke-muted-foreground/55 [stroke-linecap:round] [stroke-width:4]"
-                  cx="22"
-                  cy="22"
-                  r="17"
-                  pathLength="100"
-                  strokeDasharray={`${allowance} ${100 - allowance}`}
-                />
-              )}
-              {used > 0 && (
-                <circle
-                  className={`fill-none [stroke-linecap:round] [stroke-width:4] ${usageStrokeClass[tone]}`}
-                  cx="22"
-                  cy="22"
-                  r="17"
-                  pathLength="100"
-                  strokeDasharray={`${used} ${100 - used}`}
-                />
-              )}
-            </svg>
-            <span className={`relative text-[0.625rem] font-semibold tracking-tight tabular-nums ${tone === "success" ? "text-[var(--green)]" : tone === "warning" ? "text-amber-600 dark:text-amber-400" : tone === "danger" ? "text-destructive" : "text-muted-foreground"}`}>
-              {usedLabel}
-            </span>
-          </span>
-          <span className="grid min-w-0 gap-1">
-            <span className="text-[0.625rem] leading-none text-foreground/75">{label}</span>
-            <span className="whitespace-nowrap text-[0.5rem] leading-none text-muted-foreground/70">
-              {window?.resetAt ? formatUsageReset(window.resetAt) : "Unavailable"}
-            </span>
-          </span>
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="top" sideOffset={8} className="block w-56 px-3 py-2.5">
-        <p className="font-semibold">{label} limit</p>
-        <p className="mt-1 leading-relaxed opacity-70">{paceCopy}</p>
-        {window?.resetAt && (
-          <>
-            <div className="relative mt-2 h-1 overflow-hidden rounded-full bg-background/20">
-              <span className="absolute inset-y-0 left-0 bg-background/35" style={{ width: `${allowance}%` }} />
-              <span className="absolute inset-y-0 left-0 rounded-full bg-background" style={{ width: `${used}%` }} />
-            </div>
-            <div className="mt-1.5 flex justify-between text-[0.625rem] tabular-nums opacity-65">
-              <span>{usedLabel} used</span>
-              <span>{Math.round(allowance)}% pace target</span>
-            </div>
-          </>
-        )}
-      </TooltipContent>
-    </Tooltip>
-  );
 }
 
 export const Sidebar = memo(function Sidebar({
@@ -260,10 +148,16 @@ export const Sidebar = memo(function Sidebar({
   onMarkSessionRead,
   onMarkSessionUnread,
   onSearchThreads,
+  activePage,
+  onOpenSettings,
+  onOpenUsage,
+  onBack,
+  projectChooserMode,
+  onProjectChooserModeChange,
+  onChangeProject,
   usage,
 }: SidebarProps) {
   const [searchOpen, setSearchOpen] = useState(false);
-  const [newThreadOpen, setNewThreadOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [projectQuery, setProjectQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
@@ -281,13 +175,8 @@ export const Sidebar = memo(function Sidebar({
         setSearchOpen(true);
       }
     };
-    const openNewThread = () => setNewThreadOpen(true);
     window.addEventListener("keydown", openSearch);
-    window.addEventListener("ocode:new-thread", openNewThread);
-    return () => {
-      window.removeEventListener("keydown", openSearch);
-      window.removeEventListener("ocode:new-thread", openNewThread);
-    };
+    return () => window.removeEventListener("keydown", openSearch);
   }, []);
 
   useEffect(() => {
@@ -314,6 +203,13 @@ export const Sidebar = memo(function Sidebar({
 
   const closeMobile = () => {
     if (isMobile) setOpenMobile(false);
+  };
+  const chooseProject = (projectId: string) => {
+    if (projectChooserMode === "change") void onChangeProject(projectId);
+    else onCreateSession(projectId);
+    onProjectChooserModeChange(null);
+    setProjectQuery("");
+    closeMobile();
   };
 
   const sortedSessions = sortSessionsByActivity(snapshot.sessions.filter((session) => !session.internal));
@@ -345,7 +241,7 @@ export const Sidebar = memo(function Sidebar({
     const unread = Boolean(session.lastTerminalSequence) &&
       session.lastTerminalSequence! > (session.readThroughSequence ?? 0);
     const completedUnviewed = session.lastTerminalOutcome === "completed" && unread;
-    const active = session.id === snapshot.activeSessionId;
+    const active = activePage === "workspace" && session.id === snapshot.activeSessionId;
     const settling = settlementPending.has(session.id);
     const displayTitle = capitalizeTitle(session.title);
     const projectName = project ? projectDisplayName(project) : "unknown";
@@ -468,7 +364,7 @@ export const Sidebar = memo(function Sidebar({
               size="icon"
               className="border-input bg-muted/20 dark:bg-muted/30"
               aria-label="Create thread"
-              onClick={() => setNewThreadOpen(true)}
+              onClick={() => onProjectChooserModeChange("new")}
             >
               <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-3.5" />
             </Button>
@@ -554,13 +450,15 @@ export const Sidebar = memo(function Sidebar({
       </SidebarContent>
 
       <CommandDialog
-        open={newThreadOpen}
+        open={projectChooserMode !== null}
         onOpenChange={(open) => {
-          setNewThreadOpen(open);
-          if (!open) setProjectQuery("");
+          if (!open) {
+            onProjectChooserModeChange(null);
+            setProjectQuery("");
+          }
         }}
-        title="New thread"
-        description="Choose where the new thread should run"
+        title={projectChooserMode === "change" ? "Change project" : "New thread"}
+        description={projectChooserMode === "change" ? "Choose a project for this new thread" : "Choose where the new thread should run"}
         className="sm:max-w-sm"
       >
         <Command shouldFilter>
@@ -577,12 +475,7 @@ export const Sidebar = memo(function Sidebar({
               <CommandGroup heading="No project">
                 <CommandItem
                   value={`No project home ${generalProject.path} ~/ questions`}
-                  onSelect={() => {
-                    onCreateSession(generalProject.id);
-                    setNewThreadOpen(false);
-                    setProjectQuery("");
-                    closeMobile();
-                  }}
+                  onSelect={() => chooseProject(generalProject.id)}
                 >
                   <ProjectFavicon projectId={generalProject.id} projectName={generalProject.name} workspaceKind={generalProject.workspaceKind} />
                   <span className="font-medium">No project</span>
@@ -596,12 +489,7 @@ export const Sidebar = memo(function Sidebar({
                   <CommandItem
                     key={project.id}
                     value={`${projectDisplayName(project)} ${project.path}`}
-                    onSelect={() => {
-                      onCreateSession(project.id);
-                      setNewThreadOpen(false);
-                      setProjectQuery("");
-                      closeMobile();
-                    }}
+                    onSelect={() => chooseProject(project.id)}
                   >
                     <ProjectFavicon projectId={project.id} projectName={project.name} workspaceKind={project.workspaceKind} />
                     <span className="min-w-0 flex-1 truncate">{projectDisplayName(project)}</span>
@@ -676,13 +564,65 @@ export const Sidebar = memo(function Sidebar({
         </Command>
       </CommandDialog>
 
-      <SidebarFooter className="border-t border-sidebar-border p-3 pb-5">
-        {usage && (usage.fiveHour || usage.weekly) && (
-          <div className="grid grid-cols-2 gap-2" aria-label="Codex usage limits">
-            <UsageCircle label="5 hours" hours={5} window={usage.fiveHour} />
-            <UsageCircle label="Weekly" hours={7 * 24} window={usage.weekly} />
-          </div>
-        )}
+      <SidebarFooter className="p-2.5 pb-4">
+        <SidebarMenu className="flex-row items-center gap-1">
+          {activePage !== "workspace" ? (
+            <SidebarMenuItem className="min-w-0 flex-1">
+              <SidebarMenuButton
+                className="h-8"
+                onClick={() => {
+                  onBack();
+                  closeMobile();
+                }}
+              >
+                <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
+                <span>Back</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          ) : (
+            <>
+              <SidebarMenuItem className="shrink-0">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SidebarMenuButton
+                      aria-label="Settings"
+                      className="size-8 w-8 justify-center p-0"
+                      onClick={() => {
+                        onOpenSettings();
+                        closeMobile();
+                      }}
+                    >
+                      <HugeiconsIcon icon={Settings01Icon} strokeWidth={2} />
+                    </SidebarMenuButton>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">Settings</TooltipContent>
+                </Tooltip>
+              </SidebarMenuItem>
+              <SidebarMenuItem className="shrink-0">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SidebarMenuButton
+                      aria-label="Usage"
+                      className="size-8 w-8 justify-center p-0"
+                      onClick={() => {
+                        onOpenUsage();
+                        closeMobile();
+                      }}
+                    >
+                      <HugeiconsIcon icon={DatabaseSettingIcon} strokeWidth={2} />
+                    </SidebarMenuButton>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">Usage</TooltipContent>
+                </Tooltip>
+              </SidebarMenuItem>
+            </>
+          )}
+          {(usage?.fiveHour || usage?.weekly) && (
+            <SidebarMenuItem className="ml-auto shrink-0">
+              <UsageLimitProgress usage={usage} tooltipSide="top" />
+            </SidebarMenuItem>
+          )}
+        </SidebarMenu>
       </SidebarFooter>
     </SidebarPrimitive>
   );

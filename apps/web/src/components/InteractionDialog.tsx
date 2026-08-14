@@ -376,7 +376,7 @@ export function InteractionPanel({ requests, onRespond }: InteractionPanelProps)
   const messageId = `interaction-message-${request.id}`;
 
   return (
-    <section className="w-full shrink-0 px-3 sm:px-6" aria-labelledby={titleId} aria-describedby={request.message && !isAskUserQuestionRequest(request) ? messageId : undefined}>
+    <section className="w-full shrink-0 px-3 pb-[var(--composer-overlay-height)] sm:px-6" aria-labelledby={titleId} aria-describedby={request.message && !isAskUserQuestionRequest(request) ? messageId : undefined}>
       <div className="mx-auto max-h-[min(30rem,54dvh)] w-full max-w-[790px] overflow-auto rounded-lg border border-border bg-card text-card-foreground shadow-lg">
         <header className="sticky top-0 z-10 flex min-h-14 items-start gap-3 border-b border-border bg-card/95 px-4 py-3 backdrop-blur">
           <span className="min-w-0 flex-1">

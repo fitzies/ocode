@@ -1,5 +1,5 @@
 import type { ConnectionState, SessionSummary, TimelineEntry } from "@anvil/protocol";
-import { Cancel01Icon, Folder01Icon, RefreshIcon } from "@hugeicons/core-free-icons";
+import { Cancel01Icon, Folder01Icon, GithubIcon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
@@ -12,6 +12,7 @@ import { useWorkspaceSurfaces } from "@/components/workspace/WorkspaceSurfaceSta
 import type { ProjectResourceTab } from "@/lib/workspace";
 import type { SubagentActivity, SubagentActivityItem } from "@/lib/subagentActivity";
 import { SubagentActivityPanel } from "@/components/SubagentActivityPanel";
+import { ProjectGitSurface } from "@/components/ProjectGitSurface";
 import { ProjectImageViewer } from "./ProjectImageViewer";
 import { isCurrentResourceRequest, revalidateProjectResource, type ResourceReadyState } from "./resourceLoader";
 import { SourceViewer } from "./SourceViewer";
@@ -135,6 +136,8 @@ export function ProjectResource({ tab }: { tab: ProjectResourceTab }) {
 
 export function ProjectResourceSurface({
   projectId,
+  projectName,
+  sessionId,
   subagents,
   connection,
   subagentsLoading = false,
@@ -143,8 +146,11 @@ export function ProjectResourceSurface({
   hydratingChildSessionIds,
   onCancelSubagent,
   onLoadSubagentChild,
+  onGitActionComplete,
 }: {
   projectId: string;
+  projectName: string;
+  sessionId?: string;
   subagents: SubagentActivity;
   connection: ConnectionState;
   subagentsLoading?: boolean;
@@ -153,6 +159,7 @@ export function ProjectResourceSurface({
   hydratingChildSessionIds: string[];
   onCancelSubagent: (runId: string) => Promise<void>;
   onLoadSubagentChild: (item: SubagentActivityItem) => Promise<string>;
+  onGitActionComplete?: () => void;
 }) {
   const {
     state,
@@ -160,17 +167,19 @@ export function ProjectResourceSurface({
     selectProjectResource,
     closeProjectResource,
     closeAgentsTab,
+    closeGitTab,
     setRightVisible,
+    openProjectResource,
   } = useWorkspaceSurfaces();
   const [refreshGeneration, setRefreshGeneration] = useState(0);
   const active = state.resourceTabs.find((tab) => tab.id === state.activeResourceId) ?? state.resourceTabs[0];
   const activeFile = state.sidePage === "files" ? active : undefined;
-  const hasTabs = state.resourceTabs.length > 0 || state.agentsTabOpen;
+  const hasTabs = state.resourceTabs.length > 0 || state.agentsTabOpen || state.gitTabOpen;
 
   return (
-    <section className="project-resource-surface" aria-label={`Open files and Agents for ${projectId}`}>
+    <section className="project-resource-surface" aria-label={`Open files, GitHub activity, and Agents for ${projectName}`}>
       <header className="project-resource-header">
-        <nav className="project-resource-tabs" aria-label="Open files and Agents">
+        <nav className="project-resource-tabs" aria-label="Open files, GitHub activity, and Agents">
           {state.resourceTabs.map((tab) => (
             <div className={state.sidePage === "files" && tab.id === active?.id ? "project-resource-tab project-resource-tab--active" : "project-resource-tab"} key={tab.id}>
               <Button variant="ghost" size="sm" className="project-resource-tab-name" aria-current={state.sidePage === "files" && tab.id === active?.id ? "page" : undefined} title={tab.path} onClick={() => selectProjectResource(tab.id)}>{tab.path.split("/").at(-1)}</Button>
@@ -179,6 +188,16 @@ export function ProjectResourceSurface({
               </Button>
             </div>
           ))}
+          {state.gitTabOpen && (
+            <div className={state.sidePage === "git" ? "project-resource-tab project-resource-tab--active" : "project-resource-tab"}>
+              <Button variant="ghost" size="sm" className="project-resource-tab-name" aria-current={state.sidePage === "git" ? "page" : undefined} onClick={() => openSidePage("git")}>
+                <HugeiconsIcon icon={GithubIcon} strokeWidth={2} className="size-3.5" />GitHub
+              </Button>
+              <Button variant="ghost" size="icon-xs" aria-label="Close GitHub" onClick={closeGitTab}>
+                <HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} />
+              </Button>
+            </div>
+          )}
           {state.agentsTabOpen && (
             <div className={state.sidePage === "agents" ? "project-resource-tab project-resource-tab--active" : "project-resource-tab"}>
               <Button variant="ghost" size="sm" className="project-resource-tab-name" aria-current={state.sidePage === "agents" ? "page" : undefined} onClick={() => openSidePage("agents")}>Agents</Button>
@@ -199,7 +218,15 @@ export function ProjectResourceSurface({
         </Button>
       </header>
       <main className="project-resource-viewer">
-        {state.sidePage === "agents" ? (
+        {state.sidePage === "git" ? (
+          <ProjectGitSurface
+            projectId={projectId}
+            projectName={projectName}
+            sessionId={sessionId}
+            onComplete={onGitActionComplete}
+            onOpenFile={(path) => openProjectResource({ projectId, path }, "picker")}
+          />
+        ) : state.sidePage === "agents" ? (
           <SubagentActivityPanel
             embedded
             activity={subagents}

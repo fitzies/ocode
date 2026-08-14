@@ -1,4 +1,4 @@
-import { BotIcon } from "@hugeicons/core-free-icons";
+import { BotIcon, GithubIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 
 import {
@@ -19,7 +19,7 @@ export function CommandPaletteDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { openSidePage } = useWorkspaceSurfaces();
+  const { projectId, openSidePage } = useWorkspaceSurfaces();
 
   return (
     <CommandDialog
@@ -33,7 +33,18 @@ export function CommandPaletteDialog({
         <CommandInput autoFocus placeholder="Search commands…" aria-label="Search commands" />
         <CommandList>
           <CommandEmpty>No commands found.</CommandEmpty>
-          <CommandGroup heading="Commands">
+          <CommandGroup heading="Workspace">
+            <CommandItem
+              value="Open GitHub activity commits changes checks repository"
+              disabled={!projectId}
+              onSelect={() => {
+                openSidePage("git");
+                onOpenChange(false);
+              }}
+            >
+              <HugeiconsIcon icon={GithubIcon} strokeWidth={2} className="text-muted-foreground" />
+              Open GitHub activity
+            </CommandItem>
             <CommandItem
               value="View Agents"
               onSelect={() => {

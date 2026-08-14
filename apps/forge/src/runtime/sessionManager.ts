@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, join, resolve, sep } from "node:path";
 
 import {
   createPiRpcAdapterState,
@@ -129,6 +130,8 @@ const MAX_IMAGE_ATTACHMENT_BYTES = 8 * 1024 * 1024;
 const STREAM_BATCH_MS = 32;
 const MAX_STREAM_BATCH_BYTES = 8 * 1024;
 const DEFAULT_IDLE_RUNTIME_TIMEOUT_MS = 15 * 60_000;
+const OCODE_HANDOFF_EDITOR_SENTINEL = "__ocode_handoff_v1__";
+const OCODE_HANDOFF_MAX_BYTES = 256 * 1024;
 const SESSION_SUMMARY_EVENT_TYPES = new Set<AnvilEvent["type"]>([
   "session.configured",
   "run.status",
@@ -165,6 +168,54 @@ function detectedImageMediaType(bytes: Buffer): string | undefined {
   if (prefix === "GIF87a" || prefix === "GIF89a") return "image/gif";
   if (bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
   return undefined;
+}
+
+function ocodeHandoffRequest(record: RpcRecord): { requestId: string; handoffPath?: string; error?: string } | undefined {
+  if (
+    record.type !== "extension_ui_request" ||
+    record.method !== "editor" ||
+    record.title !== OCODE_HANDOFF_EDITOR_SENTINEL ||
+    typeof record.id !== "string" ||
+    !record.id
+  ) return undefined;
+
+  let envelope: unknown;
+  try {
+    envelope = typeof record.prefill === "string" ? JSON.parse(record.prefill) : undefined;
+  } catch {
+    return { requestId: record.id, error: "The handoff request was malformed" };
+  }
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+    return { requestId: record.id, error: "The handoff request was malformed" };
+  }
+  const value = envelope as Record<string, unknown>;
+  if (
+    value.kind !== "ocode.handoff" ||
+    value.schemaVersion !== 1 ||
+    typeof value.handoffPath !== "string"
+  ) {
+    return { requestId: record.id, error: "The handoff request version is unsupported" };
+  }
+
+  try {
+    const requestedPath = resolve(value.handoffPath);
+    const handoffRoot = realpathSync(join(tmpdir(), "pi-handoffs"));
+    const handoffPath = realpathSync(requestedPath);
+    const metadata = lstatSync(requestedPath);
+    if (
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      metadata.size <= 0 ||
+      metadata.size > OCODE_HANDOFF_MAX_BYTES ||
+      dirname(handoffPath) !== handoffRoot ||
+      !/^handoff-[A-Za-z0-9.-]+\.md$/.test(basename(handoffPath))
+    ) {
+      return { requestId: record.id, error: "The handoff file is outside the trusted handoff directory" };
+    }
+    return { requestId: record.id, handoffPath };
+  } catch {
+    return { requestId: record.id, error: "The handoff file is unavailable" };
+  }
 }
 
 export class SessionManager {
@@ -1416,11 +1467,16 @@ export class SessionManager {
     });
     const sessionDir = join(this.config.sessionDir, stored.session.id);
     mkdirSync(sessionDir, { recursive: true, mode: 0o700 });
+    const runtimeEnvironment = {
+      ...(this.options.runtimeEnvironment?.(stored) ?? process.env),
+    };
+    delete runtimeEnvironment.OCODE_SESSION_ID;
+    if (!stored.session.internal) runtimeEnvironment.OCODE_SESSION_ID = stored.session.id;
     const rpc = createPiRpcProcess({
       executable: this.config.piExecutable,
       cwd: project.path,
       sessionDir,
-      env: this.options.runtimeEnvironment?.(stored),
+      env: runtimeEnvironment,
       extraArgs: [
         "--exclude-tools",
         stored.session.internal ? "subagent,ocode_subagent" : "subagent",
@@ -1508,6 +1564,15 @@ export class SessionManager {
     if (record.type === "response" && typeof record.id === "string" && runtime.suppressedResponseIds.delete(record.id)) {
       return;
     }
+    const handoff = ocodeHandoffRequest(record);
+    if (handoff) {
+      void this.handleOcodeHandoffRequest(sessionId, runtime, handoff).catch((error) => {
+        this.respondToOcodeHandoff(runtime, handoff.requestId, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+      return;
+    }
     try {
       const at = Math.max(0, Date.now() - runtime.baseTimestamp);
       const normalized = normalizePiRpcRecord(runtime.adapter, record, at);
@@ -1538,6 +1603,107 @@ export class SessionManager {
       const message = `Failed to persist RPC record: ${error instanceof Error ? error.message : String(error)}`;
       process.stderr.write(`[pi:${sessionId}] ${message}\n`);
       this.failRuntime(sessionId, runtime, message);
+    }
+  }
+
+  private async handleOcodeHandoffRequest(
+    sourceSessionId: string,
+    sourceRuntime: ManagedSession,
+    request: { requestId: string; handoffPath?: string; error?: string },
+  ): Promise<void> {
+    if (request.error || !request.handoffPath) {
+      this.respondToOcodeHandoff(sourceRuntime, request.requestId, {
+        error: request.error ?? "The handoff file is unavailable",
+      });
+      return;
+    }
+
+    const source = this.database.getSession(sourceSessionId);
+    if (!source || source.session.internal) {
+      this.respondToOcodeHandoff(sourceRuntime, request.requestId, {
+        error: "Only an ordinary ocode thread can create a handoff",
+      });
+      return;
+    }
+
+    const sessionId = randomUUID();
+    const created = await this.handleCommand({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: randomUUID(),
+      sessionId: null,
+      timestamp: new Date().toISOString(),
+      type: "session.create",
+      payload: { projectId: source.session.projectId, sessionId },
+    });
+    if (!created.success) throw new Error(created.error ?? "Forge could not create the handoff thread");
+
+    const fresh = this.database.getSession(sessionId);
+    if (!fresh) throw new Error("The handoff thread disappeared during creation");
+    await this.ensureRuntime(fresh);
+
+    const catalog = this.events.catalogForSession(sessionId);
+    if (
+      source.session.modelId !== "unknown" &&
+      source.session.modelId !== this.events.sessionSummary(sessionId)?.modelId &&
+      catalog?.models.some((model) => model.id === source.session.modelId)
+    ) {
+      await this.handleCommand({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: randomUUID(),
+        sessionId,
+        timestamp: new Date().toISOString(),
+        type: "model.set",
+        payload: { modelId: source.session.modelId },
+      });
+    }
+
+    const activeModelId = this.events.sessionSummary(sessionId)?.modelId;
+    const activeModel = catalog?.models.find((model) => model.id === activeModelId);
+    if (
+      activeModel?.supportedThinkingLevels.includes(source.session.thinkingLevel) &&
+      this.events.sessionSummary(sessionId)?.thinkingLevel !== source.session.thinkingLevel
+    ) {
+      await this.handleCommand({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: randomUUID(),
+        sessionId,
+        timestamp: new Date().toISOString(),
+        type: "thinking.set",
+        payload: { level: source.session.thinkingLevel },
+      });
+    }
+
+    this.events.append([domainEvent("session.selected", { sessionId }, sourceSessionId)]);
+    const kickoff = `Read and understand this handoff file: ${request.handoffPath}\n\nExplain back to me CONCISELY what it is, then wait for my next instruction.`;
+    const prompted = await this.handleCommand({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: randomUUID(),
+      sessionId,
+      timestamp: new Date().toISOString(),
+      type: "prompt.send",
+      payload: { content: kickoff, delivery: "prompt" },
+    });
+    if (!prompted.success) throw new Error(prompted.error ?? "Forge could not start the handoff thread");
+
+    this.respondToOcodeHandoff(sourceRuntime, request.requestId, { sessionId });
+  }
+
+  private respondToOcodeHandoff(
+    runtime: ManagedSession,
+    requestId: string,
+    result: { sessionId?: string; error?: string },
+  ): void {
+    if (!runtime.rpc.running) return;
+    const value = JSON.stringify({
+      kind: "ocode.handoff.result",
+      schemaVersion: 1,
+      ...(result.sessionId ? { sessionId: result.sessionId } : {}),
+      ...(result.error ? { error: result.error.slice(0, 1_000) } : {}),
+    });
+    try {
+      runtime.rpc.send({ type: "extension_ui_response", id: requestId, value });
+    } catch {
+      // Runtime exit handling owns any failure after the originating thread disappears.
     }
   }
 

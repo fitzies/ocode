@@ -62,10 +62,11 @@ export class ProjectGitRoutes {
   ) {}
 
   async handle(request: IncomingMessage, response: ServerResponse, url: URL): Promise<boolean> {
-    const match = /^\/api\/v1\/projects\/([^/]+)\/git\/(status|connect|generate-message|commit-and-push)$/.exec(url.pathname);
+    const match = /^\/api\/v1\/projects\/([^/]+)\/git\/(status|commits|connect|generate-message|commit-and-push)$/.exec(url.pathname);
     if (!match) return false;
     const operation = match[2]!;
-    if ((operation === "status" && request.method !== "GET") || (operation !== "status" && request.method !== "POST")) {
+    const readOperation = operation === "status" || operation === "commits";
+    if ((readOperation && request.method !== "GET") || (!readOperation && request.method !== "POST")) {
       sendJson(response, 405, apiError("method_not_allowed", "Method not allowed"));
       return true;
     }
@@ -78,6 +79,15 @@ export class ProjectGitRoutes {
       const projectId = decodedProjectId(match[1]!);
       if (operation === "status") {
         sendJson(response, 200, await this.git.status(projectId, url.searchParams.get("remote") !== "false"));
+        return true;
+      }
+      if (operation === "commits") {
+        const offsetValue = url.searchParams.get("offset") ?? "0";
+        const limitValue = url.searchParams.get("limit") ?? "50";
+        if (!/^\d+$/.test(offsetValue) || !/^\d+$/.test(limitValue)) {
+          throw new ProjectGitError("invalid_commit_page", "Commit page is malformed");
+        }
+        sendJson(response, 200, await this.git.commits(projectId, Number(offsetValue), Number(limitValue)));
         return true;
       }
 

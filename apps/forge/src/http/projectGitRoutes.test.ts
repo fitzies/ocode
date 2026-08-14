@@ -94,7 +94,11 @@ afterEach(async () => {
 describe("project Git HTTP routes", () => {
   it("requires owner authentication and rejects cross-origin mutations", async () => {
     expect((await fetch(`${baseUrl}/api/v1/projects/project-1/git/status`)).status).toBe(403);
+    expect((await fetch(`${baseUrl}/api/v1/projects/project-1/git/commits`)).status).toBe(403);
     expect((await fetch(`${baseUrl}/api/v1/projects/project-1/git/status`, { headers: ownerHeaders })).status).toBe(200);
+    const commits = await fetch(`${baseUrl}/api/v1/projects/project-1/git/commits?offset=0&limit=50`, { headers: ownerHeaders });
+    expect(commits.status).toBe(200);
+    expect(await commits.json()).toMatchObject({ commits: [{ subject: "Initial commit" }], nextOffset: null, total: 1 });
     const rejected = await fetch(`${baseUrl}/api/v1/projects/project-1/git/generate-message`, {
       method: "POST",
       headers: { ...ownerHeaders, origin: "https://evil.example", "content-type": "application/json" },

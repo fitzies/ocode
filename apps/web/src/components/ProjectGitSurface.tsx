@@ -1,4 +1,4 @@
-import type { ProjectGitStatus } from "@anvil/protocol";
+import type { ProjectGitLastCommit, ProjectGitStatus } from "@anvil/protocol";
 import { Alert02Icon, GithubIcon, LinkSquare02Icon, Loading03Icon, RefreshIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   commitAndPushProject,
   generateProjectCommitMessage,
+  getProjectGitCommits,
   getProjectGitStatus,
   ProjectGitRequestError,
 } from "@/lib/projectGit";
@@ -36,8 +37,14 @@ export function ProjectGitSurface({
   const [error, setError] = useState<string>();
   const [phase, setPhase] = useState<GitPhase>("idle");
   const [connectOpen, setConnectOpen] = useState(false);
+  const [commits, setCommits] = useState<ProjectGitLastCommit[]>([]);
+  const [commitsLoading, setCommitsLoading] = useState(false);
+  const [nextCommitOffset, setNextCommitOffset] = useState<number | null>(0);
+  const [commitTotal, setCommitTotal] = useState(0);
   const phaseRef = useRef<GitPhase>(phase);
   const requestRef = useRef<AbortController | undefined>(undefined);
+  const commitRequestRef = useRef<AbortController | undefined>(undefined);
+  const nextCommitOffsetRef = useRef<number | null>(0);
   phaseRef.current = phase;
 
   const refresh = useCallback(async () => {
@@ -57,17 +64,53 @@ export function ProjectGitSurface({
     }
   }, [projectId]);
 
+  const loadCommits = useCallback(async (reset = false) => {
+    if (commitRequestRef.current && !reset) return;
+    if (reset) commitRequestRef.current?.abort();
+    const offset = reset ? 0 : nextCommitOffsetRef.current;
+    if (offset === null) return;
+    const controller = new AbortController();
+    commitRequestRef.current = controller;
+    setCommitsLoading(true);
+    try {
+      const page = await getProjectGitCommits(projectId, offset, 50, controller.signal);
+      if (controller.signal.aborted) return;
+      setCommits((current) => reset ? page.commits : [
+        ...current,
+        ...page.commits.filter((commit) => !current.some((existing) => existing.hash === commit.hash)),
+      ]);
+      nextCommitOffsetRef.current = page.nextOffset;
+      setNextCommitOffset(page.nextOffset);
+      setCommitTotal(page.total);
+    } catch (nextError) {
+      if (!controller.signal.aborted) {
+        toast.error("Could not load commit history", { description: nextError instanceof Error ? nextError.message : String(nextError) });
+      }
+    } finally {
+      if (commitRequestRef.current === controller) {
+        commitRequestRef.current = undefined;
+        setCommitsLoading(false);
+      }
+    }
+  }, [projectId]);
+
   useEffect(() => {
     setStatus(undefined);
+    setCommits([]);
+    nextCommitOffsetRef.current = 0;
+    setNextCommitOffset(0);
+    setCommitTotal(0);
     void refresh();
+    void loadCommits(true);
     const timer = window.setInterval(() => {
       if (phaseRef.current === "idle") void refresh();
     }, 30_000);
     return () => {
       window.clearInterval(timer);
       requestRef.current?.abort();
+      commitRequestRef.current?.abort();
     };
-  }, [refresh]);
+  }, [loadCommits, refresh]);
 
   const presentation = status ? projectGitPresentation(status) : undefined;
   const actionLabel = phase === "generating"
@@ -111,6 +154,7 @@ export function ProjectGitSurface({
     } finally {
       setPhase("idle");
       void refresh();
+      void loadCommits(true);
     }
   };
 
@@ -151,6 +195,11 @@ export function ProjectGitSurface({
         gitActionBusy={phase !== "idle"}
         onGitAction={presentation?.action === "commit" || presentation?.action === "push" ? () => void run() : undefined}
         onOpenFile={onOpenFile}
+        commits={commits}
+        commitsLoading={commitsLoading}
+        commitTotal={commitTotal}
+        hasMoreCommits={nextCommitOffset !== null}
+        onLoadMoreCommits={() => void loadCommits()}
       />
       {presentation?.action === "connect" && (
         <div className="flex justify-end border-t border-border px-3 py-2">

@@ -98,6 +98,68 @@ describe("ForgeAnvilClient", () => {
     });
   });
 
+  it("opens a Forge-selected handoff thread", async () => {
+    const stream = new FakeEventSource();
+    const project = { id: "anvil", name: "Anvil", path: "/repo" };
+    const otherSession = { ...session, id: "session-other", title: "Other work" };
+    const snapshot = createEmptySnapshot({
+      projects: [project],
+      sessions: [session, otherSession],
+      activeSessionId: session.id,
+    });
+    const fetcher = async () => new Response(JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      snapshot,
+      events: [],
+      cursor: 0,
+    }), { status: 200, headers: { "content-type": "application/json" } });
+    const client = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    const clientViewingOtherWork = new ForgeAnvilClient({
+      fetch: fetcher as typeof fetch,
+      createEventSource: () => stream as unknown as EventSource,
+    });
+    await waitUntil(() => client.getSnapshot().activeSessionId === session.id);
+    await waitUntil(() => clientViewingOtherWork.getSnapshot().activeSessionId === session.id);
+    clientViewingOtherWork.selectSession(otherSession.id);
+
+    const handoffSession = {
+      ...session,
+      id: "session-handoff",
+      title: "New session",
+      updatedAt: "2026-07-23T01:00:01.000Z",
+    };
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-handoff-created",
+      sequence: 1,
+      sessionId: handoffSession.id,
+      timestamp: handoffSession.updatedAt,
+      type: "session.upserted",
+      payload: { session: handoffSession },
+    } satisfies AnvilEvent));
+    stream.emit("anvil", JSON.stringify({
+      protocolVersion: ANVIL_PROTOCOL_VERSION,
+      id: "event-handoff-selected",
+      sequence: 2,
+      sessionId: session.id,
+      timestamp: "2026-07-23T01:00:02.000Z",
+      type: "session.selected",
+      payload: { sessionId: handoffSession.id },
+    } satisfies AnvilEvent));
+
+    expect(client.getSnapshot()).toMatchObject({
+      activeSessionId: handoffSession.id,
+      workspaceLocation: { projectId: project.id, sessionId: handoffSession.id },
+    });
+    expect(clientViewingOtherWork.getSnapshot()).toMatchObject({
+      activeSessionId: otherSession.id,
+      workspaceLocation: { projectId: project.id, sessionId: otherSession.id },
+    });
+  });
+
   it("cancels a durable subagent and opens its internal child only after explicit navigation", async () => {
     const stream = new FakeEventSource();
     const run = {

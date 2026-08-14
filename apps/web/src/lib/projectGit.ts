@@ -1,5 +1,6 @@
 import type {
   ProjectGitApiError,
+  ProjectGitCommitPage,
   ProjectGitConnectRequest,
   ProjectGitConnectResult,
   ProjectGitGeneratedMessage,
@@ -55,6 +56,16 @@ export function getProjectGitStatus(
 ): Promise<ProjectGitStatus> {
   const url = `${endpoint(projectId, "status")}${options?.localOnly ? "?remote=false" : ""}`;
   return requestJson(url, { signal });
+}
+
+export function getProjectGitCommits(
+  projectId: string,
+  offset = 0,
+  limit = 50,
+  signal?: AbortSignal,
+): Promise<ProjectGitCommitPage> {
+  const query = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+  return requestJson(`${endpoint(projectId, "commits")}?${query}`, { signal });
 }
 
 export function connectProjectGit(

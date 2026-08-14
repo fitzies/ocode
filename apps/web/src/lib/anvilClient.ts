@@ -2509,9 +2509,16 @@ export class ForgeAnvilClient implements AnvilClient {
             }
           }
         }
+        const serverSelectedSession = eventApplied &&
+          event.type === "session.selected" &&
+          event.sessionId === this.snapshot.activeSessionId
+          ? next.sessions.find((session) => session.id === event.payload.sessionId)
+          : undefined;
         this.snapshot = {
           ...next,
-          workspaceLocation: this.snapshot.workspaceLocation,
+          workspaceLocation: serverSelectedSession
+            ? locationForSession(serverSelectedSession)
+            : this.snapshot.workspaceLocation,
           connection: "connected",
           replay,
           hydratingSessionIds: this.snapshot.hydratingSessionIds,
@@ -2625,6 +2632,11 @@ export class ForgeAnvilClient implements AnvilClient {
           }
         }
         this.emit();
+        if (serverSelectedSession) {
+          if (this.detailApiEnabled) void this.hydrateSession(serverSelectedSession.id);
+          this.touchDetail(serverSelectedSession.id);
+          void this.persistShell();
+        }
         if (this.snapshot.sequenceGap) void this.bootstrap();
       } catch (error) {
         console.error(error);

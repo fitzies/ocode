@@ -156,6 +156,12 @@ export interface ProjectGitFileChange {
   deletions: number;
 }
 
+export interface ProjectGitCommitPage {
+  commits: ProjectGitLastCommit[];
+  nextOffset: number | null;
+  total: number;
+}
+
 export interface ProjectGitStatus {
   action: ProjectGitAction;
   branch: string | null;

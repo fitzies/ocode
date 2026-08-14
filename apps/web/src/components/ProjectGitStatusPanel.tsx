@@ -1,4 +1,4 @@
-import type { ProjectGitCheck, ProjectGitPullRequest, ProjectGitStatus } from "@anvil/protocol";
+import type { ProjectGitCheck, ProjectGitLastCommit, ProjectGitPullRequest, ProjectGitStatus } from "@anvil/protocol";
 import {
   Alert02Icon,
   CheckmarkCircle02Icon,
@@ -15,7 +15,6 @@ import { useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { projectGitCheckSummary } from "./projectGitPresentation";
 
 function relativeTime(value?: string): string {
   if (!value) return "just now";
@@ -71,63 +70,50 @@ function stateLabel(check: ProjectGitCheck): string {
 function CheckRow({ check }: { check: ProjectGitCheck }) {
   const content = (
     <>
-      <span className="flex size-4 items-center justify-center">{checkIcon(check)}</span>
-      <span className="min-w-0">
-        <span className="block truncate text-foreground">{check.name}</span>
-        {(check.signalCount && check.signalCount > 1) || (check.workflow && check.workflow !== check.name) ? (
-          <span className="block truncate text-[0.625rem] text-muted-foreground">
-            {check.signalCount && check.signalCount > 1 ? `${check.signalCount} GitHub signals combined` : ""}
-            {check.signalCount && check.signalCount > 1 && check.workflow && check.workflow !== check.name ? " · " : ""}
-            {check.workflow && check.workflow !== check.name ? check.workflow : ""}
-          </span>
-        ) : null}
+      <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted/50">{checkIcon(check)}</span>
+      <span className="min-w-0 flex-1 text-left">
+        <span className="block truncate text-[0.75rem] font-normal text-foreground">{check.name}</span>
+        {check.workflow && check.workflow !== check.name && (
+          <span className="block truncate text-[0.5625rem] text-muted-foreground">{check.workflow}</span>
+        )}
       </span>
       <span className={cn(
-        "whitespace-nowrap text-[0.625rem] text-muted-foreground",
+        "shrink-0 whitespace-nowrap text-[0.625rem] text-muted-foreground",
         check.state === "running" && "text-[var(--status-info)]",
         check.state === "failed" && "text-[var(--red)]",
+        check.state === "passed" && "text-[var(--green)]",
       )}>{stateLabel(check)}</span>
     </>
   );
 
   return check.url ? (
-    <a className="grid min-h-9 grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-2 border-t border-border/70 py-1.5 hover:text-foreground" href={check.url} target="_blank" rel="noreferrer">
-      {content}
-    </a>
+    <Button asChild variant="ghost" size="sm" className="h-10 w-full justify-start gap-2.5 rounded-none px-3 font-normal">
+      <a href={check.url} target="_blank" rel="noreferrer">{content}</a>
+    </Button>
   ) : (
-    <div className="grid min-h-9 grid-cols-[1rem_minmax(0,1fr)_auto] items-center gap-2 border-t border-border/70 py-1.5">
-      {content}
-    </div>
+    <div className="flex h-10 items-center gap-2.5 px-3">{content}</div>
+  );
+}
+
+function CheckGroup({ label, checks }: { label: string; checks: ProjectGitCheck[] }) {
+  if (checks.length === 0) return null;
+  return (
+    <section aria-label={label} className="py-1.5">
+      <h3 className="px-3 pb-1 pt-1 text-[0.5625rem] font-medium uppercase tracking-wide text-muted-foreground">{label}</h3>
+      {checks.map((check, index) => <CheckRow key={`${check.name}-${index}`} check={check} />)}
+    </section>
   );
 }
 
 function Checks({ checks }: { checks: ProjectGitCheck[] }) {
-  const ci = checks.filter((check) => check.kind === "check");
-  const summary = projectGitCheckSummary(ci);
-  const label = summary.failed > 0
-    ? `${summary.failed} ${summary.failed === 1 ? "check" : "checks"} failed`
-    : summary.running > 0
-      ? `${summary.running} ${summary.running === 1 ? "check" : "checks"} running`
-      : ci.length > 0
-        ? `${summary.passed} of ${summary.total} checks passed`
-        : "No CI checks";
-
+  if (checks.length === 0) {
+    return <p className="px-3 py-8 text-center text-[0.6875rem] text-muted-foreground">No checks reported for the latest commit.</p>;
+  }
   return (
-    <div className="px-4 py-3">
-      <div className="flex items-center justify-between gap-3">
-        <strong className="text-[0.625rem] font-semibold uppercase tracking-[0.1em]">CI checks</strong>
-        <span className={cn(
-          "text-[0.625rem] text-muted-foreground",
-          summary.failed > 0 && "text-[var(--red)]",
-          summary.running > 0 && "text-[var(--status-info)]",
-          ci.length > 0 && summary.failed === 0 && summary.running === 0 && "text-[var(--green)]",
-        )}>{label}</span>
-      </div>
-      {ci.length > 0 ? (
-        <div className="mt-1.5">{ci.map((check, index) => <CheckRow key={`${check.name}-${index}`} check={check} />)}</div>
-      ) : (
-        <p className="mt-2 border-t border-border/70 pt-2 text-[0.625rem] text-muted-foreground">No checks reported for this commit.</p>
-      )}
+    <div className="divide-y divide-border">
+      <CheckGroup label="Deployments" checks={checks.filter((check) => check.kind === "deployment")} />
+      <CheckGroup label="CI checks" checks={checks.filter((check) => check.kind === "check")} />
+      <CheckGroup label="Automated reviews" checks={checks.filter((check) => check.kind === "agent")} />
     </div>
   );
 }
@@ -147,41 +133,56 @@ export function ProjectGitStatusPanel({
   gitActionBusy = false,
   onGitAction,
   onOpenFile,
+  commits: commitHistory,
+  commitsLoading = false,
+  commitTotal,
+  hasMoreCommits = false,
+  onLoadMoreCommits,
 }: {
   status: ProjectGitStatus;
   gitActionLabel?: string;
   gitActionBusy?: boolean;
   onGitAction?: () => void;
   onOpenFile?: (path: string) => void;
+  commits?: ProjectGitLastCommit[];
+  commitsLoading?: boolean;
+  commitTotal?: number;
+  hasMoreCommits?: boolean;
+  onLoadMoreCommits?: () => void;
 }) {
   const pullRequest = status.github?.pullRequest;
   const commit = status.github?.commit;
-  const checks = (commit ? commit.checks : pullRequest?.checks ?? []).filter((check) => check.kind === "check");
-  const commits = status.recentCommits?.length ? status.recentCommits : status.lastCommit ? [status.lastCommit] : [];
+  const checks = commit ? commit.checks : pullRequest?.checks ?? [];
+  const commits = commitHistory?.length ? commitHistory : status.recentCommits?.length ? status.recentCommits : status.lastCommit ? [status.lastCommit] : [];
   const [view, setView] = useState<GitPanelView>(status.changedFiles > 0 ? "changes" : "commits");
   const repositoryLabel = status.remote?.provider === "github" && status.remote.owner && status.remote.repository
     ? `${status.remote.owner}/${status.remote.repository}`
     : status.upstream ?? "Local repository";
 
-  const tabs: Array<{ id: GitPanelView; label: string; count: number }> = [
+  const tabs: Array<{ id: GitPanelView; label: string; count: number | string }> = [
     { id: "changes", label: "Changes", count: status.changedFiles },
-    { id: "commits", label: "Commits", count: commits.length },
+    { id: "commits", label: "Commits", count: commitTotal ?? commits.length },
     { id: "checks", label: "Checks", count: checks.length },
   ];
 
   return (
     <div className="min-w-0 text-popover-foreground">
-      <div className="flex items-center justify-between gap-3 border-b border-border px-3 py-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[0.75rem] font-medium text-foreground">
-            <HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} className="size-3.5 text-muted-foreground" />
-            <span className="truncate">{status.branch ?? "Repository"}</span>
-          </div>
-          <div className="mt-0.5 truncate text-[0.625rem] text-muted-foreground">{repositoryLabel}</div>
+      <div className="flex min-h-10 items-center justify-between gap-3 border-b border-border px-3 py-2">
+        <div className="flex min-w-0 items-center gap-1.5 text-[0.6875rem]">
+          <HugeiconsIcon icon={GitBranchIcon} strokeWidth={2} className="size-3 shrink-0 text-muted-foreground" />
+          <span className="shrink-0 font-medium text-foreground">{status.branch ?? "Repository"}</span>
+          <span className="text-muted-foreground/60">·</span>
+          <span className="truncate text-muted-foreground">{repositoryLabel}</span>
         </div>
         {onGitAction && gitActionLabel && (
-          <Button size="xs" onClick={onGitAction} disabled={gitActionBusy} aria-label={gitActionLabel}>
-            <HugeiconsIcon icon={gitActionBusy ? Loading03Icon : GitCommitIcon} strokeWidth={2} className={cn(gitActionBusy && "animate-spin")} />
+          <Button
+            variant="link"
+            size="xs"
+            className="h-auto shrink-0 bg-transparent p-0 text-[0.6875rem] font-normal text-foreground hover:text-foreground"
+            onClick={onGitAction}
+            disabled={gitActionBusy}
+            aria-label={gitActionLabel}
+          >
             {gitActionLabel}
           </Button>
         )}
@@ -211,9 +212,12 @@ export function ProjectGitStatusPanel({
             role="tab"
             aria-controls={`git-activity-panel-${tab.id}`}
             aria-selected={view === tab.id}
-            variant={view === tab.id ? "secondary" : "ghost"}
+            variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 px-2.5 text-[0.6875rem] font-normal"
+            className={cn(
+              "relative h-7 gap-1.5 rounded-none px-2.5 text-[0.6875rem] font-normal text-muted-foreground hover:bg-transparent hover:text-foreground",
+              view === tab.id && "text-foreground after:absolute after:inset-x-2 after:-bottom-1.5 after:h-px after:bg-foreground",
+            )}
             onClick={() => setView(tab.id)}
             key={tab.id}
           >
@@ -274,7 +278,7 @@ export function ProjectGitStatusPanel({
       )}
 
       {view === "commits" && (
-        <section id="git-activity-panel-commits" role="tabpanel" aria-label="Recent commits" className="py-1.5">
+        <section id="git-activity-panel-commits" role="tabpanel" aria-label="Commit history" className="py-1.5">
           {commits.map((item) => {
             const url = status.remote?.provider === "github" && status.remote.webUrl ? `${status.remote.webUrl}/commit/${item.hash}` : undefined;
             const content = (
@@ -293,7 +297,15 @@ export function ProjectGitStatusPanel({
               <div className="flex h-9 items-center gap-2 px-3" key={item.hash}>{content}</div>
             );
           })}
-          {commits.length === 0 && <p className="px-3 py-6 text-center text-[0.6875rem] text-muted-foreground">No commits yet.</p>}
+          {commits.length === 0 && !commitsLoading && <p className="px-3 py-6 text-center text-[0.6875rem] text-muted-foreground">No commits yet.</p>}
+          {commitsLoading && commits.length === 0 && <div className="flex justify-center py-8" role="status" aria-label="Loading commit history"><HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="size-4 animate-spin text-muted-foreground" /></div>}
+          {(hasMoreCommits || (commitsLoading && commits.length > 0)) && (
+            <div className="px-3 py-2">
+              <Button type="button" variant="ghost" size="sm" className="w-full text-[0.6875rem] text-muted-foreground" disabled={commitsLoading} onClick={onLoadMoreCommits}>
+                {commitsLoading ? <><HugeiconsIcon icon={Loading03Icon} strokeWidth={2} className="animate-spin" />Loading older commits…</> : "Load older commits"}
+              </Button>
+            </div>
+          )}
         </section>
       )}
 

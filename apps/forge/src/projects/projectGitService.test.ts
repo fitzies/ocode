@@ -63,6 +63,26 @@ function service(generator = new StubGenerator()): { service: ProjectGitService;
 }
 
 describe("ProjectGitService", () => {
+  it("paginates commit history across the full repository lifetime", async () => {
+    for (let index = 1; index <= 3; index += 1) {
+      writeFileSync(join(repository, "greeting.txt"), `revision ${index}\n`);
+      git(repository, ["add", "greeting.txt"]);
+      git(repository, ["commit", "-m", `Revision ${index}`]);
+    }
+
+    const subject = service().service;
+    await expect(subject.commits("project-1", 0, 2)).resolves.toMatchObject({
+      commits: [{ subject: "Revision 3" }, { subject: "Revision 2" }],
+      nextOffset: 2,
+      total: 4,
+    });
+    await expect(subject.commits("project-1", 2, 2)).resolves.toMatchObject({
+      commits: [{ subject: "Revision 1" }, { subject: "Initial commit" }],
+      nextOffset: null,
+      total: 4,
+    });
+  });
+
   it("distinguishes a non-repository from a repository without a remote", async () => {
     rmSync(join(repository, ".git"), { recursive: true, force: true });
     const subject = service();

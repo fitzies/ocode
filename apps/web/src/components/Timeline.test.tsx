@@ -131,9 +131,12 @@ describe("Timeline subagent completions", () => {
       />,
     );
 
-    expect(html).toContain("subagent-completion-message");
+    expect(html).toContain("tool-event--generic");
+    expect(html).not.toContain("tool-event--agent");
+    expect(html).toContain("tool-event--completed");
     expect(html).toContain("Reviewer subagent");
-    expect(html).toContain("Found <strong>two race conditions</strong>.");
+    expect(html).toContain("Found **two race conditions**.");
+    expect(html).toContain('data-state="closed"');
     expect(html).not.toContain("user-message");
     expect(html).not.toContain("[ocode reviewer subagent");
     expect(html).not.toContain("Child session: child-review");

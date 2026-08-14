@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import type {
   ProjectGitCheck,
   ProjectGitCheckState,
+  ProjectGitCommitPage,
   ProjectGitCommitStatus,
   ProjectGitConnectRequest,
   ProjectGitConnectResult,
@@ -245,8 +246,8 @@ function normalizedCheck(value: unknown): ProjectGitCheck | undefined {
     ? item.app as Record<string, unknown>
     : undefined;
   const workflow = stringValue(item.workflowName) ?? stringValue(app?.name);
-  const category = `${workflow ?? ""} ${name}`;
   const url = safeWebUrl(item.detailsUrl) ?? safeWebUrl(item.details_url) ?? safeWebUrl(item.targetUrl) ?? safeWebUrl(item.target_url);
+  const category = `${workflow ?? ""} ${name} ${url ?? ""}`;
   const startedAt = stringValue(item.startedAt) ?? stringValue(item.started_at) ?? stringValue(item.created_at);
   const completedAt = stringValue(item.completedAt) ?? stringValue(item.completed_at);
   return {
@@ -270,8 +271,10 @@ function deploymentProvider(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const login = stringValue((value as Record<string, unknown>).login)?.replace(/\[bot\]$/i, "").replace(/[-_]bot$/i, "");
   if (!login) return undefined;
-  const known = /^(vercel|railway|netlify|render|convex)$/i.exec(login)?.[1];
-  return known ? `${known[0]!.toUpperCase()}${known.slice(1).toLowerCase()}` : login;
+  const known = /^(vercel|railway(?:-app)?|netlify|render|convex)$/i.exec(login)?.[1];
+  if (!known) return login;
+  const canonical = known.toLowerCase() === "railway-app" ? "railway" : known;
+  return `${canonical[0]!.toUpperCase()}${canonical.slice(1).toLowerCase()}`;
 }
 
 function normalizedDeployment(deploymentValue: unknown, statusValue: unknown): ProjectGitCheck | undefined {
@@ -301,6 +304,16 @@ function normalizedDeployment(deploymentValue: unknown, statusValue: unknown): P
   };
 }
 
+function deploymentProviderKey(check: ProjectGitCheck): string | undefined {
+  const value = `${check.name} ${check.workflow ?? ""} ${check.url ?? ""}`;
+  if (/vercel/i.test(value)) return "vercel";
+  if (/railway/i.test(value)) return "railway";
+  if (/netlify/i.test(value)) return "netlify";
+  if (/\brender\b/i.test(value)) return "render";
+  if (/convex/i.test(value)) return "convex";
+  return undefined;
+}
+
 function consolidateChecks(checks: ProjectGitCheck[]): ProjectGitCheck[] {
   const seen = new Set<string>();
   const unique = checks.filter((check) => {
@@ -323,13 +336,14 @@ function consolidateChecks(checks: ProjectGitCheck[]): ProjectGitCheck[] {
   };
   for (const [index, check] of unique.entries()) {
     if (check.kind !== "deployment" || !check.name.includes(" · ")) continue;
-    const provider = check.name.split(" · ", 1)[0]!.trim().toLowerCase();
+    const provider = deploymentProviderKey(check) ?? check.name.split(" · ", 1)[0]!.trim().toLowerCase();
     const matches = unique
       .map((candidate, candidateIndex) => ({ candidate, candidateIndex }))
       .filter(({ candidate, candidateIndex }) => candidateIndex !== index &&
         candidate.kind === "deployment" &&
         !candidate.name.includes(" · ") &&
-        [candidate.name, candidate.workflow].some((value) => value?.trim().toLowerCase() === provider));
+        (deploymentProviderKey(candidate) === provider ||
+          [candidate.name, candidate.workflow].some((value) => value?.trim().toLowerCase() === provider)));
     if (matches.length === 0) continue;
     for (const match of matches) consumed.add(match.candidateIndex);
     const signals = [check, ...matches.map(({ candidate }) => candidate)];
@@ -404,6 +418,42 @@ export class ProjectGitService {
 
   async status(projectId: string, includeRemoteStatus = true): Promise<ProjectGitStatus> {
     return this.publicStatus(await this.inspect(projectId, includeRemoteStatus));
+  }
+
+  async commits(projectId: string, offset = 0, limit = 50): Promise<ProjectGitCommitPage> {
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > 1_000_000) {
+      throw new ProjectGitError("invalid_commit_offset", "Commit offset is malformed");
+    }
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) {
+      throw new ProjectGitError("invalid_commit_limit", "Commit limit must be between 1 and 100");
+    }
+    const project = this.projects.resolveProject(projectId);
+    if (!project) throw new ProjectGitError("project_not_found", "Project not found", 404);
+    try {
+      const metadata = await stat(project.path);
+      if (!metadata.isDirectory()) throw new Error("not a directory");
+    } catch {
+      throw new ProjectGitError("workspace_missing", "The project workspace is unavailable", 404);
+    }
+    const inside = await this.tryGit(project.path, ["rev-parse", "--is-inside-work-tree"]);
+    if (inside?.trim() !== "true") throw new ProjectGitError("not_a_repository", "This workspace is not a Git repository", 422);
+    const [output, totalOutput] = await Promise.all([
+      this.tryGit(project.path, [
+        "log",
+        `--skip=${offset}`,
+        `-${limit + 1}`,
+        "--format=%H%x00%h%x00%s%x00%aI%x1e",
+      ]),
+      this.tryGit(project.path, ["rev-list", "--count", "HEAD"]),
+    ]);
+    const commits = recentCommits(output);
+    const total = Number(totalOutput?.trim()) || 0;
+    const hasMore = commits.length > limit;
+    return {
+      commits: commits.slice(0, limit),
+      nextOffset: hasMore ? offset + limit : null,
+      total,
+    };
   }
 
   async connect(projectId: string, input: ProjectGitConnectRequest): Promise<ProjectGitConnectResult> {

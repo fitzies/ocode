@@ -5,6 +5,7 @@ const { readFileSync } = await import(nodeFsSpecifier);
 const actionSource = readFileSync(new URL("./ProjectGitAction.tsx", import.meta.url), "utf8");
 const panelSource = readFileSync(new URL("./ProjectGitStatusPanel.tsx", import.meta.url), "utf8");
 const surfaceSource = readFileSync(new URL("./ProjectGitSurface.tsx", import.meta.url), "utf8");
+const commandPaletteSource = readFileSync(new URL("./CommandPaletteDialog.tsx", import.meta.url), "utf8");
 const shellStyles = readFileSync(new URL("../styles/shell.css", import.meta.url), "utf8");
 
 describe("ProjectGitAction Mira header control", () => {
@@ -43,6 +44,12 @@ describe("ProjectGitAction Mira header control", () => {
     expect(actionSource).not.toContain("primaryStatusLabel");
   });
 
+  it("opens GitHub activity from the command palette", () => {
+    expect(commandPaletteSource).toContain("Open GitHub activity");
+    expect(commandPaletteSource).toContain('openSidePage("git")');
+    expect(commandPaletteSource).toContain("disabled={!projectId}");
+  });
+
   it("uses standard completion toasts with a dynamic check count", () => {
     expect(actionSource).toContain('"Delivery complete"');
     expect(actionSource).toContain('"Delivery finished with issues"');
@@ -57,11 +64,13 @@ describe("ProjectGitAction Mira header control", () => {
     expect(panelSource).toContain('label: "Changes"');
     expect(panelSource).toContain('label: "Commits"');
     expect(panelSource).toContain('label: "Checks"');
-    expect(panelSource).toContain("Recent commits");
+    expect(panelSource).toContain("Commit history");
+    expect(panelSource).toContain("Load older commits");
     expect(panelSource).toContain("status.recentCommits");
     expect(panelSource).toContain("status.files.map");
     expect(panelSource).toContain("pathParts(file.path)");
     expect(panelSource).toContain("onOpenFile?.(file.path)");
+    expect(panelSource).toContain("text-foreground hover:text-foreground");
     expect(panelSource).not.toContain("font-mono");
     expect(panelSource).not.toContain("Status for {commit.shortHash}");
   });

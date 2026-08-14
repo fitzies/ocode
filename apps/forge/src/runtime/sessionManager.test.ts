@@ -69,6 +69,7 @@ beforeEach(() => {
     let askRequestId = 0;
     let aborted = false;
     writeFileSync(sessionDir + "/runtime-args.json", JSON.stringify(process.argv.slice(2)));
+    writeFileSync(sessionDir + "/runtime-env.json", JSON.stringify({ ocodeSessionId: process.env.OCODE_SESSION_ID }));
     input.on("line", (line) => {
       const request = JSON.parse(line);
       appendFileSync(sessionDir + "/rpc-requests.jsonl", JSON.stringify(request) + "\\n");
@@ -163,6 +164,19 @@ beforeEach(() => {
                 { label: "Direct", value: "direct" },
                 { label: "Layered", value: "layered" },
               ],
+            }),
+          });
+        } else if (request.message.startsWith("Open ocode handoff: ")) {
+          pendingDialogPromptId = request.id;
+          send({
+            type: "extension_ui_request",
+            id: "ocode-handoff-1",
+            method: "editor",
+            title: "__ocode_handoff_v1__",
+            prefill: JSON.stringify({
+              kind: "ocode.handoff",
+              schemaVersion: 1,
+              handoffPath: request.message.slice("Open ocode handoff: ".length),
             }),
           });
         } else {
@@ -575,6 +589,81 @@ describe("SessionManager", () => {
     expect(cancelled.success).toBe(true);
     expect(events.hasPendingInteraction(requestedSessionId, "ask-dialog-2")).toBe(false);
     await secondPrompt;
+  });
+
+  it("turns the private handoff extension request into a selected ocode thread", async () => {
+    const handoffRoot = join(tmpdir(), "pi-handoffs");
+    mkdirSync(handoffRoot, { recursive: true });
+    const handoffPath = join(handoffRoot, `handoff-${requestedSessionId}.md`);
+    writeFileSync(handoffPath, "# Handoff\n\nContinue the focused work.\n");
+    try {
+      await manager.handleCommand(command("create-handoff-source", "session.create", null, {
+        projectId: "anvil",
+        sessionId: requestedSessionId,
+      }));
+      await waitUntil(() => existsSync(join(config.sessionDir, requestedSessionId, "runtime-env.json")));
+      expect(JSON.parse(readFileSync(
+        join(config.sessionDir, requestedSessionId, "runtime-env.json"),
+        "utf8",
+      ))).toEqual({ ocodeSessionId: requestedSessionId });
+
+      const prompted = await manager.handleCommand(command(
+        "prompt-ocode-handoff",
+        "prompt.send",
+        requestedSessionId,
+        { content: `Open ocode handoff: ${handoffPath}`, delivery: "prompt" },
+      ));
+      expect(prompted.success).toBe(true);
+      await waitUntil(() => events.currentSnapshot().sessions.length === 2);
+
+      const handoffSession = events.currentSnapshot().sessions.find(
+        (session) => session.id !== requestedSessionId,
+      )!;
+      expect(events.currentSnapshot().activeSessionId).toBe(handoffSession.id);
+      expect(events.pendingInteractionsForSession(requestedSessionId)).toEqual([]);
+      const requests = readFileSync(
+        join(config.sessionDir, handoffSession.id, "rpc-requests.jsonl"),
+        "utf8",
+      ).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(requests).toContainEqual(expect.objectContaining({
+        type: "prompt",
+        message: `Read and understand this handoff file: ${handoffPath}\n\nExplain back to me CONCISELY what it is, then wait for my next instruction.`,
+      }));
+      expect(database.getSession(handoffSession.id)?.session).toMatchObject({ projectId: "anvil" });
+      expect(database.getSession(handoffSession.id)?.session.internal).not.toBe(true);
+    } finally {
+      rmSync(handoffPath, { force: true });
+    }
+  });
+
+  it("rejects handoff files outside the private temp directory", async () => {
+    mkdirSync(join(tmpdir(), "pi-handoffs"), { recursive: true });
+    const handoffPath = join(directory, "handoff-outside.md");
+    writeFileSync(handoffPath, "# Untrusted handoff\n");
+    await manager.handleCommand(command("create-untrusted-handoff", "session.create", null, {
+      projectId: "anvil",
+      sessionId: requestedSessionId,
+    }));
+
+    const prompted = await manager.handleCommand(command(
+      "prompt-untrusted-handoff",
+      "prompt.send",
+      requestedSessionId,
+      { content: `Open ocode handoff: ${handoffPath}`, delivery: "prompt" },
+    ));
+
+    expect(prompted.success).toBe(true);
+    expect(events.currentSnapshot().sessions).toHaveLength(1);
+    expect(events.pendingInteractionsForSession(requestedSessionId)).toEqual([]);
+    const requests = readFileSync(
+      join(config.sessionDir, requestedSessionId, "rpc-requests.jsonl"),
+      "utf8",
+    ).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(requests).toContainEqual(expect.objectContaining({
+      type: "extension_ui_response",
+      id: "ocode-handoff-1",
+      value: expect.stringContaining("handoff file is outside"),
+    }));
   });
 
   it("resolves uploaded attachments into Pi prompt context", async () => {

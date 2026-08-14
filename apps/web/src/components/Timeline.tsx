@@ -31,7 +31,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
 import { MarkdownText } from "./MarkdownText";
 import { MessageActions } from "./MessageActions";
@@ -97,6 +97,16 @@ function subagentCompletionBlocks(entry: MessageEntry): ContentBlock[] {
 
 function titleCase(value: string): string {
   return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
+function contentPreview(blocks: ContentBlock[]): string {
+  const text = blocks
+    .filter((block): block is Extract<ContentBlock, { type: "text" }> => block.type === "text")
+    .map((block) => block.text)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text.length > 140 ? `${text.slice(0, 139)}…` : text;
 }
 
 const EMPTY_FILE_ATTACHMENT_MARKER = /^<file name="[^"\r\n]*"><\/file>\r?$/gm;
@@ -397,6 +407,48 @@ function RetryTimelineItem({ retry, entering }: { retry: RetryCycle; entering: b
   );
 }
 
+function ToolEventShell({
+  title,
+  detail,
+  category,
+  appearanceCategory = category,
+  status,
+  statusLabel,
+  statusIcon,
+  detailClassName,
+  entering = false,
+  children,
+}: {
+  title: string;
+  detail: string;
+  category: ToolCategory;
+  appearanceCategory?: ToolCategory;
+  status: string;
+  statusLabel: string;
+  statusIcon: ReactNode;
+  detailClassName?: string;
+  entering?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Collapsible className={`tool-event tool-event--${status} tool-event--${appearanceCategory}${entering ? " timeline-entry--entering" : ""}`}>
+      <CollapsibleTrigger className="tool-event-trigger">
+        <span className="tool-icon"><ToolGlyph category={category} /></span>
+        <span className="tool-main">
+          <strong>{title}</strong>
+          <span className={detailClassName} title={detail}>{detail}</span>
+        </span>
+        <span className="tool-status-copy" aria-hidden="true">{statusLabel}</span>
+        <span className="tool-status">{statusIcon}</span>
+        <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
+      </CollapsibleTrigger>
+      <CollapsibleContent className="tool-event-content" forceMount>
+        {children}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
   entry: TimelineEntry;
   entering?: boolean;
@@ -407,17 +459,27 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
     if (entry.origin?.type === "subagentCompletion") {
       const blocks = subagentCompletionBlocks(entry);
       const successful = entry.origin.status === "completed";
+      const preview = contentPreview(blocks);
       return (
-        <article className={`subagent-completion-message subagent-completion-message--${entry.origin.status}${entranceClass}`}>
-          <header className="subagent-completion-message-header">
-            <span className="subagent-completion-message-icon" aria-hidden="true">
-              <HugeiconsIcon icon={successful ? CheckmarkCircle02Icon : AlertCircleIcon} strokeWidth={2} className="size-3.5" />
-            </span>
-            <strong>{titleCase(entry.origin.role)} subagent</strong>
-            <span>{titleCase(entry.origin.status)}</span>
-          </header>
-          {hasVisibleContent(blocks) && <ContentBlocks blocks={blocks} onOpenProjectResource={onOpenProjectResource} />}
-        </article>
+        <ToolEventShell
+          title={`${titleCase(entry.origin.role)} subagent`}
+          detail={preview || "No response returned"}
+          category="agent"
+          appearanceCategory="generic"
+          status={entry.origin.status}
+          statusLabel={titleCase(entry.origin.status)}
+          statusIcon={<HugeiconsIcon icon={successful ? CheckmarkCircle02Icon : AlertCircleIcon} strokeWidth={2} className="size-3.5" aria-label={titleCase(entry.origin.status)} />}
+          entering={entering}
+        >
+          <div className="tool-detail">
+            <section className="tool-output">
+              <span className="detail-label">Answer</span>
+              {hasVisibleContent(blocks)
+                ? <ContentBlocks blocks={blocks} compact onOpenProjectResource={onOpenProjectResource} />
+                : <span className="agent-detail-placeholder">No response returned.</span>}
+            </section>
+          </div>
+        </ToolEventShell>
       );
     }
     const skillName = entry.role === "user" ? userSkillName(entry.content) : undefined;
@@ -506,46 +568,41 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
           .join("\n\n")
       : "";
     return (
-      <Collapsible className={`tool-event tool-event--${entry.status} tool-event--${presentation.category}${entranceClass}`}>
-        <CollapsibleTrigger className="tool-event-trigger">
-          <span className="tool-icon"><ToolGlyph category={presentation.category} /></span>
-          <span className="tool-main">
-            <strong>{presentation.title}</strong>
-            <span className={failureText ? "tool-failure-summary" : undefined} title={failureText}>
-              {summaryDetail}
-            </span>
-          </span>
-          <span className="tool-status-copy" aria-hidden="true">{presentation.status}</span>
-          <span className="tool-status"><ToolStatus entry={entry} /></span>
-          <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="tool-event-content" forceMount>
-          {presentation.category === "agent" ? (
-            <div className="tool-detail agent-detail">
-              <section className="agent-detail-section">
-                <h4 className="detail-label">Message</h4>
-                {subagentTask
-                  ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentTask}</MarkdownText>
-                  : <span className="agent-detail-placeholder">No message available.</span>}
-              </section>
-              <section className="agent-detail-section">
-                <h4 className="detail-label">Response</h4>
-                {subagentResponse
-                  ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentResponse}</MarkdownText>
-                  : <span className="agent-detail-placeholder">{entry.status === "running" || entry.status === "queued" ? "Waiting for response…" : "No response returned."}</span>}
-              </section>
-            </div>
-          ) : (
-            <div className="tool-detail">
-              {fileToolResource && <section className="tool-output"><span className="detail-label">File</span><ContentBlocks blocks={[fileToolResource]} compact onOpenProjectResource={onOpenProjectResource} /></section>}
-              {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact onOpenProjectResource={onOpenProjectResource} /></section>}
-              <JsonDetails label="Arguments" value={entry.arguments} />
-              <JsonDetails label="Details" value={entry.details} />
-              <JsonDetails label="Raw RPC event" value={entry.raw} />
-            </div>
-          )}
-        </CollapsibleContent>
-      </Collapsible>
+      <ToolEventShell
+        title={presentation.title}
+        detail={summaryDetail}
+        category={presentation.category}
+        status={entry.status}
+        statusLabel={presentation.status}
+        statusIcon={<ToolStatus entry={entry} />}
+        detailClassName={failureText ? "tool-failure-summary" : undefined}
+        entering={entering}
+      >
+        {presentation.category === "agent" ? (
+          <div className="tool-detail agent-detail">
+            <section className="agent-detail-section">
+              <h4 className="detail-label">Message</h4>
+              {subagentTask
+                ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentTask}</MarkdownText>
+                : <span className="agent-detail-placeholder">No message available.</span>}
+            </section>
+            <section className="agent-detail-section">
+              <h4 className="detail-label">Response</h4>
+              {subagentResponse
+                ? <MarkdownText className="agent-detail-markdown markdown-body">{subagentResponse}</MarkdownText>
+                : <span className="agent-detail-placeholder">{entry.status === "running" || entry.status === "queued" ? "Waiting for response…" : "No response returned."}</span>}
+            </section>
+          </div>
+        ) : (
+          <div className="tool-detail">
+            {fileToolResource && <section className="tool-output"><span className="detail-label">File</span><ContentBlocks blocks={[fileToolResource]} compact onOpenProjectResource={onOpenProjectResource} /></section>}
+            {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact onOpenProjectResource={onOpenProjectResource} /></section>}
+            <JsonDetails label="Arguments" value={entry.arguments} />
+            <JsonDetails label="Details" value={entry.details} />
+            <JsonDetails label="Raw RPC event" value={entry.raw} />
+          </div>
+        )}
+      </ToolEventShell>
     );
   }
 

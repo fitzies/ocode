@@ -10,11 +10,11 @@ const unmodified = {
   shiftKey: false,
 };
 
-describe("composer stash shortcut", () => {
+describe("settle thread shortcut", () => {
   it("defaults to Cmd+S on Apple platforms and Ctrl+S elsewhere", () => {
-    expect(DEFAULT_SHORTCUTS.stash).toBe("Mod+KeyS");
-    expect(matchesShortcut({ ...unmodified, code: "KeyS", metaKey: true }, "stash", "MacIntel")).toBe(true);
-    expect(matchesShortcut({ ...unmodified, code: "KeyS", ctrlKey: true }, "stash", "Win32")).toBe(true);
+    expect(DEFAULT_SHORTCUTS.settleThread).toBe("Mod+KeyS");
+    expect(matchesShortcut({ ...unmodified, code: "KeyS", metaKey: true }, "settleThread", "MacIntel")).toBe(true);
+    expect(matchesShortcut({ ...unmodified, code: "KeyS", ctrlKey: true }, "settleThread", "Win32")).toBe(true);
   });
 });
 

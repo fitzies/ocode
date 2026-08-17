@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Composer,
+  type ComposerAttachment,
   activeFileMention,
   isFileDrag,
   joinCommandPrompt,
@@ -33,6 +34,7 @@ function renderComposer(modelsReady: boolean, options: {
   prompt?: string;
   commands?: CommandDescriptor[];
   skills?: SkillDescriptor[];
+  attachments?: ComposerAttachment[];
 } = {}): string {
   return renderToStaticMarkup(createElement(TooltipProvider, null, createElement(Composer, {
     sessionId: "session-1",
@@ -48,7 +50,7 @@ function renderComposer(modelsReady: boolean, options: {
     pending: options.pending,
     creationError: options.creationError,
     widgets: [],
-    attachments: [],
+    attachments: options.attachments ?? [],
     onAttachFiles: () => undefined,
     onRemoveAttachment: () => undefined,
     onSearchFiles: async () => [],
@@ -70,6 +72,35 @@ describe("Composer footer", () => {
     expect(html).not.toContain("home workspace");
     expect(html).not.toContain("composer-status");
     expect(html).not.toContain(">agents</span>");
+  });
+});
+
+describe("Composer attachments", () => {
+  it("shows a thumbnail without repeating the filename for image attachments", () => {
+    const html = renderComposer(true, {
+      attachments: [{
+        id: "image-1",
+        name: "image.png",
+        mimeType: "image/png",
+        size: 2048,
+        status: "ready",
+        previewUrl: "blob:image-preview",
+      }],
+    });
+
+    expect(html).toContain('class="composer-attachment-preview"');
+    expect(html).toContain('src="blob:image-preview"');
+    expect(html).not.toContain("<strong>image.png</strong>");
+    expect(html).toContain('aria-label="Remove image.png"');
+  });
+
+  it("keeps filenames visible for document attachments", () => {
+    const html = renderComposer(true, {
+      attachments: [{ id: "file-1", name: "notes.pdf", mimeType: "application/pdf", size: 1024, status: "ready" }],
+    });
+
+    expect(html).toContain("<strong>notes.pdf</strong>");
+    expect(html).not.toContain("composer-attachment-preview");
   });
 });
 

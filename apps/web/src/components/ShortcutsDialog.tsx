@@ -9,13 +9,11 @@ import { DEFAULT_SHORTCUTS, formatShortcutParts, loadShortcuts, saveShortcuts, s
 const groups: { title: string; items: [ShortcutId, string, string][] }[] = [
   { title: "Threads", items: [
     ["newThread", "New thread", "Start a thread in the current project."],
-    ["closeThread", "Settle or delete thread", "Close an open side document, or choose what to do with the current thread."],
+    ["closeThread", "Close side document", "Close the active file, Git view, or agents view."],
+    ["settleThread", "Settle thread", "Immediately settle the current thread."],
     ["recentlySettled", "Recently settled threads", "Restore a thread settled in the last 15 minutes."],
     ["nextThread", "Next thread", "Move to the next thread in this project."],
     ["previousThread", "Previous thread", "Move to the previous thread in this project."],
-  ] },
-  { title: "Composer", items: [
-    ["stash", "Stash message", "Save composer text, or open your stashes when the composer is empty."],
   ] },
   { title: "Navigation", items: [
     ["openFile", "Open file", "Fuzzy-search project files and open one in the side pane."],

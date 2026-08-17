@@ -15,6 +15,7 @@ import {
 import { Type } from "typebox";
 
 import { secureOpenProjectPath } from "../files/secureProjectPath.ts";
+import { registerContextManifestBridge, type ContextBridgeApi } from "./contextManifest.ts";
 
 const MAX_INLINE_HTML_BYTES = 192 * 1024;
 const MAX_OPEN_FILE_BYTES = 20 * 1024 * 1024;
@@ -56,9 +57,8 @@ interface ToolDefinition {
   }>;
 }
 
-interface ExtensionApi {
+interface ExtensionApi extends ContextBridgeApi {
   registerTool(definition: ToolDefinition): void;
-  on(event: "session_start", handler: () => void): void;
 }
 
 interface AskOption {
@@ -239,6 +239,8 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 export default function anvilInlineArtifact(pi: ExtensionApi): void {
+  registerContextManifestBridge(pi);
+
   const subagentEndpoint = process.env.OCODE_SUBAGENT_ENDPOINT;
   const subagentToken = process.env.OCODE_SUBAGENT_TOKEN;
   const parentSessionId = process.env.OCODE_PARENT_SESSION_ID;

@@ -19,7 +19,6 @@ import {
   StopIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { toast } from "sonner";
 import {
   type ClipboardEvent,
   type FormEvent,
@@ -45,15 +44,6 @@ import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { DeliveryMode, WorkspaceFile } from "../lib/anvilClient";
-import { isTerminalInputTarget } from "../lib/keyboardScope";
-import {
-  loadPromptStashes,
-  prependPromptStash,
-  savePromptStashes,
-  type PromptStash,
-} from "../lib/promptStashes";
-import { matchesShortcut } from "../lib/shortcuts";
-import { PromptStashDialog } from "./PromptStashDialog";
 
 export interface ComposerAttachment {
   id: string;
@@ -62,6 +52,7 @@ export interface ComposerAttachment {
   size: number;
   status: "uploading" | "ready" | "failed";
   reference?: ArtifactReference;
+  previewUrl?: string;
   error?: string;
 }
 
@@ -80,7 +71,6 @@ export interface ComposerProps {
   pending?: boolean;
   creationError?: string;
   widgets: ExtensionWidget[];
-  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   attachments: ComposerAttachment[];
   onAttachFiles: (sessionId: string, files: File[]) => void;
   onRemoveAttachment: (sessionId: string, attachmentId: string) => void;
@@ -236,39 +226,6 @@ function Widget({ widget }: { widget: ExtensionWidget }) {
   );
 }
 
-function ContextProgress({ percent }: { percent: number | null }) {
-  const progress = Math.min(100, Math.max(0, percent ?? 0));
-  const level = progress >= 90 ? "danger" : progress >= 70 ? "warning" : "default";
-  const percentageLabel = percent === null ? "Unknown" : `${Math.round(percent)}%`;
-
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span
-          className={`composer-context composer-context--${level}`}
-          role="img"
-          tabIndex={0}
-          aria-label={`${percentageLabel} of context window used`}
-        >
-          <svg viewBox="0 0 20 20" aria-hidden="true">
-            <circle className="composer-context-track" cx="10" cy="10" r="7.5" />
-            <circle
-              className="composer-context-progress"
-              cx="10"
-              cy="10"
-              r="7.5"
-              pathLength="100"
-              strokeDasharray="100"
-              strokeDashoffset={100 - progress}
-            />
-          </svg>
-        </span>
-      </TooltipTrigger>
-      <TooltipContent>{percentageLabel} used</TooltipContent>
-    </Tooltip>
-  );
-}
-
 export function Composer({
   sessionId,
   modelId,
@@ -284,7 +241,6 @@ export function Composer({
   pending = false,
   creationError,
   widgets,
-  contextUsage,
   attachments,
   onAttachFiles,
   onRemoveAttachment,
@@ -305,8 +261,6 @@ export function Composer({
   const [fileMenuDismissed, setFileMenuDismissed] = useState(false);
   const [fileSearchPending, setFileSearchPending] = useState(false);
   const [fileDropActive, setFileDropActive] = useState(false);
-  const [stashDialogOpen, setStashDialogOpen] = useState(false);
-  const [stashes, setStashes] = useState(loadPromptStashes);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileDragDepthRef = useRef(0);
@@ -372,42 +326,8 @@ export function Composer({
     setFileMenuDismissed(false);
     setFileSearchPending(false);
     setFileDropActive(false);
-    setStashDialogOpen(false);
     fileDragDepthRef.current = 0;
   }, [sessionId]);
-
-  useEffect(() => {
-    const onStashShortcut = (event: globalThis.KeyboardEvent) => {
-      if (!matchesShortcut(event, "stash") || isTerminalInputTarget(event.target)) return;
-      const target = event.target instanceof HTMLElement ? event.target : undefined;
-      if (!stashDialogOpen && target?.closest('[role="dialog"], [role="alertdialog"]')) return;
-
-      event.preventDefault();
-      event.stopPropagation();
-      if (event.repeat || stashDialogOpen) return;
-
-      if (prompt.length === 0) {
-        setStashDialogOpen(true);
-        return;
-      }
-
-      const next = prependPromptStash(stashes, prompt);
-      if (!savePromptStashes(next)) {
-        toast.error("Could not stash message", {
-          description: "Browser storage rejected the message, so your input was left unchanged.",
-        });
-        return;
-      }
-
-      setStashes(next);
-      onPromptChange(sessionId, "");
-      setCursorPosition(0);
-      toast.success("Message stashed", { description: "Use the stash shortcut with an empty composer to reuse it." });
-    };
-
-    window.addEventListener("keydown", onStashShortcut, true);
-    return () => window.removeEventListener("keydown", onStashShortcut, true);
-  }, [onPromptChange, prompt, sessionId, stashDialogOpen, stashes]);
 
   useEffect(() => {
     const resetFileDrag = () => {
@@ -591,26 +511,6 @@ export function Composer({
     onAttachFiles(sessionId, files);
   };
 
-  const restoreStash = (stash: PromptStash) => {
-    const restored = splitSkillPrompt(stash.text, skills);
-    onPromptChange(sessionId, stash.text);
-    setCursorPosition(restored.text.length);
-    setStashDialogOpen(false);
-    requestAnimationFrame(() => {
-      textareaRef.current?.focus();
-      textareaRef.current?.setSelectionRange(restored.text.length, restored.text.length);
-    });
-  };
-
-  const deleteStash = (stash: PromptStash) => {
-    const next = stashes.filter((candidate) => candidate.id !== stash.id);
-    if (!savePromptStashes(next)) {
-      toast.error("Could not delete stash", { description: "Browser storage rejected the update." });
-      return;
-    }
-    setStashes(next);
-  };
-
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (
       event.key === "Tab" &&
@@ -741,13 +641,6 @@ export function Composer({
 
   return (
     <div ref={composerWrapRef} className="composer-wrap">
-      <PromptStashDialog
-        open={stashDialogOpen}
-        stashes={stashes}
-        onOpenChange={setStashDialogOpen}
-        onSelect={restoreStash}
-        onDelete={deleteStash}
-      />
       {aboveWidgets.map((widget) => <Widget key={widget.key} widget={widget} />)}
       {queueCount > 0 && (
         <div className="queue-banner" aria-live="polite">
@@ -868,13 +761,26 @@ export function Composer({
         )}
         {attachments.length > 0 && (
           <div className="composer-attachments" aria-label="Attached files" aria-live="polite">
-            {attachments.map((attachment) => (
-              <span className={`composer-attachment composer-attachment--${attachment.status}`} key={attachment.id} title={attachment.error}>
-                <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} className="size-3" />
-                <span><strong>{attachment.name}</strong><small>{attachment.status === "uploading" ? "Uploading…" : attachment.status === "failed" ? attachment.error ?? "Upload failed" : formatAttachmentSize(attachment.size)}</small></span>
-                <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => onRemoveAttachment(sessionId, attachment.id)}><HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3.5" /></button>
-              </span>
-            ))}
+            {attachments.map((attachment) => {
+              const isImage = attachment.mimeType.startsWith("image/") && Boolean(attachment.previewUrl);
+              return (
+                <span
+                  className={`composer-attachment${isImage ? " composer-attachment--image" : ""} composer-attachment--${attachment.status}`}
+                  key={attachment.id}
+                  title={attachment.error ?? attachment.name}
+                  aria-label={`Attached ${attachment.name}`}
+                >
+                  {isImage
+                    ? <img className="composer-attachment-preview" src={attachment.previewUrl} alt="" />
+                    : <HugeiconsIcon icon={File01Icon} strokeWidth={2} className="size-3" />}
+                  <span>
+                    {!isImage && <strong>{attachment.name}</strong>}
+                    <small>{attachment.status === "uploading" ? "Uploading…" : attachment.status === "failed" ? attachment.error ?? "Upload failed" : formatAttachmentSize(attachment.size)}</small>
+                  </span>
+                  <button type="button" aria-label={`Remove ${attachment.name}`} onClick={() => onRemoveAttachment(sessionId, attachment.id)}><HugeiconsIcon icon={Cancel01Icon} strokeWidth={2} className="size-3.5" /></button>
+                </span>
+              );
+            })}
           </div>
         )}
         <div className="composer-input-row">
@@ -987,9 +893,6 @@ export function Composer({
             </Select>
           </div>
           <div className="composer-actions">
-            {contextUsage && (
-              <ContextProgress percent={contextUsage.percent} />
-            )}
             {running && !hasPrompt ? (
               <Button type="button" variant="secondary" size="icon-sm" className="stop-button" onClick={onCancel} aria-label="Stop run" title="Stop run">
                 <HugeiconsIcon icon={StopIcon} strokeWidth={2} />

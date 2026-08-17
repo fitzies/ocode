@@ -3,6 +3,8 @@ import {
   type CapabilityCatalog,
   OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL,
   OCODE_ASK_USER_QUESTION_SCHEMA_VERSION,
+  OCODE_CONTEXT_WIDGET_KEY,
+  parseContextManifestWidgetLines,
   type ContentBlock,
   type GenericInteractionField,
   type InteractionOption,
@@ -835,6 +837,9 @@ export function normalizePiRpcRecord(
     } else if (method === "setWidget") {
       const key = stringOf(record.widgetKey, "extension");
       const lines = Array.isArray(record.widgetLines) ? record.widgetLines.map(String) : undefined;
+      if (key === OCODE_CONTEXT_WIDGET_KEY && lines !== undefined && !parseContextManifestWidgetLines(lines)) {
+        return events;
+      }
       const placement = record.widgetPlacement === "belowEditor" ? "belowEditor" : "aboveEditor";
       const previous = state.extensionWidgets.get(key);
       const unchanged = previous !== undefined &&

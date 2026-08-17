@@ -1,5 +1,5 @@
 export type ShortcutId =
-  | "newThread" | "closeThread" | "recentlySettled" | "rebuild" | "stash" | "openFile" | "openCommand" | "search" | "settings" | "terminal" | "toggleSidebar"
+  | "newThread" | "closeThread" | "settleThread" | "recentlySettled" | "rebuild" | "openFile" | "openCommand" | "search" | "settings" | "terminal" | "toggleSidebar"
   | "nextThread" | "previousThread"
   | `thread${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
@@ -10,9 +10,9 @@ const STORAGE_KEY = "ocode.keyboard-shortcuts";
 export const DEFAULT_SHORTCUTS: ShortcutMap = {
   newThread: "Mod+KeyN",
   closeThread: "Mod+KeyW",
+  settleThread: "Mod+KeyS",
   recentlySettled: "Mod+Shift+KeyT",
   rebuild: "Mod+Shift+KeyR",
-  stash: "Mod+KeyS",
   openFile: "Mod+KeyP",
   openCommand: "Mod+Shift+KeyP",
   search: "Mod+KeyK",

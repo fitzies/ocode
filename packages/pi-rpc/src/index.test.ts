@@ -1,4 +1,9 @@
-import { OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL } from "@anvil/protocol";
+import {
+  OCODE_ASK_USER_QUESTION_EDITOR_SENTINEL,
+  OCODE_CONTEXT_CATEGORY_IDS,
+  OCODE_CONTEXT_MANIFEST_MAX_BYTES,
+  OCODE_CONTEXT_WIDGET_KEY,
+} from "@anvil/protocol";
 import { describe, expect, it } from "vitest";
 
 import { createPiRpcAdapterState, normalizePiRpcRecord } from "./index";
@@ -167,6 +172,29 @@ describe("Pi RPC normalization", () => {
     expect(normalizePiRpcRecord(adapter, { ...widget, widgetLines: ["Branch: feature"] })).toHaveLength(1);
     expect(normalizePiRpcRecord(adapter, { ...widget, widgetLines: undefined })).toHaveLength(1);
     expect(normalizePiRpcRecord(adapter, { ...widget, widgetLines: undefined })).toEqual([]);
+  });
+
+  it("rejects malformed or oversized reserved context widgets before journaling", () => {
+    const adapter = state();
+    const request = (line: string) => ({
+      type: "extension_ui_request",
+      method: "setWidget",
+      widgetKey: OCODE_CONTEXT_WIDGET_KEY,
+      widgetLines: [line],
+      widgetPlacement: "aboveEditor",
+    });
+    const manifest = {
+      version: 1,
+      capturedAt: Date.now(),
+      usage: { tokens: 1_000, contextWindow: 200_000, percent: 0.5 },
+      categories: OCODE_CONTEXT_CATEGORY_IDS.map((id) => ({ id, tokens: id === "other" ? 1_000 : 0 })),
+    };
+
+    expect(normalizePiRpcRecord(adapter, request("not-json"))).toEqual([]);
+    expect(normalizePiRpcRecord(adapter, request("x".repeat(OCODE_CONTEXT_MANIFEST_MAX_BYTES + 1)))).toEqual([]);
+    expect(normalizePiRpcRecord(adapter, request(JSON.stringify(manifest)))).toMatchObject([
+      { type: "extension.widget", payload: { key: OCODE_CONTEXT_WIDGET_KEY } },
+    ]);
   });
 
   it("normalizes live model and command catalogs from Pi responses", () => {

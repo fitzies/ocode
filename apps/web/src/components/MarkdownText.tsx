@@ -1,44 +1,8 @@
-import { Copy01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "@hugeicons/react";
-import { Children, isValidElement, memo, type ReactNode, useEffect, useRef, useState } from "react";
+import { memo } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-function nodeText(node: ReactNode): string {
-  if (typeof node === "string" || typeof node === "number") return String(node);
-  if (Array.isArray(node)) return node.map(nodeText).join("");
-  if (isValidElement<{ children?: ReactNode }>(node)) return nodeText(node.props.children);
-  return Children.toArray(node).map(nodeText).join("");
-}
-
-function CopyableCodeBlock({ children }: { children?: ReactNode }) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<number | undefined>(undefined);
-
-  useEffect(() => () => {
-    if (timer.current) window.clearTimeout(timer.current);
-  }, []);
-
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(nodeText(children).replace(/\n$/, ""));
-      setCopied(true);
-      if (timer.current) window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => setCopied(false), 1_500);
-    } catch {
-      setCopied(false);
-    }
-  };
-
-  return (
-    <div className="markdown-code-block">
-      <pre>{children}</pre>
-      <button type="button" className="markdown-code-copy" onClick={() => void copy()} aria-label={copied ? "Copied" : "Copy code"} title={copied ? "Copied" : "Copy code"}>
-        <HugeiconsIcon icon={copied ? Tick02Icon : Copy01Icon} strokeWidth={2} />
-      </button>
-    </div>
-  );
-}
+import { CodeBlock } from "./CodeBlock";
 
 const MARKDOWN_COMPONENTS: Components = {
   a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
@@ -47,7 +11,7 @@ const MARKDOWN_COMPONENTS: Components = {
       <table {...props} />
     </div>
   ),
-  pre: ({ node: _node, children }) => <CopyableCodeBlock>{children}</CopyableCodeBlock>,
+  pre: ({ node: _node, children }) => <CodeBlock>{children}</CodeBlock>,
 };
 
 export const MarkdownText = memo(function MarkdownText({

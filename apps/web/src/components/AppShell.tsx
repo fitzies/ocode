@@ -3,6 +3,7 @@ import {
   resolveProjectResourceReference,
   type ArtifactReference,
   type CapabilityCatalog,
+  type ContextManifestV1,
   type ProjectResourceContentBlock,
   type SessionSummary,
   type TimelineEntry,
@@ -40,6 +41,7 @@ import {
   threadCycleShortcut,
   threadNumberShortcutIndex,
 } from "../lib/keyboardScope";
+import { consumeContextManifestWidget } from "../lib/contextManifest";
 import { cycledThreadTarget, numberedThreadTarget } from "../lib/threadNavigation";
 import { isWorkspaceSidePaneVisible, projectResourceForCloseShortcut, shouldAutoOpenProjectResource } from "../lib/workspace";
 import { equalAppShellSnapshots, selectAppShellSnapshot } from "../lib/appShellSnapshot";
@@ -55,7 +57,6 @@ import { FilePickerDialog } from "./FilePickerDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
 import { ProjectGitAction } from "./ProjectGitAction";
 import { RecentlySettledDialog } from "./RecentlySettledDialog";
-import { SettleOrDeleteThreadDialog } from "./SettleOrDeleteThreadDialog";
 import { Sidebar } from "./Sidebar";
 import {
   type DisplayPreferences,
@@ -78,7 +79,7 @@ const LEGACY_DISPLAY_PREFERENCES_KEY = "anvil.display-preferences";
 const DEFAULT_DISPLAY_PREFERENCES: DisplayPreferences = {
   fontFamily: "system",
   fontSize: "default",
-  width: "narrow",
+  width: "full",
 };
 const INTERFACE_FONT_STACKS: Record<InterfaceFont, string> = {
   system: '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
@@ -102,7 +103,7 @@ function loadDisplayPreferences(): DisplayPreferences {
         ? stored.fontFamily
         : "system",
       fontSize: stored?.fontSize && ["small", "default", "large", "extra-large"].includes(stored.fontSize) ? stored.fontSize : "default",
-      width: stored?.width && ["narrow", "full"].includes(stored.width) ? stored.width : "narrow",
+      width: "full",
     };
   } catch {
     return DEFAULT_DISPLAY_PREFERENCES;
@@ -118,11 +119,14 @@ type LiveIndicators = {
   };
 };
 
-function TimelineWithResources({ session, projectName, entries, loading, onSuggestion, onRequestProjectChange }: {
+function TimelineWithResources({ session, projectName, entries, loading, contextUsage, contextManifest, contextLoading, onSuggestion, onRequestProjectChange }: {
   session: SessionSummary;
   projectName: string;
   entries: TimelineEntry[];
   loading: boolean;
+  contextUsage?: LiveIndicators["context"];
+  contextManifest?: ContextManifestV1;
+  contextLoading?: boolean;
   onSuggestion: (prompt: string) => void;
   onRequestProjectChange: () => void;
 }) {
@@ -133,6 +137,9 @@ function TimelineWithResources({ session, projectName, entries, loading, onSugge
       projectName={projectName}
       entries={entries}
       loading={loading}
+      contextUsage={contextUsage}
+      contextManifest={contextManifest}
+      contextLoading={contextLoading}
       onSuggestion={onSuggestion}
       onRequestProjectChange={onRequestProjectChange}
       onOpenProjectResource={(block: ProjectResourceContentBlock) => {
@@ -340,10 +347,13 @@ function AppShellContent() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [projectChooserMode, setProjectChooserMode] = useState<"new" | "change" | null>(null);
   const [recentlySettledOpen, setRecentlySettledOpen] = useState(false);
-  const [sessionPendingClose, setSessionPendingClose] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingDeletion, setSessionPendingDeletion] = useState<{ id: string; title: string } | null>(null);
   const [sessionPendingRename, setSessionPendingRename] = useState<{ id: string; title: string } | null>(null);
   const [indicators, setIndicators] = useState<LiveIndicators>({});
+  const [contextIndicatorsBySession, setContextIndicatorsBySession] = useState(
+    () => new Map<string, NonNullable<LiveIndicators["context"]>>(),
+  );
+  const [contextResolvedSessionIds, setContextResolvedSessionIds] = useState(() => new Set<string>());
   const [gitStatusGeneration, setGitStatusGeneration] = useState(0);
   const [rebuildDialogOpen, setRebuildDialogOpen] = useState(false);
   const [desktopUpdateDialogOpen, setDesktopUpdateDialogOpen] = useState(false);
@@ -380,9 +390,10 @@ function AppShellContent() {
   const statuses = activeSession
     ? snapshot.extensionStatuses.filter((status) => status.sessionId === activeSession.id)
     : [];
-  const widgets = activeSession
+  const sessionWidgets = activeSession
     ? snapshot.widgets.filter((widget) => widget.sessionId === activeSession.id)
     : [];
+  const { manifest: contextManifest, composerWidgets } = consumeContextManifestWidget(sessionWidgets);
   const sequenceGap = snapshot.sequenceGap;
   const activeCatalog = activeSession
     ? snapshot.catalogs[activeSession.id] ?? EMPTY_CATALOG
@@ -409,10 +420,6 @@ function AppShellContent() {
 
   const sendSuggestion = useCallback((prompt: string) => anvilClient.sendPrompt(prompt), []);
   const openNewProject = useCallback(() => setNewProjectOpen(true), []);
-  const requestCloseSession = useCallback((sessionId: string) => {
-    const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
-    if (session) setSessionPendingClose({ id: session.id, title: session.title });
-  }, [snapshot.sessions]);
   const requestDeleteSession = useCallback((sessionId: string) => {
     const session = snapshot.sessions.find((candidate) => candidate.id === sessionId);
     if (session) setSessionPendingDeletion({ id: session.id, title: session.title });
@@ -432,6 +439,7 @@ function AppShellContent() {
         mimeType: file.type || "application/octet-stream",
         size: file.size,
         status: "uploading" as const,
+        previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
       },
       file,
     }));
@@ -465,6 +473,7 @@ function AppShellContent() {
       ...current,
       [sessionId]: (current[sessionId] ?? []).filter((candidate) => candidate.id !== attachmentId),
     }));
+    if (attachment?.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     if (attachment?.reference) {
       void anvilClient.deleteAttachment(sessionId, attachment.reference.artifactId);
     }
@@ -477,12 +486,20 @@ function AppShellContent() {
     const sessionId = anvilClient.getSnapshot().activeSessionId;
     const accepted = await anvilClient.sendPrompt(prompt, mode, attachments);
     if (accepted && sessionId) {
-      setComposerAttachments((current) => ({ ...current, [sessionId]: [] }));
+      setComposerAttachments((current) => {
+        current[sessionId]?.forEach((attachment) => {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        });
+        return { ...current, [sessionId]: [] };
+      });
     }
   }, []);
   const selectSession = useCallback((sessionId: string) => {
     anvilClient.selectSession(sessionId);
     void navigate({ to: "/" });
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Message Pi']")?.focus();
+    });
   }, [navigate]);
   const startSession = useCallback((projectId: string) => {
     anvilClient.createSession(projectId);
@@ -507,6 +524,9 @@ function AppShellContent() {
       return remaining;
     });
     setComposerAttachments((current) => {
+      current[previousSessionId]?.forEach((attachment) => {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      });
       const { [previousSessionId]: _removed, ...remaining } = current;
       return remaining;
     });
@@ -558,18 +578,6 @@ function AppShellContent() {
         ?.focus();
     });
   };
-  const closeThreadActionDialog = (result?: "settled" | "deleted") => {
-    const sessionId = sessionPendingClose?.id;
-    setSessionPendingClose(null);
-    if (!sessionId) return;
-    requestAnimationFrame(() => {
-      const triggers = Array.from(document.querySelectorAll<HTMLButtonElement>("[data-session-id]"));
-      const target = result === "deleted"
-        ? triggers.find((element) => element.dataset.sessionId !== sessionId)
-        : triggers.find((element) => element.dataset.sessionId === sessionId);
-      (target ?? document.querySelector<HTMLButtonElement>("[aria-label='New project']"))?.focus();
-    });
-  };
   const closeDeleteDialog = (deleted = false) => {
     const sessionId = sessionPendingDeletion?.id;
     setSessionPendingDeletion(null);
@@ -585,15 +593,15 @@ function AppShellContent() {
 
   useEffect(() => {
     // Account limits are global and Git changes belong to the project, while
-    // context is session-scoped. Keep the project's last Git value visible when
-    // switching threads so it does not flicker during the refresh.
+    // context is session-scoped. Keep Git and context cached at their respective
+    // scopes so status changes and background refreshes do not flicker.
     const projectId = activeSession?.projectId;
+    const sessionId = activeSession?.id;
     setIndicators((current) => ({
       usage: current.usage,
       git: projectId ? gitIndicatorsByProject.current.get(projectId) : undefined,
     }));
-    if (!activeSession?.id || !projectId) return;
-    const sessionId = activeSession.id;
+    if (!sessionId || !projectId) return;
     const controller = new AbortController();
     let timer: number | undefined;
     const load = async () => {
@@ -604,7 +612,18 @@ function AppShellContent() {
         const next = response.ok ? await response.json() as LiveIndicators : {};
         if (!controller.signal.aborted) {
           if (next.git) gitIndicatorsByProject.current.set(projectId, next.git);
-          setIndicators((current) => ({ ...next, usage: next.usage ?? current.usage }));
+          const nextContext = next.context;
+          if (nextContext) {
+            setContextIndicatorsBySession((current) => {
+              const updated = new Map(current);
+              updated.set(sessionId, nextContext);
+              return updated;
+            });
+          }
+          setIndicators((current) => ({
+            git: next.git,
+            usage: next.usage ?? current.usage,
+          }));
         }
       } catch (error) {
         if (!(error instanceof DOMException && error.name === "AbortError")) {
@@ -615,6 +634,12 @@ function AppShellContent() {
         }
       } finally {
         if (!controller.signal.aborted) {
+          setContextResolvedSessionIds((current) => {
+            if (current.has(sessionId)) return current;
+            const updated = new Set(current);
+            updated.add(sessionId);
+            return updated;
+          });
           timer = window.setTimeout(load, activeSession.status === "running" ? 8_000 : 30_000);
         }
       }
@@ -752,7 +777,11 @@ function AppShellContent() {
       if (matchesShortcut(event, "closeThread")) {
         event.preventDefault();
         if (activeSession?.internal && activeSession.parentSessionId) selectSession(activeSession.parentSessionId);
-        else if (activeSession) requestCloseSession(activeSession.id);
+        return;
+      }
+      if (matchesShortcut(event, "settleThread")) {
+        event.preventDefault();
+        if (activeSession && !activeSession.internal) void anvilClient.setSessionSettled(activeSession.id, true);
         return;
       }
       const threadIndex = threadNumberShortcutIndex(event);
@@ -783,7 +812,7 @@ function AppShellContent() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activeProject, activeSession, isMobile, navigate, ordinarySessions, rebuildState, rebuildWebApp, requestCloseSession, selectSession, setOpenMobile, snapshot.activeSessionId]);
+  }, [activeProject, activeSession, isMobile, navigate, ordinarySessions, rebuildState, rebuildWebApp, selectSession, setOpenMobile, snapshot.activeSessionId]);
 
   if (!snapshot.workspaceLocation && snapshot.connection !== "connected") {
     return (
@@ -943,6 +972,9 @@ function AppShellContent() {
               projectName={activeProject?.name ?? "this project"}
               entries={timeline}
               loading={snapshot.hydratingSessionIds.includes(activeSession.id)}
+              contextUsage={contextIndicatorsBySession.get(activeSession.id)}
+              contextManifest={contextManifest}
+              contextLoading={!contextResolvedSessionIds.has(activeSession.id) && !contextManifest}
               onSuggestion={sendSuggestion}
               onRequestProjectChange={() => setProjectChooserMode("change")}
             />
@@ -968,8 +1000,7 @@ function AppShellContent() {
               prompt={composerDrafts[activeSession.id] ?? ""}
               pending={activeSessionPending}
               creationError={activeSessionCreationError}
-              widgets={widgets}
-              contextUsage={indicators.context}
+              widgets={composerWidgets}
               attachments={composerAttachments[activeSession.id] ?? []}
               onAttachFiles={attachFiles}
               onRemoveAttachment={removeAttachment}
@@ -1056,14 +1087,6 @@ function AppShellContent() {
           title={sessionPendingRename.title}
           onClose={closeRenameDialog}
           onRename={(title) => anvilClient.renameSession(sessionPendingRename.id, title)}
-        />
-      )}
-      {sessionPendingClose && (
-        <SettleOrDeleteThreadDialog
-          title={sessionPendingClose.title}
-          onClose={closeThreadActionDialog}
-          onSettle={() => anvilClient.setSessionSettled(sessionPendingClose.id, true)}
-          onDelete={() => anvilClient.deleteSession(sessionPendingClose.id)}
         />
       )}
       {sessionPendingDeletion && (

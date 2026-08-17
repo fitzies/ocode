@@ -58,6 +58,10 @@
 }
 
 @media (max-width: 900px) {
+  .context-lens {
+    display: none;
+  }
+
   .workspace {
     --workspace-pane-header-height: 52px;
   }
@@ -157,10 +161,14 @@
     margin-right: 0;
   }
 
-  .thinking-event,
-  .tool-event {
+  .thinking-event {
     margin-right: 0;
     margin-left: 36px;
+  }
+
+  .tool-event {
+    margin-right: 0;
+    margin-left: 0;
   }
 
   .composer-wrap {
@@ -238,19 +246,19 @@
 
 @media (max-width: 420px) {
   .thinking-event,
-  .tool-event,
-  .tool-batch,
   .system-event,
   .interaction-event {
     margin-left: 12px;
   }
 
-  .tool-status-copy,
-  .tool-batch-label > small {
-    display: none;
+  .tool-event,
+  .tool-batch {
+    margin-right: 0;
+    margin-left: 0;
   }
 
-  .composer-context {
+  .tool-status-copy,
+  .tool-batch-label > small {
     display: none;
   }
 

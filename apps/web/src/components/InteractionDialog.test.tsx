@@ -88,6 +88,31 @@ describe("InteractionPanel", () => {
     expect(multiHtml).not.toContain("Choose an option or provide a custom answer.");
   });
 
+  it("renders generic extension confirms without overstating approval semantics", () => {
+    const confirmRequest: InteractionRequest = {
+      id: "confirm-1",
+      sessionId: "session-1",
+      method: "confirm",
+      title: "Publish the current branch?",
+      message: "This will create a commit and push it to the remote default branch.",
+      requestedAt: "2026-07-23T01:00:00.000Z",
+    };
+    const html = renderToStaticMarkup(
+      <InteractionPanel requests={[confirmRequest]} onRespond={() => undefined} />,
+    );
+
+    expect(html).toContain("Confirmation required");
+    expect(html).toContain('data-presentation="confirmation-card"');
+    expect(html).toContain("Publish the current branch?");
+    expect(html).toContain("create a commit and push it");
+    expect(html).toContain("Confirm before continuing");
+    expect(html).toContain("yes or no response");
+    expect(html).toContain(">No</button>");
+    expect(html).toContain(">Confirm</button>");
+    expect(html).not.toContain("Approve");
+    expect(html).toContain('data-slot="card"');
+  });
+
   it("renders multi-select inside the originating thread rather than a global modal", () => {
     const html = renderToStaticMarkup(
       <InteractionPanel requests={[request]} onRespond={() => undefined} />,

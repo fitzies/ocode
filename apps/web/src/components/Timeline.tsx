@@ -2,6 +2,7 @@ import { normalizeProjectResourcePath } from "@anvil/protocol";
 import type {
   ArtifactReference,
   ContentBlock,
+  ContextManifestV1,
   JsonValue,
   MessageEntry,
   ProjectResourceContentBlock,
@@ -32,12 +33,16 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
+import { ContextLens, type ContextUsage } from "./ContextLens";
 import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
 import { MarkdownText } from "./MarkdownText";
 import { MessageActions } from "./MessageActions";
+import { StreamingText } from "./StreamingText";
+import { contextSourcesFromTool, ToolContextCards } from "./ToolContextCards";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./ui/dialog";
+import { Spinner } from "./ui/spinner";
 import { useTimelineScroll } from "./timelineScroll";
 import { displayToolName, presentTool, type ToolCategory } from "./toolPresentation";
 
@@ -46,6 +51,9 @@ interface TimelineProps {
   projectName?: string;
   entries: TimelineEntry[];
   loading?: boolean;
+  contextUsage?: ContextUsage;
+  contextManifest?: ContextManifestV1;
+  contextLoading?: boolean;
   onSuggestion: (prompt: string) => void;
   onRequestProjectChange?: () => void;
   onOpenProjectResource?: (block: ProjectResourceContentBlock) => void;
@@ -219,9 +227,10 @@ function ImageBlock({ source, alt, caption }: { source?: string; alt: string; ca
   );
 }
 
-function ContentBlocks({ blocks, compact = false, onOpenProjectResource }: {
+function ContentBlocks({ blocks, compact = false, streamText = false, onOpenProjectResource }: {
   blocks: ContentBlock[];
   compact?: boolean;
+  streamText?: boolean;
   onOpenProjectResource?: (block: ProjectResourceContentBlock) => void;
 }) {
   if (!blocks.length) return null;
@@ -229,6 +238,7 @@ function ContentBlocks({ blocks, compact = false, onOpenProjectResource }: {
     <div className={compact ? "content-blocks content-blocks--compact" : "content-blocks"}>
       {blocks.map((block) => {
         if (block.type === "text") {
+          if (streamText && !compact) return <StreamingText key={block.id} text={block.text} />;
           return compact
             ? <div className="text-block" key={block.id}>{block.text}</div>
             : <MarkdownText key={block.id}>{block.text}</MarkdownText>;
@@ -431,7 +441,7 @@ function ToolEventShell({
   children: ReactNode;
 }) {
   return (
-    <Collapsible className={`tool-event tool-event--${status} tool-event--${appearanceCategory}${entering ? " timeline-entry--entering" : ""}`}>
+    <Collapsible className={`tool-event tool-chip tool-event--${status} tool-event--${appearanceCategory}${entering ? " timeline-entry--entering" : ""}`}>
       <CollapsibleTrigger className="tool-event-trigger">
         <span className="tool-icon"><ToolGlyph category={category} /></span>
         <span className="tool-main">
@@ -507,7 +517,11 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
             ))} onOpenProjectResource={onOpenProjectResource} />
           </div>
         ) : (
-          <ContentBlocks blocks={visibleContent} onOpenProjectResource={onOpenProjectResource} />
+          <ContentBlocks
+            blocks={visibleContent}
+            streamText={entry.role === "assistant" && entry.status === "streaming"}
+            onOpenProjectResource={onOpenProjectResource}
+          />
         )}
         {entry.status === "streaming" && entry.role === "user" && entry.id.startsWith("optimistic-")
           ? <span className="message-pending" role="status">
@@ -550,6 +564,7 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
       );
     }
     const fileToolResource = trustedFileToolResource(entry);
+    const contextSources = presentation.category === "search" ? contextSourcesFromTool(entry) : [];
     const failureText = entry.status === "failed" ? firstTextOutput(entry) : undefined;
     const summaryDetail = failureText && presentation.category === "generic"
       ? `${displayToolName(entry.name)} · ${failureText}`
@@ -596,6 +611,7 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
         ) : (
           <div className="tool-detail">
             {fileToolResource && <section className="tool-output"><span className="detail-label">File</span><ContentBlocks blocks={[fileToolResource]} compact onOpenProjectResource={onOpenProjectResource} /></section>}
+            {contextSources.length > 0 && <section className="tool-output"><span className="detail-label">Source links</span><ToolContextCards sources={contextSources} /></section>}
             {entry.output.length > 0 && <section className="tool-output"><span className="detail-label">{entry.status === "running" ? "Live output" : "Output"}</span><ContentBlocks blocks={entry.output} compact onOpenProjectResource={onOpenProjectResource} /></section>}
             <JsonDetails label="Arguments" value={entry.arguments} />
             <JsonDetails label="Details" value={entry.details} />
@@ -669,7 +685,7 @@ function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   let index = 0;
   while (index < entries.length) {
     const entry = entries[index]!;
-    if (entry.kind === "message" && entry.role === "user") activeRetry = undefined;
+    if (isHumanUserMessage(entry)) activeRetry = undefined;
     if (entry.kind === "reasoning") {
       index += 1;
       continue;
@@ -764,7 +780,7 @@ function TimelineRowView({ row, entering = false, onOpenProjectResource }: {
   );
 }
 
-export const Timeline = memo(function Timeline({ session, projectName = "this project", entries, loading = false, onRequestProjectChange = () => undefined, onOpenProjectResource = () => undefined }: TimelineProps) {
+export const Timeline = memo(function Timeline({ session, projectName = "this project", entries, loading = false, contextUsage, contextManifest, contextLoading, onRequestProjectChange = () => undefined, onOpenProjectResource = () => undefined }: TimelineProps) {
   const hasEntries = entries.length > 0;
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -785,8 +801,8 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
     getScrollElement: () => scrollRef.current,
     estimateSize: (index) => {
       const row = rows[index];
-      if (row?.kind === "tool-batch") return 44 + row.tools.length * 29;
-      if (row?.kind === "entry" && row.entry.kind === "tool") return 30;
+      if (row?.kind === "tool-batch") return 44 + row.tools.length * 34;
+      if (row?.kind === "entry" && row.entry.kind === "tool") return 34;
       if (row?.kind === "entry" && row.entry.kind === "message") return 112;
       return 64;
     },
@@ -844,10 +860,12 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
   if (!hasEntries) {
     return (
       <div className="timeline-frame">
+        <ContextLens usage={contextUsage} manifest={contextManifest} loading={contextLoading} />
         <div ref={scrollRef} className="timeline timeline--empty">
           {loading ? (
-            <div role="status" aria-label="Loading thread">
-              <span className="forge-spinner" aria-hidden="true" />
+            <div className="timeline-loading-state" role="status" aria-label="Loading thread">
+              <Spinner role="presentation" aria-hidden="true" />
+              <span>Loading thread…</span>
             </div>
           ) : (
             <h2>
@@ -870,6 +888,7 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
 
   return (
     <div className="timeline-frame">
+      <ContextLens usage={contextUsage} manifest={contextManifest} loading={contextLoading} />
       <div
         ref={scrollRef}
         className={`timeline${virtualized ? " timeline--virtualized" : ""}${following ? "" : " timeline--detached"}`}
@@ -898,9 +917,10 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
             ) : rows.map((row) => <TimelineRowView key={row.key} row={row} entering={enteringRowKeys.has(row.key)} onOpenProjectResource={onOpenProjectResource} />)}
           </div>
           {showWorkingStatus && (
-            <div className="working-status" role="status" aria-live="polite">
+            <div className="working-status" role="status" aria-live="polite" aria-label={`Agent working: ${statusMessage}`}>
               <span className="thinking-ellipsis" aria-hidden="true"><i /><i /><i /></span>
-              <span>{statusMessage}</span>
+              <strong>Working</strong>
+              <span aria-hidden="true">{statusMessage}</span>
             </div>
           )}
           <div className="timeline-follow-space" aria-hidden="true" />

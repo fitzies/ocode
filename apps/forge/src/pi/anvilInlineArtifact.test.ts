@@ -17,14 +17,22 @@ let directory: string | undefined;
 
 function toolHarness() {
   const registered = new Map<string, Tool>();
-  const sessionStartHandlers: Array<() => void> = [];
+  const handlers = new Map<string, Array<(event: Record<string, unknown>, context: any) => void>>();
   anvilInlineArtifact({
     registerTool: (definition) => registered.set(definition.name, definition),
-    on: (_event, handler) => sessionStartHandlers.push(handler),
+    on: (event, handler) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
+    getAllTools: () => [...registered.values()],
+    getActiveTools: () => [...registered.keys()],
   });
   return {
     registered,
-    startSession: () => sessionStartHandlers.forEach((handler) => handler()),
+    startSession: () => handlers.get("session_start")?.forEach((handler) => handler({}, {
+      ui: { setWidget: () => undefined },
+      model: { contextWindow: 200_000 },
+      getContextUsage: () => undefined,
+      getSystemPrompt: () => "",
+      sessionManager: { buildSessionContext: () => ({ messages: [] }) },
+    })),
   };
 }
 

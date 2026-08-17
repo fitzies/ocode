@@ -8,12 +8,14 @@ import type {
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  HelpCircleIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { AskUserQuestion } from "@/components/AskUserQuestion";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Combobox,
@@ -55,6 +57,7 @@ function requestDescription(request: InteractionRequest) {
     return "Your answer";
   }
   if (request.method === "multiSelect") return "Select one or more options";
+  if (request.method === "confirm") return "Confirmation required";
   if (request.method === "editor") return "Edit multi-line text";
   if (request.method === "unknown") return `Extension interaction · ${request.originalMethod}`;
   return `Extension interaction · ${request.method}`;
@@ -236,9 +239,20 @@ function InteractionForm({
 
   if (request.method === "confirm") {
     return (
-      <div className="flex justify-end gap-2 pt-1">
-        <Button variant="outline" type="button" onClick={() => onRespond({ requestId: request.id, confirmed: false })}>No</Button>
-        <Button type="button" onClick={() => onRespond({ requestId: request.id, confirmed: true })}>Yes, continue</Button>
+      <div className="grid gap-3" data-presentation="confirmation-card">
+        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2.5 rounded-md border border-border bg-muted/25 p-3">
+          <span className="mt-0.5 text-muted-foreground" aria-hidden="true">
+            <HugeiconsIcon icon={HelpCircleIcon} strokeWidth={2} className="size-4" />
+          </span>
+          <span className="grid gap-1">
+            <strong className="font-medium text-foreground">Confirm before continuing</strong>
+            <span className="text-xs/relaxed text-muted-foreground">The requesting extension is waiting for a yes or no response.</span>
+          </span>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="outline" type="button" onClick={() => onRespond({ requestId: request.id, confirmed: false })}>No</Button>
+          <Button type="button" onClick={() => onRespond({ requestId: request.id, confirmed: true })}>Confirm</Button>
+        </div>
       </div>
     );
   }
@@ -376,8 +390,8 @@ export function InteractionPanel({ requests, onRespond }: InteractionPanelProps)
   const messageId = `interaction-message-${request.id}`;
 
   return (
-    <section className="w-full shrink-0 px-3 pb-[var(--composer-overlay-height)] sm:px-6" aria-labelledby={titleId} aria-describedby={request.message && !isAskUserQuestionRequest(request) ? messageId : undefined}>
-      <div className="mx-auto max-h-[min(30rem,54dvh)] w-full max-w-[790px] overflow-auto rounded-lg border border-border bg-card text-card-foreground shadow-lg">
+    <section className="relative z-[5] w-full shrink-0 px-3 pb-[var(--composer-overlay-height)] sm:px-6" aria-labelledby={titleId} aria-describedby={request.message && !isAskUserQuestionRequest(request) ? messageId : undefined}>
+      <Card size="sm" className="mx-auto max-h-[min(30rem,54dvh)] w-full max-w-[790px] gap-0 overflow-auto py-0 shadow-lg">
         <header className="sticky top-0 z-10 flex min-h-14 items-start gap-3 border-b border-border bg-card/95 px-4 py-3 backdrop-blur">
           <span className="min-w-0 flex-1">
             <small className="mb-1 block truncate text-[0.6875rem] leading-normal text-muted-foreground">
@@ -387,9 +401,9 @@ export function InteractionPanel({ requests, onRespond }: InteractionPanelProps)
           </span>
         </header>
         {request.message && !isAskUserQuestionRequest(request) && <p className="m-0 px-4 pt-3 text-xs/relaxed text-muted-foreground" id={messageId}>{request.message}</p>}
-        <div className="px-4 py-3"><InteractionForm key={request.id} request={request} onRespond={onRespond} /></div>
+        <CardContent className="px-4 py-3"><InteractionForm key={request.id} request={request} onRespond={onRespond} /></CardContent>
         {requests.length > 1 && (
-          <footer className="sticky bottom-0 grid min-h-10 grid-cols-[2rem_1fr_2rem] items-center border-t border-border bg-card/95 px-3 text-center text-[0.6875rem] text-muted-foreground backdrop-blur">
+          <CardFooter className="sticky bottom-0 grid min-h-10 grid-cols-[2rem_1fr_2rem] items-center border-t border-border bg-card/95 px-3 py-0 text-center text-[0.6875rem] text-muted-foreground backdrop-blur">
             <Button variant="ghost" size="icon-sm" type="button" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0} aria-label="Previous pending request">
               <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
             </Button>
@@ -397,9 +411,9 @@ export function InteractionPanel({ requests, onRespond }: InteractionPanelProps)
             <Button variant="ghost" size="icon-sm" className="justify-self-end" type="button" onClick={() => setIndex((current) => Math.min(requests.length - 1, current + 1))} disabled={index >= requests.length - 1} aria-label="Next pending request">
               <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />
             </Button>
-          </footer>
+          </CardFooter>
         )}
-      </div>
+      </Card>
     </section>
   );
 }

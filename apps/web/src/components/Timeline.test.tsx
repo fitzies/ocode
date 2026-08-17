@@ -53,6 +53,16 @@ describe("Timeline empty state", () => {
     expect(html).not.toContain("Let’s build");
   });
 
+  it("renders a labeled hydration loading state", () => {
+    const html = renderToStaticMarkup(
+      <Timeline session={session} entries={[]} loading onSuggestion={() => undefined} />,
+    );
+
+    expect(html).toContain('aria-label="Loading thread"');
+    expect(html).toContain("Loading thread…");
+    expect(html).toContain('data-slot="spinner"');
+  });
+
   it("uses an explicit AppShell callback instead of a global project-change event", () => {
     expect(timelineSource).toContain("onClick={onRequestProjectChange}");
     expect(appShellSource).toContain('onRequestProjectChange={() => setProjectChooserMode("change")}');
@@ -70,6 +80,23 @@ describe("Timeline empty state", () => {
   });
 });
 
+describe("Timeline loading state", () => {
+  it("keeps the custom working copy inside a truthful status", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={{ ...session, status: "running" }}
+        entries={[{ ...message, role: "user" }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("working-status");
+    expect(html).toContain("Agent working:");
+    expect(html).toContain(">Working</strong>");
+    expect(html).toContain("thinking-ellipsis");
+  });
+});
+
 describe("Timeline message actions", () => {
   it("shows copy only for complete assistant text", () => {
     const assistantHtml = renderToStaticMarkup(<Timeline session={session} entries={[message]} onSuggestion={() => undefined} />);
@@ -80,6 +107,20 @@ describe("Timeline message actions", () => {
     expect(assistantHtml).toContain('aria-label="Copy response"');
     expect(userHtml).not.toContain('aria-label="Copy response"');
     expect(streamingHtml).not.toContain("message-actions");
+  });
+
+  it("uses buffered streaming text for live assistant responses", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={{ ...session, status: "running" }}
+        entries={[{ ...message, status: "streaming" }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("streaming-text");
+    expect(html).toContain("<strong>Phase 3 goal:</strong>");
+    expect(html).toContain('aria-label="Streaming"');
   });
 
   it("keeps copy available for code-only assistant text", () => {
@@ -158,21 +199,25 @@ describe("Timeline markdown", () => {
     expect(html).not.toContain("**Phase 3 goal:**");
   });
 
-  it("adds a copy button to fenced assistant code blocks", () => {
+  it("renders fenced code as a labeled, copyable code block with line hooks", () => {
     const html = renderToStaticMarkup(
       <Timeline
         session={session}
         entries={[{
           ...message,
-          content: [{ id: "copyable", type: "text", text: "```text\nCopy this message\n```" }],
+          content: [{ id: "copyable", type: "text", text: "```ts\nconst first = 1;\nconst second = 2;\n```" }],
         }]}
         onSuggestion={() => undefined}
       />,
     );
 
     expect(html).toContain('class="markdown-code-block"');
+    expect(html).toContain('data-language="ts"');
+    expect(html).toContain("TypeScript");
     expect(html).toContain('aria-label="Copy code"');
-    expect(html).toContain("Copy this message");
+    expect(html.match(/markdown-code-line/g)).toHaveLength(2);
+    expect(html).toContain('</span>\n<span class="markdown-code-line">');
+    expect(html).toContain("const first = 1;");
   });
 
   it("renders skill invocations as friendly context instead of Pi command syntax", () => {
@@ -367,7 +412,7 @@ describe("Timeline markdown", () => {
     expect(html).toContain("/api/v1/artifacts/01959f7e-7d64-7000-8000-000000000001");
   });
 
-  it("hides completed and streaming reasoning entries", () => {
+  it("hides reasoning entries and keeps the custom working state", () => {
     const html = renderToStaticMarkup(
       <Timeline
         session={{ ...session, status: "running" }}
@@ -380,9 +425,10 @@ describe("Timeline markdown", () => {
       />,
     );
 
-    expect(html).not.toContain("Thought process");
+    expect(html).not.toContain('aria-label="Agent reasoning"');
     expect(html).not.toContain("Checking:");
     expect(html).not.toContain("Investigating app name source");
+    expect(html).toContain("working-status");
     expect(html).toContain("Read apps/web/src/App.tsx");
   });
 });
@@ -416,6 +462,39 @@ describe("Timeline tool presentation", () => {
     expect(html).toContain("Arguments");
     expect(html).toContain("Raw RPC event");
     expect(html).toContain("tool-event--file");
+    expect(html).toContain("tool-chip");
+  });
+
+  it("renders final web-search source URLs as bounded context cards", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[tool({
+          name: "search",
+          status: "completed",
+          arguments: { query: "Pi RPC" },
+          output: [{ id: "search-summary", type: "text", text: "Found relevant documentation." }],
+          details: {
+            count: 3,
+            sources: [
+              "https://example.test/rpc",
+              "https://docs.example.test/extensions",
+              "https://secret:password@example.test/private",
+              "javascript:alert(1)",
+            ],
+          },
+        })]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Source links");
+    expect(html).toContain('aria-label="2 source links"');
+    expect(html).toContain("example.test");
+    expect(html).toContain("docs.example.test");
+    expect(html).toContain('href="https://docs.example.test/extensions"');
+    expect(html).toContain('data-slot="button"');
+    expect(html.match(/context-card py-0/g)).toHaveLength(2);
   });
 
   it.each(["ocode_render_html_file", "anvil_render_html_file"])(

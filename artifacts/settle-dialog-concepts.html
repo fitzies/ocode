@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Settle dialog concepts</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --background:#09090b; --card:#18181b; --popover:#18181b; --foreground:#fafafa;
+    --muted:#27272a; --muted-fg:#a1a1aa; --border:#303034; --input:#303034;
+    --primary:#fafafa; --primary-fg:#18181b; --destructive:#ef4444; --destructive-bg:#3b1d21;
+    --ring:#a1a1aa; --radius:.65rem;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:transparent;color:var(--foreground);font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .page{max-width:1120px;margin:0 auto;padding:28px 20px 38px}
+  header{margin-bottom:22px}
+  h1{font-size:18px;line-height:1.3;margin:0 0 5px;font-weight:650;letter-spacing:-.01em}
+  header p{font-size:13px;color:var(--muted-fg);margin:0}
+  .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+  .concept{display:grid;gap:9px}
+  .label{display:flex;align-items:center;gap:8px;padding:0 2px;font-size:12px;color:var(--muted-fg)}
+  .badge{font-size:10px;color:var(--foreground);background:var(--muted);border:1px solid var(--border);border-radius:999px;padding:2px 6px}
+  .dialog{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:0 20px 50px rgba(0,0,0,.38);padding:20px;min-height:304px;display:flex;flex-direction:column}
+  .iconbox{width:34px;height:34px;border:1px solid var(--border);background:#202023;border-radius:8px;display:grid;place-items:center;margin-bottom:15px;color:#d4d4d8}
+  svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+  h2{font-size:16px;line-height:1.35;margin:0 0 7px;font-weight:650;letter-spacing:-.01em}
+  .desc{font-size:13px;line-height:1.55;color:var(--muted-fg);margin:0}
+  .spacer{flex:1;min-height:22px}
+  .footer{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+  button,.button{height:34px;border-radius:7px;border:1px solid var(--border);padding:0 12px;font:600 13px/1 ui-sans-serif,system-ui;color:var(--foreground);background:#202023;display:inline-flex;align-items:center;justify-content:center;gap:7px;white-space:nowrap}
+  .primary{background:var(--primary);color:var(--primary-fg);border-color:var(--primary)}
+  .danger{color:#f87171;background:var(--destructive-bg);border-color:#5b292e}
+  .danger-ghost{color:#f87171;background:transparent;border-color:transparent;padding-inline:4px}
+  .linkrow{margin-top:13px;padding-top:13px;border-top:1px solid var(--border);display:flex;justify-content:center}
+  .choices{display:grid;gap:8px;margin-top:18px}
+  .choice{width:100%;height:auto;min-height:63px;padding:11px;text-align:left;justify-content:flex-start;background:#202023}
+  .choice svg{flex:0 0 auto}
+  .choice strong{display:block;font-size:13px;margin-bottom:4px}
+  .choice small{display:block;color:var(--muted-fg);font-weight:450;font-size:11px;line-height:1.35;white-space:normal}
+  .choice.recommended{border-color:#52525b;background:#242427}
+  .choice.dangerchoice{color:#f87171;background:transparent;border-color:#4b292d}
+  .choice.dangerchoice small{color:#b89a9d}
+  .stack{display:grid;gap:8px;margin-top:19px}
+  .stack .button{width:100%;height:38px}
+  .stack .secondary{background:transparent}
+  .note{font-size:11px;line-height:1.45;color:#71717a;padding:0 2px}
+  @media(max-width:860px){.grid{grid-template-columns:1fr}.dialog{min-height:0}.concept{max-width:520px;width:100%;margin-inline:auto}}
+  @media(prefers-reduced-motion:no-preference){.concept{animation:enter .4s both}.concept:nth-child(2){animation-delay:.07s}.concept:nth-child(3){animation-delay:.14s}@keyframes enter{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}}
+</style>
+</head>
+<body>
+<main class="page">
+<header><h1>Settle dialog directions</h1><p>Three shadcn/Mira-aligned compositions using restrained product UI patterns.</p></header>
+<section class="grid">
+  <article class="concept">
+    <div class="label"><span class="badge">01</span> Settle first · recommended</div>
+    <div class="dialog" role="dialog" aria-labelledby="a-title">
+      <div class="iconbox"><svg viewBox="0 0 24 24"><path d="M4 7h16M6 7l1 13h10l1-13M9 4h6l1 3H8l1-3Z"/><path d="M9.5 11v5M14.5 11v5"/></svg></div>
+      <h2 id="a-title">Settle “New session”?</h2>
+      <p class="desc">It’ll leave your active list, but its conversation and Pi session files will stay available.</p>
+      <div class="spacer"></div>
+      <div class="footer"><button>Cancel</button><button class="primary">Settle session</button></div>
+      <div class="linkrow"><button class="danger-ghost"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>Delete permanently…</button></div>
+    </div>
+    <div class="note">Makes the reversible, common action primary. Delete opens a separate destructive confirmation.</div>
+  </article>
+
+  <article class="concept">
+    <div class="label"><span class="badge">02</span> Explicit choices</div>
+    <div class="dialog" role="dialog" aria-labelledby="b-title">
+      <h2 id="b-title">What should happen to “New session”?</h2>
+      <p class="desc">Choose whether to keep its history or remove it completely.</p>
+      <div class="choices">
+        <button class="choice recommended"><svg viewBox="0 0 24 24"><path d="M4 7h16M6 7l1 13h10l1-13M9 4h6l1 3H8l1-3Z"/></svg><span><strong>Settle session</strong><small>Remove from active sessions and keep its history.</small></span></button>
+        <button class="choice dangerchoice"><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13"/></svg><span><strong>Delete permanently</strong><small>Remove the conversation and Pi session files.</small></span></button>
+      </div>
+      <div class="spacer"></div>
+      <div class="footer"><button>Cancel</button></div>
+    </div>
+    <div class="note">Best when both actions are common and users benefit from comparing consequences directly.</div>
+  </article>
+
+  <article class="concept">
+    <div class="label"><span class="badge">03</span> Compact action sheet</div>
+    <div class="dialog" role="dialog" aria-labelledby="c-title">
+      <h2 id="c-title">Close “New session”</h2>
+      <p class="desc">You can keep the session for later or remove it permanently.</p>
+      <div class="stack">
+        <button class="button primary">Settle and keep history</button>
+        <button class="button danger">Delete permanently</button>
+        <button class="button secondary">Cancel</button>
+      </div>
+      <div class="spacer"></div>
+    </div>
+    <div class="note">The smallest footprint and strongest mobile behavior, but less conventional for desktop dialogs.</div>
+  </article>
+</section>
+</main>
+</body>
+</html>

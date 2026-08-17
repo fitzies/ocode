@@ -114,6 +114,22 @@ describe("GitHubRepositoryCatalog", () => {
     expect(page.hasMore).toBe(true);
   });
 
+  it("filters repository names on Forge and limits responses to ten matches", async () => {
+    const repositories = Array.from({ length: 14 }, (_, index) =>
+      repository(
+        index === 13 ? "owner/unrelated" : `owner/ocode-${index}`,
+        `2026-01-${String(index + 1).padStart(2, "0")}T00:00:00Z`,
+      ));
+    const run = vi.fn<GitHubRepositoryCommandRunner>().mockResolvedValue({ stdout: JSON.stringify(repositories) });
+    const catalog = new GitHubRepositoryCatalog(run);
+
+    const result = await catalog.list(1, "OCODE");
+
+    expect(result.repositories).toHaveLength(10);
+    expect(result.repositories.every((item) => item.nameWithOwner.includes("ocode"))).toBe(true);
+    expect(result.hasMore).toBe(true);
+  });
+
   it("rejects pages outside the fixed bound before invoking gh", async () => {
     const run = vi.fn<GitHubRepositoryCommandRunner>();
     const catalog = new GitHubRepositoryCatalog(run);

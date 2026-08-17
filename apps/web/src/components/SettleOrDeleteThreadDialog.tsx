@@ -28,6 +28,7 @@ export function SettleOrDeleteThreadDialog({
   onDelete: () => Promise<void>;
 }) {
   const [pendingAction, setPendingAction] = useState<"settle" | "delete">();
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [error, setError] = useState<string>();
   const settleButtonRef = useRef<HTMLButtonElement>(null);
   const pending = pendingAction !== undefined;
@@ -49,40 +50,64 @@ export function SettleOrDeleteThreadDialog({
   return (
     <AlertDialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <AlertDialogContent
+        className="sm:max-w-md"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           settleButtonRef.current?.focus();
         }}
         onEscapeKeyDown={(event) => pending && event.preventDefault()}
       >
-        <AlertDialogHeader>
-          <AlertDialogTitle className="max-w-full truncate">Settle or delete “{title}”?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Settle moves this thread out of your active list and keeps its history. Delete permanently removes the conversation and its Pi session files.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        {error && <FieldError role="alert">{error}</FieldError>}
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={pending}
-            onClick={() => void perform("delete")}
-          >
-            <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
-            {pendingAction === "delete" ? "Deleting…" : "Delete"}
-          </Button>
-          <Button
-            ref={settleButtonRef}
-            type="button"
-            disabled={pending}
-            onClick={() => void perform(DEFAULT_THREAD_CLOSE_ACTION)}
-          >
-            <HugeiconsIcon icon={Archive01Icon} strokeWidth={2} />
-            {pendingAction === "settle" ? "Settling…" : "Settle"}
-          </Button>
-        </AlertDialogFooter>
+        {confirmingDelete ? (
+          <>
+            <AlertDialogHeader>
+              <div className="mb-2 flex size-9 items-center justify-center rounded-md border border-destructive/20 bg-destructive/10 text-destructive">
+                <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+              </div>
+              <AlertDialogTitle className="max-w-full truncate">Delete “{title}” permanently?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This removes the conversation and its Pi session files. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {error && <FieldError role="alert">{error}</FieldError>}
+            <AlertDialogFooter>
+              <Button type="button" variant="outline" disabled={pending} onClick={() => setConfirmingDelete(false)}>
+                Back
+              </Button>
+              <Button type="button" variant="destructive" disabled={pending} onClick={() => void perform("delete")}>
+                <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                {pendingAction === "delete" ? "Deleting…" : "Delete permanently"}
+              </Button>
+            </AlertDialogFooter>
+          </>
+        ) : (
+          <>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="max-w-full truncate">Settle “{title}”?</AlertDialogTitle>
+              <AlertDialogDescription>
+                It’ll leave your active list, but its conversation and Pi session files will stay available.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {error && <FieldError role="alert">{error}</FieldError>}
+            <AlertDialogFooter>
+              <Button type="button" variant="ghost" size="sm" className="text-destructive hover:text-destructive" onClick={() => setConfirmingDelete(true)}>
+                <HugeiconsIcon icon={Delete02Icon} strokeWidth={2} />
+                Delete permanently…
+              </Button>
+            </AlertDialogFooter>
+            <div className="flex justify-end gap-2 border-t pt-3">
+              <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+              <Button
+                ref={settleButtonRef}
+                type="button"
+                disabled={pending}
+                onClick={() => void perform(DEFAULT_THREAD_CLOSE_ACTION)}
+              >
+                <HugeiconsIcon icon={Archive01Icon} strokeWidth={2} />
+                {pendingAction === "settle" ? "Settling…" : "Settle session"}
+              </Button>
+            </div>
+          </>
+        )}
       </AlertDialogContent>
     </AlertDialog>
   );

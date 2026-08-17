@@ -93,7 +93,7 @@ describe("FixtureAnvilClient", () => {
     const client = new FixtureAnvilClient();
 
     const firstPage = await client.listGitHubRepositories();
-    const secondPage = await client.listGitHubRepositories(2);
+    const filtered = await client.listGitHubRepositories(1, "hello");
 
     expect(firstPage).toEqual({
       repositories: expect.arrayContaining([
@@ -101,11 +101,11 @@ describe("FixtureAnvilClient", () => {
         expect.objectContaining({ nameWithOwner: "collaborator/design-system", private: false }),
       ]),
       page: 1,
-      hasMore: true,
+      hasMore: false,
     });
-    expect(secondPage).toEqual({
+    expect(filtered).toEqual({
       repositories: [expect.objectContaining({ nameWithOwner: "octocat/Hello-World" })],
-      page: 2,
+      page: 1,
       hasMore: false,
     });
   });

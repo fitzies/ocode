@@ -59,7 +59,7 @@ describe("Sidebar thread ordering", () => {
     });
 
     expect(markup).toContain("Lowercase thread");
-    expect(markup).toContain(`${project.name}/feature/sidebar`);
+    expect(markup).toContain(`${project.path.split("/").at(-1)}/feature/sidebar`);
     expect(markup).toContain('aria-label="Create thread"');
     expect(markup).not.toContain(">Unsettled<");
   });
@@ -99,19 +99,19 @@ describe("Sidebar thread ordering", () => {
     expect(markup).toContain("Choose a project for this new thread");
   });
 
-  it("uses the configured project display name rather than the repository directory", () => {
+  it("uses the repository directory in thread metadata instead of the display name", () => {
     const client = new FixtureAnvilClient();
     const base = client.getSnapshot();
     const project = base.projects[0]!;
     const markup = renderSnapshot({
       ...base,
       projects: base.projects.map((candidate) => candidate.id === project.id
-        ? { ...candidate, name: "ocode", path: "/home/oli/code/anvil" }
+        ? { ...candidate, name: "Local tap", path: "/home/oli/code/localtap" }
         : candidate),
     });
 
-    expect(markup).toContain("ocode/main");
-    expect(markup).not.toContain("anvil/main");
+    expect(markup).toContain("localtap/main");
+    expect(markup).not.toContain("Local tap/main");
   });
 
   it("uses a project select instead of project filter chips", () => {

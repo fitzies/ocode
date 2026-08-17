@@ -6,6 +6,7 @@ import {
   isAnvilSessionDetailSync,
   isAnvilSummaryBootstrap,
   isGitHubRepositoryPage,
+  isProjectDirectoryCatalog,
   isSubagentRun,
   isTerminalSubagentStatus,
   normalizeProjectSlug,
@@ -22,6 +23,7 @@ import {
   type GitHubRepositorySummary,
   type InteractionResponse,
   type JsonValue,
+  type ProjectDirectoryCatalog,
   type ProjectResourceContentBlock,
   type SessionSummary,
   type SubagentRun,
@@ -110,7 +112,8 @@ export interface AnvilClient {
   cloneProject(name: string, repository: string): Promise<void>;
   addExistingProject(name: string, path: string): Promise<void>;
   deleteProject(projectId: string): Promise<void>;
-  listGitHubRepositories(page?: number): Promise<GitHubRepositoryPage>;
+  listGitHubRepositories(page?: number, query?: string): Promise<GitHubRepositoryPage>;
+  listProjectDirectories(): Promise<ProjectDirectoryCatalog>;
   getProjectsRoot(): Promise<string>;
   setProjectsRoot(path: string): Promise<string>;
   createSession(projectId: string): void;
@@ -709,16 +712,25 @@ export class FixtureAnvilClient implements AnvilClient {
     this.applyLocal("project.deleted", { projectId }, null);
   };
 
-  listGitHubRepositories = async (page = 1): Promise<GitHubRepositoryPage> => {
+  listGitHubRepositories = async (page = 1, query = ""): Promise<GitHubRepositoryPage> => {
     if (!Number.isSafeInteger(page) || page < 1) throw new Error("GitHub repository page must be a positive integer");
-    const pageSize = 2;
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const matches = normalizedQuery
+      ? fixtureGitHubRepositories.filter((repository) => repository.nameWithOwner.toLocaleLowerCase().includes(normalizedQuery))
+      : fixtureGitHubRepositories;
+    const pageSize = 10;
     const start = (page - 1) * pageSize;
     return {
-      repositories: fixtureGitHubRepositories.slice(start, start + pageSize).map((repository) => ({ ...repository })),
+      repositories: matches.slice(start, start + pageSize).map((repository) => ({ ...repository })),
       page,
-      hasMore: start + pageSize < fixtureGitHubRepositories.length,
+      hasMore: start + pageSize < matches.length,
     };
   };
+
+  listProjectDirectories = async (): Promise<ProjectDirectoryCatalog> => ({ directories: [
+    { name: "new-workspace", path: `${this.projectsRoot}/new-workspace` },
+    { name: "sample-app", path: `${this.projectsRoot}/sample-app` },
+  ] });
 
   getProjectsRoot = async (): Promise<string> => this.projectsRoot;
 
@@ -1606,9 +1618,11 @@ export class ForgeAnvilClient implements AnvilClient {
     await this.sendCommand(this.command("project.delete", null, { projectId }), true);
   };
 
-  listGitHubRepositories = async (page = 1): Promise<GitHubRepositoryPage> => {
+  listGitHubRepositories = async (page = 1, query = ""): Promise<GitHubRepositoryPage> => {
     if (!Number.isSafeInteger(page) || page < 1) throw new Error("GitHub repository page must be a positive integer");
-    const response = await this.fetcher(`/api/v1/github/repositories?page=${page}`, {
+    const params = new URLSearchParams({ page: String(page) });
+    if (query.trim()) params.set("q", query.trim());
+    const response = await this.fetcher(`/api/v1/github/repositories?${params}`, {
       headers: { accept: "application/json" },
     });
     const result = await response.json().catch(() => undefined) as unknown;
@@ -1625,6 +1639,21 @@ export class ForgeAnvilClient implements AnvilClient {
     if (!isGitHubRepositoryPage(result) || result.page !== page) {
       throw new Error("Forge returned an invalid GitHub repository page");
     }
+    return result;
+  };
+
+  listProjectDirectories = async (): Promise<ProjectDirectoryCatalog> => {
+    const response = await this.fetcher("/api/v1/projects/directories", {
+      headers: { accept: "application/json" },
+    });
+    const result = await response.json().catch(() => undefined) as unknown;
+    if (!response.ok) {
+      const message = result && typeof result === "object" && !Array.isArray(result)
+        ? (result as Record<string, unknown>).message
+        : undefined;
+      throw new Error(typeof message === "string" ? message : `Project directory request failed with HTTP ${response.status}`);
+    }
+    if (!isProjectDirectoryCatalog(result)) throw new Error("Forge returned an invalid project directory list");
     return result;
   };
 

@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ocode context view — Mira variants</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: light-dark(#ffffff, #171717);
+    --surface: light-dark(#ffffff, #202020);
+    --surface-2: light-dark(#fafafa, #262626);
+    --text: light-dark(#171717, #fafafa);
+    --muted: light-dark(#737373, #a3a3a3);
+    --faint: light-dark(#a3a3a3, #737373);
+    --border: light-dark(#e5e5e5, rgba(255,255,255,.1));
+    --border-strong: light-dark(#d4d4d4, rgba(255,255,255,.17));
+    --primary: light-dark(#262626, #e5e5e5);
+    --primary-fg: light-dark(#fafafa, #262626);
+    --muted-bg: light-dark(#f5f5f5, #2b2b2b);
+    --blue: light-dark(#3b82f6, #60a5fa);
+    --amber: light-dark(#d97706, #fbbf24);
+    --green: light-dark(#059669, #34d399);
+    --rose: light-dark(#e11d48, #fb7185);
+    --violet: light-dark(#7c3aed, #a78bfa);
+    --cyan: light-dark(#0891b2, #22d3ee);
+    --shadow: 0 18px 50px rgba(0,0,0,.16), 0 2px 8px rgba(0,0,0,.08);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: transparent; color: var(--text); }
+  body { padding: 18px; }
+  button { font: inherit; }
+  .page { width: min(1180px, 100%); margin: 0 auto; }
+  .intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin: 0 0 16px; padding: 0 2px; }
+  .eyebrow { margin: 0 0 4px; color: var(--muted); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  h1 { margin: 0; font-size: 20px; line-height: 1.2; letter-spacing: -.025em; font-weight: 650; }
+  .intro-copy { max-width: 560px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+  .gallery { display: grid; gap: 16px; }
+  .concept { overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in oklab, var(--bg) 95%, transparent); box-shadow: 0 1px 2px rgba(0,0,0,.03); }
+  .concept-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 50px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .concept-title { display: flex; min-width: 0; align-items: baseline; gap: 8px; }
+  .concept-title strong { font-size: 13px; font-weight: 620; }
+  .concept-title span { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+  .recommend { display: inline-flex; height: 20px; align-items: center; padding: 0 8px; border-radius: 999px; color: var(--primary-fg); background: var(--primary); font-size: 10px; font-weight: 600; white-space: nowrap; }
+  .part-list { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  .part { display: inline-flex; height: 20px; align-items: center; padding: 0 7px; color: var(--muted); background: var(--muted-bg); border-radius: 999px; font-size: 9px; font-weight: 540; }
+
+  /* Shared mocked ocode frame */
+  .app { position: relative; display: grid; height: 420px; grid-template-columns: 154px minmax(0,1fr); overflow: hidden; background: var(--bg); }
+  .side { padding: 12px 10px; background: var(--surface-2); border-right: 1px solid var(--border); }
+  .brand { display: flex; align-items: center; gap: 7px; height: 30px; margin: 0 4px 14px; font-size: 12px; font-weight: 680; }
+  .brand-mark { display: grid; width: 18px; height: 18px; place-items: center; color: var(--primary-fg); background: var(--primary); border-radius: 5px; font-size: 10px; }
+  .nav-label { margin: 14px 7px 5px; color: var(--faint); font-size: 8px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+  .nav { display: grid; gap: 2px; }
+  .nav-row { display: flex; height: 29px; align-items: center; gap: 8px; padding: 0 8px; color: var(--muted); border-radius: 6px; font-size: 10px; }
+  .nav-row.active { color: var(--text); background: var(--muted-bg); }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--faint); }
+  .nav-row.active .dot { background: var(--green); box-shadow: 0 0 0 3px color-mix(in oklab, var(--green) 15%, transparent); }
+  .workspace { position: relative; min-width: 0; overflow: hidden; }
+  .appbar { position: relative; z-index: 2; display: flex; height: 54px; align-items: center; justify-content: space-between; padding: 0 14px 0 18px; border-bottom: 1px solid var(--border); background: color-mix(in oklab, var(--bg) 92%, transparent); backdrop-filter: blur(14px); }
+  .thread-title { display: grid; gap: 3px; }
+  .thread-title strong { font-size: 11px; font-weight: 630; }
+  .thread-title small { color: var(--muted); font-size: 8px; }
+  .header-buttons { display: flex; gap: 5px; }
+  .icon-button { display: grid; width: 28px; height: 28px; place-items: center; color: var(--muted); background: transparent; border: 1px solid var(--border); border-radius: 7px; }
+  .icon-button svg { width: 13px; height: 13px; }
+  .thread { height: calc(100% - 54px); overflow: hidden; }
+  .messages { width: min(100%, 650px); margin: 0 auto; padding: 26px 26px 140px; }
+  .day { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; color: var(--faint); font-size: 8px; letter-spacing: .08em; text-transform: uppercase; }
+  .day:before,.day:after { height: 1px; flex: 1; content:""; background: var(--border); }
+  .user-msg { width: 58%; margin: 0 0 25px auto; padding: 10px 12px; background: var(--muted-bg); border: 1px solid var(--border); border-radius: 10px 10px 3px 10px; font-size: 10px; line-height: 1.55; }
+  .assistant { width: 76%; font-size: 10px; line-height: 1.65; }
+  .assistant p { margin: 0 0 11px; }
+  .tool-row { display: flex; align-items: center; gap: 8px; width: 72%; margin: 7px 0; color: var(--muted); font-size: 9px; }
+  .tool-icon { display: grid; width: 20px; height: 20px; place-items: center; background: var(--muted-bg); border-radius: 5px; }
+  .tool-line { height: 1px; flex: 1; background: var(--border); }
+  .composer { position: absolute; right: max(20px, calc((100% - 650px)/2 + 20px)); bottom: 16px; left: max(20px, calc((100% - 650px)/2 + 20px)); height: 82px; padding: 11px; color: var(--faint); background: color-mix(in oklab, var(--surface) 94%, transparent); border: 1px solid var(--border-strong); border-radius: 11px; box-shadow: 0 12px 30px rgba(0,0,0,.09); backdrop-filter: blur(16px); font-size: 10px; }
+  .send { position: absolute; right: 8px; bottom: 8px; display: grid; width: 25px; height: 25px; place-items: center; color: var(--primary-fg); background: var(--primary); border-radius: 6px; }
+
+  /* Mira card building blocks */
+  .card { color: var(--text); background: var(--surface); border: 0; border-radius: 10px; box-shadow: var(--shadow); outline: 1px solid color-mix(in oklab, var(--text) 11%, transparent); }
+  .card-header { display: grid; grid-template-columns: minmax(0,1fr) auto; align-items: start; padding: 13px 13px 11px; gap: 8px; }
+  .card-title { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 620; }
+  .card-title svg { width: 14px; height: 14px; color: var(--muted); }
+  .description { margin-top: 3px; color: var(--muted); font-size: 9px; line-height: 1.45; }
+  .badge { display: inline-flex; height: 20px; align-items: center; padding: 0 8px; border-radius: 999px; color: var(--text); background: var(--muted-bg); border: 1px solid var(--border); font-size: 9px; font-weight: 620; }
+  .separator { height: 1px; background: var(--border); }
+  .button { display: inline-flex; height: 27px; align-items: center; justify-content: center; gap: 5px; padding: 0 9px; color: var(--text); background: var(--bg); border: 1px solid var(--border-strong); border-radius: 6px; font-size: 9px; font-weight: 580; }
+  .button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  .button svg { width: 11px; height: 11px; }
+  .meter { display: flex; height: 6px; overflow: hidden; background: var(--muted-bg); border-radius: 999px; }
+  .meter i { display: block; height: 100%; }
+  .sys { background: var(--blue); } .skills { background: var(--violet); } .msg { background: var(--green); }
+  .tools { background: var(--amber); } .output { background: var(--rose); } .free { background: var(--muted-bg); }
+  .legend-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 2px; }
+
+  /* Variant 1 */
+  .lens { position: absolute; z-index: 4; top: 66px; right: 14px; width: 286px; animation: float-in .42s cubic-bezier(.16,1,.3,1) both; }
+  .lens-main { padding: 0 13px 12px; }
+  .big-number { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
+  .big-number strong { font-size: 20px; font-weight: 640; letter-spacing: -.035em; }
+  .big-number span { color: var(--muted); font-size: 9px; }
+  .lens .meter { margin-bottom: 10px; }
+  .usage-list { display: grid; gap: 7px; }
+  .usage-row { display: grid; grid-template-columns: 7px minmax(0,1fr) auto; align-items: center; gap: 7px; font-size: 9px; }
+  .usage-row span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .usage-row small { color: var(--muted); font-size: 8px; font-variant-numeric: tabular-nums; }
+  .lens-footer { display: flex; align-items: center; justify-content: space-between; padding: 9px 10px 9px 13px; }
+  .updated { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 8px; }
+  .live-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
+
+  /* Variant 2 */
+  .map-card { position: absolute; z-index: 4; top: 66px; right: 14px; width: 300px; animation: float-in .42s .08s cubic-bezier(.16,1,.3,1) both; }
+  .tabs { display: inline-flex; height: 25px; padding: 2px; gap: 1px; background: var(--muted-bg); border-radius: 7px; }
+  .tab { display: inline-flex; align-items: center; padding: 0 8px; color: var(--muted); border-radius: 5px; font-size: 8px; font-weight: 580; }
+  .tab.active { color: var(--text); background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+  .map-wrap { display: grid; grid-template-columns: 132px minmax(0,1fr); padding: 0 13px 13px; gap: 12px; }
+  .map-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; align-content: start; }
+  .cell { aspect-ratio: 1; background: var(--muted-bg); border-radius: 2px; outline: 1px solid color-mix(in oklab, var(--text) 4%, transparent); }
+  .cell.sys { background: color-mix(in oklab, var(--blue) 82%, var(--surface)); }
+  .cell.tools { background: color-mix(in oklab, var(--amber) 82%, var(--surface)); }
+  .cell.msg { background: color-mix(in oklab, var(--green) 82%, var(--surface)); }
+  .cell.output { background: color-mix(in oklab, var(--rose) 82%, var(--surface)); }
+  .cell.skills { background: color-mix(in oklab, var(--violet) 82%, var(--surface)); }
+  .cell.mix { background: conic-gradient(var(--green) 0 40%, var(--rose) 40% 100%); }
+  .map-legend { display: grid; align-content: start; gap: 6px; }
+  .map-legend .usage-row { grid-template-columns: 7px minmax(0,1fr) auto; }
+  .map-foot { display: flex; align-items: center; justify-content: space-between; padding: 9px 11px 9px 13px; }
+  .map-scale { color: var(--muted); font-size: 8px; }
+
+  /* Variant 3 */
+  .rail { position: absolute; z-index: 5; top: 74px; right: 9px; display: flex; width: 26px; height: 246px; flex-direction: column; align-items: center; padding: 7px 5px; gap: 5px; color: var(--muted); background: var(--surface); border: 1px solid var(--border-strong); border-radius: 9px; box-shadow: 0 10px 30px rgba(0,0,0,.12); animation: rail-in .45s .12s cubic-bezier(.16,1,.3,1) both; }
+  .rail-value { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 8px; font-weight: 650; letter-spacing: .06em; }
+  .rail-meter { display: flex; width: 5px; min-height: 0; flex: 1; flex-direction: column; overflow: hidden; background: var(--muted-bg); border-radius: 999px; }
+  .rail-meter i { width: 100%; }
+  .rail-more { display: grid; width: 16px; height: 16px; place-items: center; border-radius: 4px; background: var(--muted-bg); font-size: 9px; }
+  .rail-pop { position: absolute; z-index: 4; top: 82px; right: 43px; width: 258px; animation: float-in .42s .18s cubic-bezier(.16,1,.3,1) both; }
+  .rail-pop-body { padding: 0 13px 12px; }
+  .statline { display: grid; grid-template-columns: 1fr auto; align-items: end; margin-bottom: 9px; }
+  .statline strong { font-size: 17px; letter-spacing: -.03em; }
+  .statline small { color: var(--muted); font-size: 8px; }
+  .rail-summary { display: grid; grid-template-columns: 1fr 1fr; margin-top: 10px; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+  .mini-stat { padding: 8px; }
+  .mini-stat + .mini-stat { border-left: 1px solid var(--border); }
+  .mini-stat small { display: block; margin-bottom: 2px; color: var(--muted); font-size: 7px; text-transform: uppercase; letter-spacing: .06em; }
+  .mini-stat strong { font-size: 10px; font-weight: 620; }
+  .privacy { display: flex; align-items: start; gap: 6px; margin-top: 10px; color: var(--muted); font-size: 8px; line-height: 1.4; }
+  .privacy svg { width: 11px; height: 11px; flex: 0 0 auto; }
+
+  .footnote { padding: 11px 14px; color: var(--muted); border-top: 1px solid var(--border); font-size: 10px; line-height: 1.5; }
+  .footnote strong { color: var(--text); font-weight: 620; }
+
+  @keyframes float-in { from { opacity: 0; transform: translateY(-8px) scale(.98); } }
+  @keyframes rail-in { from { opacity: 0; transform: translateX(9px); } }
+  @media (prefers-reduced-motion: reduce) { .lens,.map-card,.rail,.rail-pop { animation: none; } }
+  @media (max-width: 760px) {
+    body { padding: 10px; }
+    .intro { align-items: start; flex-direction: column; gap: 8px; }
+    .concept-head { align-items: start; flex-direction: column; }
+    .part-list { justify-content: flex-start; }
+    .app { grid-template-columns: 1fr; height: 440px; }
+    .side { display: none; }
+    .lens,.map-card { right: 10px; width: min(286px, calc(100% - 20px)); }
+    .map-card { width: min(300px, calc(100% - 20px)); }
+    .rail-pop { right: 41px; width: min(258px, calc(100% - 56px)); }
+    .messages { padding-inline: 18px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="intro">
+    <div>
+      <p class="eyebrow">ocode × shadcn Mira</p>
+      <h1>Context view placement studies</h1>
+    </div>
+    <p class="intro-copy">Three top-right patterns using Mira’s compact cards, neutral rings, small type, restrained color, and progressive disclosure. The thread stays primary; context becomes a readable instrument rather than another page.</p>
+  </header>
+
+  <main class="gallery">
+    <!-- 1 -->
+    <section class="concept">
+      <header class="concept-head">
+        <div class="concept-title"><strong>01 · Context Lens</strong><span>Persistent floating summary with a clear path into detail</span></div>
+        <div class="part-list"><span class="recommend">Recommended</span><span class="part">Card</span><span class="part">Badge</span><span class="part">Progress</span><span class="part">Collapsible</span><span class="part">Button</span></div>
+      </header>
+      <div class="app">
+        <aside class="side"><div class="brand"><span class="brand-mark">o</span> ocode</div><div class="nav-label">Threads</div><div class="nav"><div class="nav-row active"><i class="dot"></i>Context inspector</div><div class="nav-row"><i class="dot"></i>Fix terminal resize</div><div class="nav-row"><i class="dot"></i>Forge hardening</div></div><div class="nav-label">Projects</div><div class="nav"><div class="nav-row">anvil</div><div class="nav-row">pi-mono</div></div></aside>
+        <div class="workspace">
+          <header class="appbar"><div class="thread-title"><strong>Context inspector</strong><small>anvil · main · running</small></div><div class="header-buttons"><button class="icon-button" aria-label="Files"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6.5h7l2 2h9v10.5H3z"/></svg></button><button class="icon-button" aria-label="Terminal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m5 7 4 4-4 4M11 16h7"/></svg></button></div></header>
+          <div class="thread"><div class="messages"><div class="day">Today</div><div class="user-msg">How can we expose Pi context usage without making the thread feel like a dashboard?</div><div class="assistant"><p>I’d keep it ambient and local to the active thread. The compact state should answer one question: <strong>how full is this context?</strong></p><div class="tool-row"><span class="tool-icon">⌕</span><span>Inspected Pi context events</span><i class="tool-line"></i><small>Done</small></div><div class="tool-row"><span class="tool-icon">◇</span><span>Mapped Forge indicator flow</span><i class="tool-line"></i><small>Done</small></div></div></div></div>
+          <div class="composer">Ask ocode anything…<span class="send">↑</span></div>
+          <aside class="card lens" aria-label="Context Lens concept">
+            <div class="card-header"><div><div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><path d="M12 4v8l5 3"/></svg>Context</div><div class="description">claude-sonnet · live estimate</div></div><span class="badge">38%</span></div>
+            <div class="lens-main"><div class="big-number"><strong>76.4k</strong><span>of 200k tokens</span></div><div class="meter" aria-label="Context composition"><i class="sys" style="width:6%"></i><i class="skills" style="width:4%"></i><i class="tools" style="width:8%"></i><i class="msg" style="width:12%"></i><i class="output" style="width:8%"></i><i class="free" style="width:62%"></i></div><div class="usage-list"><div class="usage-row"><i class="legend-dot msg"></i><span>Messages</span><small>24.1k · 12%</small></div><div class="usage-row"><i class="legend-dot tools"></i><span>Tools</span><small>16.2k · 8%</small></div><div class="usage-row"><i class="legend-dot output"></i><span>Tool output</span><small>15.8k · 8%</small></div><div class="usage-row"><i class="legend-dot sys"></i><span>System + memory</span><small>12.3k · 6%</small></div></div></div>
+            <div class="separator"></div><div class="lens-footer"><span class="updated"><i class="live-dot"></i>Updated after turn 8</span><button class="button">Inspect <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 5 7 7-7 7"/></svg></button></div>
+          </aside>
+        </div>
+      </div>
+      <div class="footnote"><strong>Why it works:</strong> useful while open, quiet while the thread scrolls, and familiar in Mira. Collapse it to a 38% trigger after inactivity; reopen on click. On mobile, the same trigger opens a bottom Sheet.</div>
+    </section>
+
+    <!-- 2 -->
+    <section class="concept">
+      <header class="concept-head">
+        <div class="concept-title"><strong>02 · Context Map</strong><span>A distinctive miniature map that echoes pi-context-view without copying its TUI</span></div>
+        <div class="part-list"><span class="part">Card</span><span class="part">Toggle Group</span><span class="part">Tooltip</span><span class="part">Separator</span><span class="part">Scroll Area</span></div>
+      </header>
+      <div class="app">
+        <aside class="side"><div class="brand"><span class="brand-mark">o</span> ocode</div><div class="nav-label">Threads</div><div class="nav"><div class="nav-row active"><i class="dot"></i>Context inspector</div><div class="nav-row"><i class="dot"></i>Fix terminal resize</div><div class="nav-row"><i class="dot"></i>Forge hardening</div></div><div class="nav-label">Projects</div><div class="nav"><div class="nav-row">anvil</div><div class="nav-row">pi-mono</div></div></aside>
+        <div class="workspace">
+          <header class="appbar"><div class="thread-title"><strong>Context inspector</strong><small>anvil · main · running</small></div><div class="header-buttons"><button class="icon-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6.5h7l2 2h9v10.5H3z"/></svg></button><button class="icon-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m5 7 4 4-4 4M11 16h7"/></svg></button></div></header>
+          <div class="thread"><div class="messages"><div class="day">Today</div><div class="user-msg">Could the panel feel more like a spatial map of the context?</div><div class="assistant"><p>Yes. A small occupancy map makes growth visible at a glance and gives every category a stable place.</p><div class="tool-row"><span class="tool-icon">□</span><span>Computed category blocks</span><i class="tool-line"></i><small>Done</small></div><div class="tool-row"><span class="tool-icon">↗</span><span>Estimated free space</span><i class="tool-line"></i><small>Done</small></div></div></div></div>
+          <div class="composer">Ask ocode anything…<span class="send">↑</span></div>
+          <aside class="card map-card" aria-label="Context Map concept">
+            <div class="card-header"><div><div class="card-title">Context map</div><div class="description">Each cell ≈ 3.1k tokens</div></div><div class="tabs"><span class="tab active">Usage</span><span class="tab">Injections</span></div></div>
+            <div class="map-wrap"><div class="map-grid" aria-label="Token map">
+              <i class="cell sys"></i><i class="cell sys"></i><i class="cell skills"></i><i class="cell tools"></i><i class="cell tools"></i><i class="cell msg"></i><i class="cell msg"></i><i class="cell msg"></i>
+              <i class="cell msg"></i><i class="cell output"></i><i class="cell output"></i><i class="cell mix"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i>
+              <i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i>
+              <i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i><i class="cell"></i>
+            </div><div class="map-legend"><div class="usage-row"><i class="legend-dot sys"></i><span>System</span><small>12.3k</small></div><div class="usage-row"><i class="legend-dot skills"></i><span>Skills</span><small>7.8k</small></div><div class="usage-row"><i class="legend-dot tools"></i><span>Tools</span><small>16.2k</small></div><div class="usage-row"><i class="legend-dot msg"></i><span>Messages</span><small>24.1k</small></div><div class="usage-row"><i class="legend-dot output"></i><span>Output</span><small>15.8k</small></div></div></div>
+            <div class="separator"></div><div class="map-foot"><span class="map-scale">38% used · 62% free</span><button class="button ghost">Fit map</button></div>
+          </aside>
+        </div>
+      </div>
+      <div class="footnote"><strong>Signature move:</strong> the 8×4 map becomes ocode’s recognizable context instrument. Clicking a cell can filter the legend; clicking a category opens a bounded, redacted preview in a Sheet.</div>
+    </section>
+
+    <!-- 3 -->
+    <section class="concept">
+      <header class="concept-head">
+        <div class="concept-title"><strong>03 · Context Rail</strong><span>Ambient edge meter with a flyout only when requested</span></div>
+        <div class="part-list"><span class="part">Popover</span><span class="part">Progress</span><span class="part">Card</span><span class="part">Badge</span><span class="part">Alert</span></div>
+      </header>
+      <div class="app">
+        <aside class="side"><div class="brand"><span class="brand-mark">o</span> ocode</div><div class="nav-label">Threads</div><div class="nav"><div class="nav-row active"><i class="dot"></i>Context inspector</div><div class="nav-row"><i class="dot"></i>Fix terminal resize</div><div class="nav-row"><i class="dot"></i>Forge hardening</div></div><div class="nav-label">Projects</div><div class="nav"><div class="nav-row">anvil</div><div class="nav-row">pi-mono</div></div></aside>
+        <div class="workspace">
+          <header class="appbar"><div class="thread-title"><strong>Context inspector</strong><small>anvil · main · running</small></div><div class="header-buttons"><button class="icon-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 6.5h7l2 2h9v10.5H3z"/></svg></button><button class="icon-button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m5 7 4 4-4 4M11 16h7"/></svg></button></div></header>
+          <div class="thread"><div class="messages"><div class="day">Today</div><div class="user-msg">I want the context state always visible, but I don’t want a card covering responses.</div><div class="assistant"><p>Use the right edge as a quiet instrument. The rail shows fullness and composition; the popover is temporary.</p><div class="tool-row"><span class="tool-icon">│</span><span>Added ambient context rail</span><i class="tool-line"></i><small>Done</small></div><div class="tool-row"><span class="tool-icon">◌</span><span>Bound flyout to active thread</span><i class="tool-line"></i><small>Done</small></div></div></div></div>
+          <div class="composer">Ask ocode anything…<span class="send">↑</span></div>
+          <div class="rail" aria-label="38 percent context used"><span class="rail-value">38% used</span><div class="rail-meter"><i class="sys" style="height:15%"></i><i class="tools" style="height:20%"></i><i class="msg" style="height:31%"></i><i class="output" style="height:20%"></i><i class="free" style="height:14%"></i></div><span class="rail-more">‹</span></div>
+          <aside class="card rail-pop" aria-label="Context Rail flyout concept"><div class="card-header"><div><div class="card-title">Context budget</div><div class="description">Current thread · live</div></div><span class="badge">Healthy</span></div><div class="rail-pop-body"><div class="statline"><strong>123.6k free</strong><small>62% remaining</small></div><div class="meter"><i class="sys" style="width:6%"></i><i class="tools" style="width:8%"></i><i class="msg" style="width:12%"></i><i class="output" style="width:8%"></i><i class="free" style="width:66%"></i></div><div class="rail-summary"><div class="mini-stat"><small>Largest source</small><strong>Messages · 24.1k</strong></div><div class="mini-stat"><small>Compaction at</small><strong>180k · 90%</strong></div></div><div class="privacy"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 10V7a6 6 0 0 1 12 0v3M5 10h14v10H5z"/></svg><span>Totals can persist. Raw prompt and injection text stays process-local and opens only on request.</span></div></div><div class="separator"></div><div class="lens-footer"><button class="button ghost">Hide rail</button><button class="button">Open inspector</button></div></aside>
+        </div>
+      </div>
+      <div class="footnote"><strong>Best for low visual weight:</strong> the rail never competes with the thread and can turn amber/red near compaction. It is more novel, but its categories need tooltips and strong keyboard focus states.</div>
+    </section>
+  </main>
+</div>
+</body>
+</html>

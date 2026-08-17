@@ -1,5 +1,5 @@
-import { normalizeProjectSlug, type GitHubRepositoryPage, type GitHubRepositorySummary } from "@anvil/protocol";
-import { LockIcon } from "@hugeicons/core-free-icons";
+import { normalizeProjectSlug, type GitHubRepositoryPage, type GitHubRepositorySummary, type ProjectDirectoryCatalog } from "@anvil/protocol";
+import { FolderAddIcon, FolderOpenIcon, GithubIcon, LockIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type FormEvent, type Ref, useEffect, useRef, useState } from "react";
 
@@ -12,9 +12,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Command, CommandDialog, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator, CommandShortcut } from "@/components/ui/command";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Spinner } from "@/components/ui/spinner";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { githubRepositoryName } from "@/lib/githubRepository";
 
@@ -29,8 +30,8 @@ export const NEW_PROJECT_SOURCE_OPTIONS: ReadonlyArray<{
   title: string;
   description: string;
 }> = [
-  { value: "clone", title: "Clone a repository (GitHub)", description: "Clone a repository using Forge’s GitHub access" },
-  { value: "empty", title: "Start empty", description: "Create a new directory on Forge" },
+  { value: "empty", title: "New empty project", description: "Create a new directory on Forge" },
+  { value: "clone", title: "From a GitHub repository", description: "Clone a repository using Forge’s GitHub access" },
   { value: "existing", title: "Use a Forge directory", description: "Register a workspace already on disk" },
 ];
 
@@ -186,66 +187,27 @@ export function RepositoryLoadMoreButton({
   );
 }
 
-export function NewProjectSourceChooser({
-  source,
-  onSourceChange,
-  selectedRef,
-}: {
-  source: NewProjectSource;
-  onSourceChange: (source: NewProjectSource) => void;
-  selectedRef?: Ref<HTMLButtonElement>;
-}) {
-  return (
-    <FieldGroup>
-      <RadioGroup
-        value={source}
-        onValueChange={(value) => onSourceChange(value as NewProjectSource)}
-        aria-label="Project source"
-      >
-        {NEW_PROJECT_SOURCE_OPTIONS.map((option) => {
-          const id = `project-source-${option.value}`;
-          return (
-            <FieldLabel key={option.value} htmlFor={id}>
-              <Field orientation="horizontal">
-                <FieldContent>
-                  <div id={`${id}-label`} className="font-medium">{option.title}</div>
-                  <FieldDescription id={`${id}-description`}>{option.description}</FieldDescription>
-                </FieldContent>
-                <RadioGroupItem
-                  ref={option.value === source ? selectedRef : undefined}
-                  id={id}
-                  value={option.value}
-                  aria-labelledby={`${id}-label`}
-                  aria-describedby={`${id}-description`}
-                />
-              </Field>
-            </FieldLabel>
-          );
-        })}
-      </RadioGroup>
-      <FieldDescription>Operations run on Forge, not in this browser.</FieldDescription>
-    </FieldGroup>
-  );
-}
-
 export function NewProjectDialog({
   onClose,
   onCreate,
   onClone,
   onAddExisting,
   listGitHubRepositories,
+  listProjectDirectories,
   getProjectsRoot,
 }: {
   onClose: () => void;
   onCreate: (name: string) => Promise<{ status: "created" } | { status: "existing"; path: string }>;
   onClone: (name: string, repository: string) => Promise<void>;
   onAddExisting: (name: string, path: string) => Promise<void>;
-  listGitHubRepositories: (page?: number) => Promise<GitHubRepositoryPage>;
+  listGitHubRepositories: (page?: number, query?: string) => Promise<GitHubRepositoryPage>;
+  listProjectDirectories: () => Promise<ProjectDirectoryCatalog>;
   getProjectsRoot: () => Promise<string>;
 }) {
   const [view, setView] = useState<"chooser" | "form">("chooser");
   const [source, setSource] = useState<NewProjectSource>("clone");
   const [repository, setRepository] = useState("");
+  const [repositoryQuery, setRepositoryQuery] = useState("");
   const [repositories, setRepositories] = useState<GitHubRepositorySummary[]>([]);
   const [repositoryStatus, setRepositoryStatus] = useState<GitHubRepositoryLoadStatus>("idle");
   const [repositoryError, setRepositoryError] = useState<string>();
@@ -257,18 +219,22 @@ export function NewProjectDialog({
   const [cloneNameEdited, setCloneNameEdited] = useState(false);
   const [emptyName, setEmptyName] = useState("");
   const [existingName, setExistingName] = useState("");
+  const [existingPath, setExistingPath] = useState("");
+  const [projectDirectories, setProjectDirectories] = useState<ProjectDirectoryCatalog["directories"]>([]);
+  const [directoryError, setDirectoryError] = useState<string>();
   const [projectsRoot, setProjectsRoot] = useState<string>();
   const [rootError, setRootError] = useState<string>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
-  const chooserRef = useRef<HTMLButtonElement>(null);
   const formTitleRef = useRef<HTMLHeadingElement>(null);
   const repositoryRequestRef = useRef(0);
   const name = source === "clone" ? cloneName : source === "empty" ? emptyName : existingName;
   const slug = normalizeProjectSlug(name);
-  const destination = projectsRoot
-    ? projectPath(projectsRoot, slug || "project-name")
-    : "Loading projects root…";
+  const destination = source === "existing" && existingPath
+    ? existingPath
+    : projectsRoot
+      ? projectPath(projectsRoot, slug || "project-name")
+      : "Loading projects root…";
   const repositorySelected = repositoryStatus === "ready" &&
     repositories.some((candidate) => candidate.nameWithOwner === repository);
   const repositoryStatusText = repositoryCatalogStatusText(
@@ -293,14 +259,31 @@ export function NewProjectDialog({
   }, [getProjectsRoot]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      if (view === "chooser") chooserRef.current?.focus();
-      else formTitleRef.current?.focus();
-    }, 0);
+    if (view !== "form") return;
+    const timer = window.setTimeout(() => formTitleRef.current?.focus(), 0);
     return () => window.clearTimeout(timer);
   }, [view]);
 
-  const loadRepositories = () => {
+  useEffect(() => {
+    void listProjectDirectories().then((catalog) => {
+      setProjectDirectories(catalog.directories);
+      setDirectoryError(undefined);
+    }).catch((failure) => {
+      setDirectoryError(failure instanceof Error ? failure.message : String(failure));
+    });
+  }, [listProjectDirectories]);
+
+  useEffect(() => {
+    if (view !== "chooser") return;
+    repositoryRequestRef.current++;
+    setRepositoryStatus("loading");
+    setRepositories([]);
+    setHasMoreRepositories(false);
+    const timer = window.setTimeout(() => loadRepositories(repositoryQuery), 300);
+    return () => window.clearTimeout(timer);
+  }, [repositoryQuery, view]);
+
+  const loadRepositories = (query = repositoryQuery) => {
     const request = ++repositoryRequestRef.current;
     setRepositoryStatus("loading");
     setRepositoryError(undefined);
@@ -308,7 +291,7 @@ export function NewProjectDialog({
     setHasMoreRepositories(false);
     setLoadMoreStatus("idle");
     setLoadMoreError(undefined);
-    void listGitHubRepositories(1).then((result) => {
+    void listGitHubRepositories(1, query).then((result) => {
       if (request !== repositoryRequestRef.current) return;
       setRepositories(result.repositories);
       setRepositoryPage(result.page);
@@ -327,7 +310,7 @@ export function NewProjectDialog({
     const request = ++repositoryRequestRef.current;
     setLoadMoreStatus("loading");
     setLoadMoreError(undefined);
-    void listGitHubRepositories(repositoryPage + 1).then((result) => {
+    void listGitHubRepositories(repositoryPage + 1, repositoryQuery).then((result) => {
       if (request !== repositoryRequestRef.current) return;
       setRepositories((current) => appendGitHubRepositories(current, result.repositories));
       setRepositoryPage(result.page);
@@ -385,6 +368,94 @@ export function NewProjectDialog({
       ? "Create a new, empty workspace under the configured projects root."
       : "Verify and register an existing directory directly under the projects root.";
 
+  if (view === "chooser") {
+    return (
+      <CommandDialog
+        open
+        onOpenChange={(open) => !open && onClose()}
+        title="Add a project"
+        description="Create a project or add a workspace from GitHub or Forge"
+        className="sm:max-w-lg"
+      >
+        <Command shouldFilter={false}>
+          <CommandInput
+            autoFocus
+            value={repositoryQuery}
+            onValueChange={setRepositoryQuery}
+            placeholder="Search GitHub repositories…"
+            aria-label="Search GitHub repositories"
+          />
+          <CommandList className="max-h-[min(24rem,65vh)]">
+            <CommandEmpty>No projects found.</CommandEmpty>
+            {!repositoryQuery && <CommandGroup heading="Create">
+              <CommandItem
+                value="New empty project blank workspace"
+                onSelect={() => {
+                  setSource("empty");
+                  setView("form");
+                }}
+              >
+                <HugeiconsIcon icon={FolderAddIcon} strokeWidth={2} className="text-muted-foreground" />
+                <span>New empty project</span>
+                <CommandShortcut>Forge</CommandShortcut>
+              </CommandItem>
+            </CommandGroup>}
+            {!repositoryQuery && <CommandSeparator />}
+            <CommandGroup heading={repositoryQuery ? "GitHub results" : "GitHub repositories"}>
+              {repositoryStatus === "loading" && (
+                <CommandItem disabled>
+                  <Spinner className="text-muted-foreground" />
+                  Searching repositories…
+                </CommandItem>
+              )}
+              {repositoryStatus === "error" && <CommandItem disabled>{repositoryError ?? "GitHub repositories unavailable"}</CommandItem>}
+              {repositories.map((candidate) => (
+                <CommandItem
+                  key={candidate.nameWithOwner}
+                  value={`${candidate.nameWithOwner} github repository`}
+                  onSelect={() => {
+                    const selection = applyRepositorySelection(candidate.nameWithOwner, cloneName, false);
+                    setRepository(selection.repository);
+                    setCloneName(selection.name);
+                    setCloneNameEdited(false);
+                    setSource("clone");
+                    setView("form");
+                  }}
+                >
+                  <HugeiconsIcon icon={GithubIcon} strokeWidth={2} className="text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">{candidate.nameWithOwner}</span>
+                  {candidate.private && <CommandShortcut>Private</CommandShortcut>}
+                </CommandItem>
+              ))}
+              {repositoryStatus === "ready" && repositories.length === 0 && <CommandItem disabled>No repositories available</CommandItem>}
+            </CommandGroup>
+            {!repositoryQuery && <CommandSeparator />}
+            {!repositoryQuery && <CommandGroup heading="Forge directories">
+              {projectDirectories.map((directory) => (
+                <CommandItem
+                  key={directory.path}
+                  value={`${directory.name} ${directory.path} forge directory`}
+                  onSelect={() => {
+                    setExistingName(directory.name);
+                    setExistingPath(directory.path);
+                    setSource("existing");
+                    setView("form");
+                  }}
+                >
+                  <HugeiconsIcon icon={FolderOpenIcon} strokeWidth={2} className="text-muted-foreground" />
+                  <span className="min-w-0 flex-1 truncate">{directory.name}</span>
+                  <CommandShortcut>{directory.path}</CommandShortcut>
+                </CommandItem>
+              ))}
+              {directoryError && <CommandItem disabled>Directory discovery unavailable</CommandItem>}
+              {!directoryError && projectDirectories.length === 0 && <CommandItem disabled>No unregistered directories</CommandItem>}
+            </CommandGroup>}
+          </CommandList>
+        </Command>
+      </CommandDialog>
+    );
+  }
+
   return (
     <Dialog open onOpenChange={(open) => !open && !pending && onClose()}>
       <DialogContent
@@ -393,40 +464,10 @@ export function NewProjectDialog({
         onPointerDownOutside={(event) => pending && event.preventDefault()}
       >
         <DialogHeader>
-          <DialogTitle
-            ref={view === "form" ? formTitleRef : undefined}
-            tabIndex={view === "form" ? -1 : undefined}
-          >{view === "chooser" ? "Add a project" : formTitle}</DialogTitle>
-          <DialogDescription id="add-project-description">
-            {view === "chooser" ? "Choose where the workspace should come from." : formDescription}
-          </DialogDescription>
+          <DialogTitle ref={formTitleRef} tabIndex={-1}>{formTitle}</DialogTitle>
+          <DialogDescription id="add-project-description">{formDescription}</DialogDescription>
         </DialogHeader>
-
-        {view === "chooser" ? (
-          <div className="grid gap-4">
-            <NewProjectSourceChooser
-              source={source}
-              selectedRef={chooserRef}
-              onSourceChange={(value) => {
-                setSource(value);
-                setError(undefined);
-              }}
-            />
-            {rootError && <FieldError role="alert">{rootError}</FieldError>}
-            <DialogFooter>
-              <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
-              <Button
-                type="button"
-                onClick={() => {
-                  setView("form");
-                  if (source === "clone") loadRepositories();
-                }}
-                disabled={!projectsRoot}
-              >Continue</Button>
-            </DialogFooter>
-          </div>
-        ) : (
-          <form
+        <form
             className="grid gap-4"
             onSubmit={submit}
             aria-describedby={(rootError || error) ? "project-operation-error" : undefined}
@@ -464,7 +505,7 @@ export function NewProjectDialog({
                       size="sm"
                       variant="outline"
                       className="w-fit"
-                      onClick={loadRepositories}
+                      onClick={() => loadRepositories()}
                       disabled={pending}
                     >Retry</Button>
                   )}
@@ -527,8 +568,7 @@ export function NewProjectDialog({
                   : source === "clone" ? "Clone project" : source === "empty" ? "Create project" : "Add existing project"}
               </Button>
             </DialogFooter>
-          </form>
-        )}
+        </form>
       </DialogContent>
     </Dialog>
   );

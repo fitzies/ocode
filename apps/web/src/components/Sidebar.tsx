@@ -55,6 +55,11 @@ import { UsageLimitProgress } from "./UsageLimitProgress";
 function projectDisplayName(project: { name: string }): string {
   return project.name;
 }
+
+export function projectRepositoryName(project: { name: string; path: string }): string {
+  const segments = project.path.replace(/\/+$/, "").split("/");
+  return segments.at(-1) || project.name;
+}
 import {
   Sidebar as SidebarPrimitive,
   SidebarContent,
@@ -245,8 +250,9 @@ export const Sidebar = memo(function Sidebar({
     const settling = settlementPending.has(session.id);
     const displayTitle = capitalizeTitle(session.title);
     const projectName = project ? projectDisplayName(project) : "unknown";
+    const repositoryName = project ? projectRepositoryName(project) : "unknown";
     const branch = session.branch ?? "unknown";
-    const projectContext = isGeneralProject(project) ? "General · ~/" : `${projectName}/${branch}`;
+    const projectContext = isGeneralProject(project) ? "General · ~/" : `${repositoryName}/${branch}`;
 
     return (
       <ContextMenu key={session.id}>
@@ -550,7 +556,7 @@ export const Sidebar = memo(function Sidebar({
                         </span>
                       )}
                       <span className="block truncate text-[0.625rem] text-muted-foreground/75">
-                        {project?.name.toLowerCase() ?? "unknown"}/{branch}
+                        {project ? projectRepositoryName(project) : "unknown"}/{branch}
                       </span>
                     </span>
                     {session.settled && <span className="ml-auto text-[0.625rem] text-muted-foreground">Settled</span>}

@@ -1022,6 +1022,7 @@ function AppShellContent() {
           onClone={anvilClient.cloneProject}
           onAddExisting={anvilClient.addExistingProject}
           listGitHubRepositories={anvilClient.listGitHubRepositories}
+          listProjectDirectories={anvilClient.listProjectDirectories}
           getProjectsRoot={anvilClient.getProjectsRoot}
         />
       )}

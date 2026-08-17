@@ -64,6 +64,15 @@ export interface GitHubRepositoryPage {
   hasMore: boolean;
 }
 
+export interface ProjectDirectorySummary {
+  name: string;
+  path: string;
+}
+
+export interface ProjectDirectoryCatalog {
+  directories: ProjectDirectorySummary[];
+}
+
 export type ProjectGitAction = "commit-and-push" | "push" | "up-to-date" | "unavailable";
 export type ProjectGitRepositoryState =
   | "workspace-missing"
@@ -979,6 +988,17 @@ export function isGitHubRepositoryPage(value: unknown): value is GitHubRepositor
     Number.isSafeInteger(value.page) &&
     Number(value.page) > 0 &&
     typeof value.hasMore === "boolean";
+}
+
+export function isProjectDirectoryCatalog(value: unknown): value is ProjectDirectoryCatalog {
+  return isRecord(value) &&
+    Array.isArray(value.directories) &&
+    value.directories.length <= 200 &&
+    value.directories.every((directory) => (
+      isRecord(directory) &&
+      typeof directory.name === "string" && directory.name.length > 0 &&
+      typeof directory.path === "string" && directory.path.startsWith("/")
+    ));
 }
 
 function isEventPayload(type: AnvilEvent["type"], value: unknown): boolean {

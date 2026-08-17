@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -379,15 +379,62 @@ describe("ForgeHttpServer", () => {
     rmSync(initialRoot, { recursive: true, force: true });
   });
 
+  it("lists a bounded deterministic set of unregistered real directories under the projects root", async () => {
+    await server.close();
+    const root = mkdtempSync(join(tmpdir(), "ocode-directory-list-"));
+    const registeredPath = join(root, "registered");
+    mkdirSync(registeredPath);
+    mkdirSync(join(root, "zeta"));
+    mkdirSync(join(root, "alpha"));
+    mkdirSync(join(root, ".ocode-imports"));
+    writeFileSync(join(root, "regular-file"), "not a directory");
+    symlinkSync(join(root, "alpha"), join(root, "linked-directory"));
+    for (let index = 0; index < 205; index += 1) mkdirSync(join(root, `bulk-${String(index).padStart(3, "0")}`));
+    events.append([{
+      sessionId: null,
+      timestamp: "2026-07-23T01:00:00.000Z",
+      type: "project.upserted",
+      payload: { project: { id: "registered", name: "Registered", path: registeredPath } },
+    }]);
+    server = new ForgeHttpServer({
+      events,
+      ownerLogin: "owner@example.com",
+      getProjectsRoot: () => root,
+    });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+
+    expect((await fetch(`${baseUrl}/api/v1/projects/directories`)).status).toBe(403);
+    const response = await fetch(`${baseUrl}/api/v1/projects/directories`, {
+      headers: { "tailscale-user-login": "owner@example.com" },
+    });
+    expect(response.status).toBe(200);
+    const body = await response.json() as { directories: Array<{ name: string; path: string }> };
+    expect(body.directories).toHaveLength(200);
+    expect(body.directories.map((directory) => directory.name)).toEqual(
+      [...body.directories.map((directory) => directory.name)].sort(),
+    );
+    expect(body.directories).toContainEqual({ name: "alpha", path: join(root, "alpha") });
+    expect(body.directories.map((directory) => directory.name)).not.toContain("registered");
+    expect(body.directories.map((directory) => directory.name)).not.toContain(".ocode-imports");
+    expect(body.directories.map((directory) => directory.name)).not.toContain("linked-directory");
+    expect(body.directories.map((directory) => directory.name)).not.toContain("regular-file");
+    rmSync(root, { recursive: true, force: true });
+  });
+
   it("paginates GitHub repositories only for the authenticated owner and returns fixed errors", async () => {
     await server.close();
     let fail = false;
     const requestedPages: number[] = [];
+    const requestedQueries: string[] = [];
     server = new ForgeHttpServer({
       events,
       ownerLogin: "owner@example.com",
-      listGitHubRepositories: async (page) => {
+      listGitHubRepositories: async (page, query) => {
         requestedPages.push(page);
+        requestedQueries.push(query ?? "");
         if (fail) {
           throw new GitHubRepositoryCatalogError(
             "gh_unauthenticated",
@@ -426,7 +473,10 @@ describe("ForgeHttpServer", () => {
     }
     expect(requestedPages).toEqual([]);
 
-    const success = await fetch(`${baseUrl}/api/v1/github/repositories?page=2`, { headers: ownerHeaders });
+    const invalidQuery = await fetch(`${baseUrl}/api/v1/github/repositories?q=${"a".repeat(101)}`, { headers: ownerHeaders });
+    expect(invalidQuery.status).toBe(400);
+
+    const success = await fetch(`${baseUrl}/api/v1/github/repositories?page=2&q=private`, { headers: ownerHeaders });
     expect(success.status).toBe(200);
     expect(success.headers.get("cache-control")).toBe("no-store");
     expect(await success.json()).toEqual({
@@ -438,6 +488,7 @@ describe("ForgeHttpServer", () => {
       hasMore: false,
     });
     expect(requestedPages).toEqual([2]);
+    expect(requestedQueries).toEqual(["private"]);
 
     fail = true;
     const failure = await fetch(`${baseUrl}/api/v1/github/repositories?page=3`, { headers: ownerHeaders });

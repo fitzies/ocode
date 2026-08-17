@@ -13,6 +13,7 @@ import {
   isGitHubRepositoryPage,
   isGitHubRepositorySummary,
   isJsonValue,
+  isProjectDirectoryCatalog,
   normalizeProjectSlug,
   provisionalSessionTitleFromPrompt,
 } from "./index";
@@ -122,6 +123,12 @@ describe("protocol runtime guards", () => {
     expect(isGitHubRepositoryPage({ ...page, page: 0 })).toBe(false);
     expect(isGitHubRepositoryPage({ ...page, page: 1.5 })).toBe(false);
     expect(isGitHubRepositoryPage({ ...page, hasMore: "yes" })).toBe(false);
+  });
+
+  it("validates bounded project directory catalogs", () => {
+    expect(isProjectDirectoryCatalog({ directories: [{ name: "ocode", path: "/srv/projects/ocode" }] })).toBe(true);
+    expect(isProjectDirectoryCatalog({ directories: [{ name: "ocode", path: "relative/ocode" }] })).toBe(false);
+    expect(isProjectDirectoryCatalog({ directories: Array.from({ length: 201 }, () => ({ name: "x", path: "/x" })) })).toBe(false);
   });
 
   it("requires future event names to use the explicit unknown fallback", () => {

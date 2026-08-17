@@ -9,7 +9,6 @@ import {
   applyRepositorySelection,
   GitHubRepositorySelect,
   inferProjectNameFromRepository,
-  NewProjectSourceChooser,
   NEW_PROJECT_SOURCE_OPTIONS,
   repositoryCatalogStatusText,
   RepositoryLoadMoreButton,
@@ -19,27 +18,10 @@ import {
 describe("new project dialog", () => {
   it("starts with the three source choices in the requested order", () => {
     expect(NEW_PROJECT_SOURCE_OPTIONS.map(({ value, title }) => ({ value, title }))).toEqual([
-      { value: "clone", title: "Clone a repository (GitHub)" },
-      { value: "empty", title: "Start empty" },
+      { value: "empty", title: "New empty project" },
+      { value: "clone", title: "From a GitHub repository" },
       { value: "existing", title: "Use a Forge directory" },
     ]);
-  });
-
-  it("renders the actual accessible shadcn source chooser and Forge operation note", () => {
-    const html = renderToStaticMarkup(createElement(NewProjectSourceChooser, {
-      source: "clone",
-      onSourceChange: () => undefined,
-    }));
-
-    expect(html.match(/role="radio"/g)).toHaveLength(3);
-    for (const option of NEW_PROJECT_SOURCE_OPTIONS) {
-      expect(html).toContain(option.title);
-      expect(html).toContain(option.description);
-      expect(html).toContain(`aria-labelledby="project-source-${option.value}-label"`);
-      expect(html).toContain(`aria-describedby="project-source-${option.value}-description"`);
-    }
-    expect(html).toContain("aria-label=\"Project source\"");
-    expect(html).toContain("Operations run on Forge, not in this browser.");
   });
 
   it("renders the actual shadcn repository Select states with accessible associations", () => {

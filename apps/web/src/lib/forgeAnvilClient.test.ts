@@ -1301,12 +1301,12 @@ describe("ForgeAnvilClient", () => {
         return new Response(JSON.stringify({ repositories: [repository], page: 2, hasMore: true }));
       }) as typeof fetch,
     });
-    await expect(success.listGitHubRepositories(2)).resolves.toEqual({
+    await expect(success.listGitHubRepositories(2, "private tools")).resolves.toEqual({
       repositories: [repository],
       page: 2,
       hasMore: true,
     });
-    expect(requests).toEqual(["/api/v1/github/repositories?page=2"]);
+    expect(requests).toEqual(["/api/v1/github/repositories?page=2&q=private+tools"]);
 
     const invalid = new ForgeAnvilClient({
       autoConnect: false,
@@ -1332,6 +1332,24 @@ describe("ForgeAnvilClient", () => {
       }), { status: 503 })) as typeof fetch,
     });
     await expect(failed.listGitHubRepositories()).rejects.toThrow("GitHub CLI is not authenticated");
+  });
+
+  it("fetches and validates available project directories", async () => {
+    const client = new ForgeAnvilClient({
+      autoConnect: false,
+      fetch: (async () => new Response(JSON.stringify({
+        directories: [{ name: "project-a", path: "/code/project-a" }],
+      }))) as typeof fetch,
+    });
+    await expect(client.listProjectDirectories()).resolves.toEqual({ directories: [
+      { name: "project-a", path: "/code/project-a" },
+    ] });
+
+    const invalid = new ForgeAnvilClient({
+      autoConnect: false,
+      fetch: (async () => new Response(JSON.stringify({ directories: [{ name: "project-a", path: "relative" }] }))) as typeof fetch,
+    });
+    await expect(invalid.listProjectDirectories()).rejects.toThrow("invalid project directory list");
   });
 
   it("fetches and updates the Forge projects root setting", async () => {

@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 const CATALOG_TIMEOUT_MS = 15_000;
 const CATALOG_MAX_BUFFER = 8 * 1024 * 1024;
 export const GITHUB_REPOSITORY_PAGE_SIZE = 100;
+export const GITHUB_REPOSITORY_RESULT_LIMIT = 10;
 export const GITHUB_REPOSITORY_MAX_PAGE = 10_000;
 export const GITHUB_REPOSITORY_PAGE_ERROR =
   `GitHub repository page must be an integer between 1 and ${GITHUB_REPOSITORY_MAX_PAGE}.`;
@@ -160,7 +161,7 @@ export function parseGitHubRepositoryPage(output: string, page: number): GitHubR
 export class GitHubRepositoryCatalog {
   constructor(private readonly run: GitHubRepositoryCommandRunner = runCommand) {}
 
-  list = async (page = 1): Promise<GitHubRepositoryPage> => {
+  list = async (page = 1, query = ""): Promise<GitHubRepositoryPage> => {
     const args = githubRepositoryApiArgs(page);
     try {
       const { stdout } = await this.run("gh", args, {
@@ -170,7 +171,16 @@ export class GitHubRepositoryCatalog {
         killSignal: "SIGKILL",
         env: { ...process.env, GH_PROMPT_DISABLED: "1" },
       });
-      return parseGitHubRepositoryPage(stdout, page);
+      const result = parseGitHubRepositoryPage(stdout, page);
+      const normalizedQuery = query.trim().toLocaleLowerCase();
+      const matches = normalizedQuery
+        ? result.repositories.filter((repository) => repository.nameWithOwner.toLocaleLowerCase().includes(normalizedQuery))
+        : result.repositories;
+      return {
+        repositories: matches.slice(0, GITHUB_REPOSITORY_RESULT_LIMIT),
+        page,
+        hasMore: matches.length > GITHUB_REPOSITORY_RESULT_LIMIT || (!normalizedQuery && result.hasMore),
+      };
     } catch (error) {
       if (error instanceof GitHubRepositoryCatalogError) throw error;
       throw classifyGitHubRepositoryCatalogError(error);

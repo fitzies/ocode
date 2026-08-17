@@ -23,6 +23,7 @@ import {
   GitHubRepositoryCatalogError,
   isValidGitHubRepositoryPageNumber,
 } from "../projects/githubRepositoryCatalog.ts";
+import { listUnregisteredProjectDirectories } from "../projects/projectDirectoryCatalog.ts";
 import { ProjectFileService } from "../projects/projectFileService.ts";
 import { ProjectGitService } from "../projects/projectGitService.ts";
 import { ProjectsRootValidationError } from "../projects/projectsRoot.ts";
@@ -49,7 +50,7 @@ export interface ForgeHttpServerOptions {
   projectFiles?: ProjectFileService;
   projectGit?: ProjectGitService;
   searchFiles?: (sessionId: string, query: string, limit: number) => Promise<string[] | undefined>;
-  listGitHubRepositories?: (page: number) => Promise<GitHubRepositoryPage>;
+  listGitHubRepositories?: (page: number, query?: string) => Promise<GitHubRepositoryPage>;
   getProjectsRoot?: () => string;
   setProjectsRoot?: (path: string) => string;
   requestRebuild?: () => Promise<void>;
@@ -197,11 +198,21 @@ export class ForgeHttpServer {
         sendJson(response, 400, apiError("invalid_github_repository_page", GITHUB_REPOSITORY_PAGE_ERROR));
         return;
       }
-      await this.githubRepositories(response, page);
+      const queryValues = url.searchParams.getAll("q");
+      const query = queryValues[0]?.trim() ?? "";
+      if (queryValues.length > 1 || query.length > 100) {
+        sendJson(response, 400, apiError("invalid_github_repository_query", "GitHub repository query must be at most 100 characters"));
+        return;
+      }
+      await this.githubRepositories(response, page, query);
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/v1/usage") {
       await this.usage(response, url);
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/projects/directories") {
+      await this.projectDirectories(response);
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/v1/settings/projects-root") {
@@ -347,13 +358,13 @@ export class ForgeHttpServer {
     sendJson(response, 404, apiError("not_found", "Route not found"));
   }
 
-  private async githubRepositories(response: ServerResponse, page: number): Promise<void> {
+  private async githubRepositories(response: ServerResponse, page: number, query: string): Promise<void> {
     if (!this.options.listGitHubRepositories) {
       sendJson(response, 503, apiError("github_repositories_unavailable", "GitHub repository listing is unavailable", true));
       return;
     }
     try {
-      sendJson(response, 200, await this.options.listGitHubRepositories(page));
+      sendJson(response, 200, await this.options.listGitHubRepositories(page, query));
     } catch (error) {
       if (error instanceof GitHubRepositoryCatalogError) {
         const status = error.code === "github_timeout" ? 504 : error.code === "github_failed" ? 502 : 503;
@@ -381,6 +392,21 @@ export class ForgeHttpServer {
       return;
     }
     sendJson(response, 200, await this.options.usage.summary(days, timeZone));
+  }
+
+  private async projectDirectories(response: ServerResponse): Promise<void> {
+    if (!this.options.getProjectsRoot) {
+      sendJson(response, 503, apiError("projects_root_unavailable", "Projects root is unavailable"));
+      return;
+    }
+    try {
+      sendJson(response, 200, await listUnregisteredProjectDirectories(
+        this.options.getProjectsRoot(),
+        this.options.events.projectSummaries().map((project) => project.path),
+      ));
+    } catch {
+      sendJson(response, 503, apiError("project_directories_unavailable", "Forge could not list project directories", true));
+    }
   }
 
   private projectsRoot(response: ServerResponse): void {

@@ -27,6 +27,7 @@ import { listUnregisteredProjectDirectories } from "../projects/projectDirectory
 import { ProjectFileService } from "../projects/projectFileService.ts";
 import { ProjectGitService } from "../projects/projectGitService.ts";
 import { ProjectsRootValidationError } from "../projects/projectsRoot.ts";
+import { PiCatalogService } from "../pi/piCatalogService.ts";
 import { LiveIndicatorsService } from "../runtime/indicators.ts";
 import type { SubagentInternalApi } from "../subagents/internalApi.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
@@ -57,6 +58,7 @@ export interface ForgeHttpServerOptions {
   desktopUpdates?: DesktopUpdateStore;
   terminals?: TerminalManager;
   usage?: UsageService;
+  piCatalog?: PiCatalogService;
   subagentApi?: SubagentInternalApi;
   instanceId?: string;
   ownerLogin?: string;
@@ -209,6 +211,14 @@ export class ForgeHttpServer {
     }
     if (request.method === "GET" && url.pathname === "/api/v1/usage") {
       await this.usage(response, url);
+      return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/v1/pi/catalog") {
+      if (!this.options.piCatalog) {
+        sendJson(response, 503, apiError("pi_catalog_unavailable", "The Pi catalog is not configured", true));
+        return;
+      }
+      sendJson(response, 200, await this.options.piCatalog.catalog());
       return;
     }
     if (request.method === "GET" && url.pathname === "/api/v1/projects/directories") {

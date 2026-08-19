@@ -621,6 +621,26 @@ describe("SessionManager", () => {
       )!;
       expect(events.currentSnapshot().activeSessionId).toBe(handoffSession.id);
       expect(events.pendingInteractionsForSession(requestedSessionId)).toEqual([]);
+      expect(events.currentSnapshot().timelines[requestedSessionId]).toContainEqual(expect.objectContaining({
+        kind: "event",
+        category: "lifecycle",
+        details: expect.objectContaining({
+          kind: "ocode.handoff",
+          direction: "outgoing",
+          sourceSessionId: requestedSessionId,
+          targetSessionId: handoffSession.id,
+        }),
+      }));
+      expect(events.currentSnapshot().timelines[handoffSession.id]).toContainEqual(expect.objectContaining({
+        kind: "event",
+        category: "lifecycle",
+        details: expect.objectContaining({
+          kind: "ocode.handoff",
+          direction: "incoming",
+          sourceSessionId: requestedSessionId,
+          targetSessionId: handoffSession.id,
+        }),
+      }));
       const requests = readFileSync(
         join(config.sessionDir, handoffSession.id, "rpc-requests.jsonl"),
         "utf8",

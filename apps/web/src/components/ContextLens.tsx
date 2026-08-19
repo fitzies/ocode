@@ -6,7 +6,7 @@ import {
   type OcodeContextCategoryId,
 } from "@anvil/protocol";
 
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useState } from "react";
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -34,16 +34,16 @@ export interface ContextUsageView {
 const MAP_CELLS = 50;
 
 const CATEGORY_COLOR_CLASSES: Record<OcodeContextCategoryId, string> = {
-  system: "bg-slate-400 dark:bg-slate-500",
-  tools: "bg-blue-500 dark:bg-blue-400",
-  skills: "bg-amber-500 dark:bg-amber-400",
-  memory: "bg-teal-500 dark:bg-teal-400",
-  user: "bg-violet-500 dark:bg-violet-400",
-  assistant: "bg-green-500 dark:bg-green-400",
-  toolCalls: "bg-orange-500 dark:bg-orange-400",
-  toolOutput: "bg-cyan-500 dark:bg-cyan-400",
-  compaction: "bg-rose-500 dark:bg-rose-400",
-  other: "bg-zinc-500 dark:bg-zinc-400",
+  system: "bg-neutral-400",
+  tools: "bg-blue-400",
+  skills: "bg-amber-400",
+  memory: "bg-emerald-400",
+  user: "bg-purple-400",
+  assistant: "bg-cyan-400",
+  toolCalls: "bg-rose-400",
+  toolOutput: "bg-pink-400",
+  compaction: "bg-purple-600",
+  other: "bg-neutral-600",
 };
 
 function clampPercent(value: number | null): number | null {
@@ -115,32 +115,15 @@ function formatContextShare(tokens: number, contextWindow: number): string {
 }
 
 export function presentContextCellTooltip(
-  category: OcodeContextCategoryId | undefined,
-  used: boolean,
+  category: OcodeContextCategoryId,
   usage: ContextUsage,
   categories: ContextManifestV1["categories"],
 ): ContextCellTooltipView {
-  if (category) {
-    const tokens = categories.find((candidate) => candidate.id === category)?.tokens ?? 0;
-    return {
-      label: OCODE_CONTEXT_CATEGORY_LABELS[category],
-      detail: `${formatContextTokens(tokens)} tokens · ${formatContextShare(tokens, usage.contextWindow)} of context`,
-      colorClass: CATEGORY_COLOR_CLASSES[category],
-    };
-  }
-  if (used) {
-    const tokens = usage.tokens ?? 0;
-    return {
-      label: "Used context",
-      detail: `${formatContextTokens(tokens)} tokens · ${formatContextShare(tokens, usage.contextWindow)} used`,
-      colorClass: "bg-primary",
-    };
-  }
-  const available = Math.max(0, usage.contextWindow - (usage.tokens ?? 0));
+  const tokens = categories.find((candidate) => candidate.id === category)?.tokens ?? 0;
   return {
-    label: "Available",
-    detail: `${formatContextTokens(available)} tokens · ${formatContextShare(available, usage.contextWindow)} free`,
-    colorClass: "bg-muted-foreground",
+    label: OCODE_CONTEXT_CATEGORY_LABELS[category],
+    detail: `${formatContextTokens(tokens)} tokens · ${formatContextShare(tokens, usage.contextWindow)} of context`,
+    colorClass: CATEGORY_COLOR_CLASSES[category],
   };
 }
 
@@ -164,8 +147,11 @@ const ContextMapCell = memo(function ContextMapCell({
       aria-hidden="true"
       data-context-cell-index={index}
       data-context-category={category}
+      data-context-interactive={used || undefined}
       className={cn(
         "context-lens-cell",
+        !used && "bg-muted",
+        used && "cursor-help",
         used && !category && "context-lens-cell--used",
         used && !category && tone === "warning" && "context-lens-cell--warning",
         used && !category && tone === "danger" && "context-lens-cell--danger",
@@ -186,9 +172,9 @@ const ContextMapCell = memo(function ContextMapCell({
   );
 });
 
-function ContextLensSkeleton() {
+function ContextLensSkeleton({ embedded = false }: { embedded?: boolean }) {
   return (
-    <aside className="context-lens" aria-label="Loading context usage" aria-busy="true">
+    <aside className={embedded ? "context-lens-embedded" : "context-lens"} aria-label="Loading context usage" aria-busy="true">
       <Card size="sm" className="context-lens-card gap-0 py-0">
         <CardContent className="py-3">
           <div className="mb-2 flex items-end justify-between gap-3">
@@ -222,16 +208,30 @@ function selectContextUsage(usage: ContextUsage | undefined, manifest: ContextMa
   return usage.tokens >= manifestUsage.tokens ? usage : manifestUsage;
 }
 
-export function ContextLens({ usage, manifest, loading = true }: {
+export function ContextLens({ usage, manifest, loading = true, embedded = false }: {
   usage?: ContextUsage;
   manifest?: ContextManifestV1;
   loading?: boolean;
+  embedded?: boolean;
 }) {
   const [activeCellIndex, setActiveCellIndex] = useState<number>();
+  const [revealed, setRevealed] = useState(false);
   const dismissTooltip = useCallback(() => setActiveCellIndex(undefined), []);
   const effectiveUsage = selectContextUsage(usage, manifest);
-  if (!effectiveUsage) return loading ? <ContextLensSkeleton /> : null;
-  if (effectiveUsage.tokens === null || effectiveUsage.percent === null) return <ContextLensSkeleton />;
+  const hasContext = effectiveUsage?.tokens !== null && effectiveUsage?.tokens !== undefined && effectiveUsage.tokens > 0;
+
+  useEffect(() => {
+    if (!hasContext) {
+      setRevealed(false);
+      return;
+    }
+    const frame = requestAnimationFrame(() => setRevealed(true));
+    return () => cancelAnimationFrame(frame);
+  }, [hasContext]);
+
+  if (!effectiveUsage) return loading ? <ContextLensSkeleton embedded={embedded} /> : null;
+  if (effectiveUsage.tokens === 0) return null;
+  if (effectiveUsage.tokens === null || effectiveUsage.percent === null) return <ContextLensSkeleton embedded={embedded} />;
 
   const view = presentContextUsage(effectiveUsage);
   const displayCategories = manifest
@@ -249,7 +249,11 @@ export function ContextLens({ usage, manifest, loading = true }: {
   const mapLabel = `${view.filledCells} of ${MAP_CELLS} context blocks used${categorySummary ? `. ${categorySummary}` : ""}`;
 
   return (
-    <aside className="context-lens" aria-label={accessibleLabel}>
+    <aside
+      className={embedded ? "context-lens-embedded" : "context-lens t-panel-slide"}
+      data-open={embedded || revealed}
+      aria-label={accessibleLabel}
+    >
       <Card size="sm" className="context-lens-card gap-0 py-0">
         <CardContent className="py-3">
           <div className="mb-2 flex items-baseline justify-between gap-3">
@@ -266,39 +270,43 @@ export function ContextLens({ usage, manifest, loading = true }: {
           />
         </CardContent>
 
-        <Separator />
+        {manifest && (
+          <>
+            <Separator />
 
-        <CardContent className="py-3">
-          <div
-            className="context-lens-map"
-            role="img"
-            aria-label={mapLabel}
-            onPointerMove={(event) => {
-              const cell = (event.target as HTMLElement).closest<HTMLElement>("[data-context-cell-index]");
-              const index = cell ? Number(cell.dataset.contextCellIndex) : undefined;
-              setActiveCellIndex((current) => current === index ? current : index);
-            }}
-            onPointerLeave={dismissTooltip}
-          >
-            {Array.from({ length: MAP_CELLS }, (_, index) => {
-              const category = categoryCells[index];
-              const used = index < view.filledCells;
-              return (
-                <ContextMapCell
-                  key={index}
-                  index={index}
-                  used={used}
-                  category={category}
-                  tone={view.tone}
-                  tooltip={activeCellIndex === index
-                    ? presentContextCellTooltip(category, used, effectiveUsage, displayCategories)
-                    : undefined}
-                  onDismiss={dismissTooltip}
-                />
-              );
-            })}
-          </div>
-        </CardContent>
+            <CardContent className="py-3">
+              <div
+                className="context-lens-map"
+                role="img"
+                aria-label={mapLabel}
+                onPointerMove={(event) => {
+                  const cell = (event.target as HTMLElement).closest<HTMLElement>("[data-context-interactive]");
+                  const index = cell ? Number(cell.dataset.contextCellIndex) : undefined;
+                  setActiveCellIndex((current) => current === index ? current : index);
+                }}
+                onPointerLeave={dismissTooltip}
+              >
+                {Array.from({ length: MAP_CELLS }, (_, index) => {
+                  const category = categoryCells[index];
+                  const used = index < view.filledCells;
+                  return (
+                    <ContextMapCell
+                      key={index}
+                      index={index}
+                      used={used}
+                      category={category}
+                      tone={view.tone}
+                      tooltip={used && category && activeCellIndex === index
+                        ? presentContextCellTooltip(category, effectiveUsage, displayCategories)
+                        : undefined}
+                      onDismiss={dismissTooltip}
+                    />
+                  );
+                })}
+              </div>
+            </CardContent>
+          </>
+        )}
       </Card>
     </aside>
   );

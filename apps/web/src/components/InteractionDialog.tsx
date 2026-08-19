@@ -8,14 +8,13 @@ import type {
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
-  HelpCircleIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
+import { ApprovalCard } from "@/components/ApprovalCard";
 import { AskUserQuestion } from "@/components/AskUserQuestion";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Combobox,
@@ -239,20 +238,9 @@ function InteractionForm({
 
   if (request.method === "confirm") {
     return (
-      <div className="grid gap-3" data-presentation="confirmation-card">
-        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-2.5 rounded-md border border-border bg-muted/25 p-3">
-          <span className="mt-0.5 text-muted-foreground" aria-hidden="true">
-            <HugeiconsIcon icon={HelpCircleIcon} strokeWidth={2} className="size-4" />
-          </span>
-          <span className="grid gap-1">
-            <strong className="font-medium text-foreground">Confirm before continuing</strong>
-            <span className="text-xs/relaxed text-muted-foreground">The requesting extension is waiting for a yes or no response.</span>
-          </span>
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button variant="outline" type="button" onClick={() => onRespond({ requestId: request.id, confirmed: false })}>No</Button>
-          <Button type="button" onClick={() => onRespond({ requestId: request.id, confirmed: true })}>Confirm</Button>
-        </div>
+      <div className="flex justify-end gap-2" data-presentation="confirmation-card">
+        <Button variant="outline" type="button" onClick={() => onRespond({ requestId: request.id, confirmed: false })}>No</Button>
+        <Button type="button" onClick={() => onRespond({ requestId: request.id, confirmed: true })}>Confirm</Button>
       </div>
     );
   }
@@ -281,10 +269,10 @@ function InteractionForm({
   return (
     <form className="grid gap-4" onSubmit={submit}>
       {request.method === "select" && (
-        <RadioGroup value={selected[0] ?? ""} onValueChange={(value) => setSelected([value])} aria-label={request.title}>
+        <RadioGroup className="gap-0" value={selected[0] ?? ""} onValueChange={(value) => setSelected([value])} aria-label={request.title}>
           {request.options.map((option) => (
             <Label
-              className="grid min-h-12 cursor-pointer grid-cols-[auto_1fr] items-center rounded-lg border border-border bg-input/20 px-3 py-2.5 hover:bg-accent/60 has-data-[state=checked]:border-foreground/25 has-data-[state=checked]:bg-accent"
+              className="grid min-h-9 cursor-pointer grid-cols-[auto_1fr] items-center gap-2.5 border-b border-border/70 px-0 py-1.5 transition-colors last:border-b-0 hover:bg-accent/30 has-data-[state=checked]:bg-accent/40"
               key={option.id}
               htmlFor={`${request.id}-${option.id}`}
             >
@@ -389,31 +377,30 @@ export function InteractionPanel({ requests, onRespond }: InteractionPanelProps)
   const titleId = `interaction-title-${request.id}`;
   const messageId = `interaction-message-${request.id}`;
 
+  const footer = requests.length > 1 ? (
+    <div className="grid w-full grid-cols-[2rem_1fr_2rem] items-center text-center text-[0.6875rem] text-muted-foreground">
+      <Button variant="ghost" size="icon-sm" type="button" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0} aria-label="Previous pending request">
+        <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
+      </Button>
+      <span>{index + 1} of {requests.length} pending in this thread</span>
+      <Button variant="ghost" size="icon-sm" className="justify-self-end" type="button" onClick={() => setIndex((current) => Math.min(requests.length - 1, current + 1))} disabled={index >= requests.length - 1} aria-label="Next pending request">
+        <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />
+      </Button>
+    </div>
+  ) : undefined;
+
   return (
-    <section className="relative z-[5] w-full shrink-0 px-3 pb-[var(--composer-overlay-height)] sm:px-6" aria-labelledby={titleId} aria-describedby={request.message && !isAskUserQuestionRequest(request) ? messageId : undefined}>
-      <Card size="sm" className="mx-auto max-h-[min(30rem,54dvh)] w-full max-w-[790px] gap-0 overflow-auto py-0 shadow-lg">
-        <header className="sticky top-0 z-10 flex min-h-14 items-start gap-3 border-b border-border bg-card/95 px-4 py-3 backdrop-blur">
-          <span className="min-w-0 flex-1">
-            <small className="mb-1 block truncate text-[0.6875rem] leading-normal text-muted-foreground">
-              {requestDescription(request)}
-            </small>
-            <h2 className="text-[13px] font-medium leading-relaxed" id={titleId}>{request.title}</h2>
-          </span>
-        </header>
-        {request.message && !isAskUserQuestionRequest(request) && <p className="m-0 px-4 pt-3 text-xs/relaxed text-muted-foreground" id={messageId}>{request.message}</p>}
-        <CardContent className="px-4 py-3"><InteractionForm key={request.id} request={request} onRespond={onRespond} /></CardContent>
-        {requests.length > 1 && (
-          <CardFooter className="sticky bottom-0 grid min-h-10 grid-cols-[2rem_1fr_2rem] items-center border-t border-border bg-card/95 px-3 py-0 text-center text-[0.6875rem] text-muted-foreground backdrop-blur">
-            <Button variant="ghost" size="icon-sm" type="button" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0} aria-label="Previous pending request">
-              <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
-            </Button>
-            <span>{index + 1} of {requests.length} pending in this thread</span>
-            <Button variant="ghost" size="icon-sm" className="justify-self-end" type="button" onClick={() => setIndex((current) => Math.min(requests.length - 1, current + 1))} disabled={index >= requests.length - 1} aria-label="Next pending request">
-              <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />
-            </Button>
-          </CardFooter>
-        )}
-      </Card>
+    <section className="relative z-[5] w-full shrink-0 px-3 pb-[var(--composer-overlay-height)] sm:px-6" aria-labelledby={titleId} aria-describedby={request.message ? messageId : undefined}>
+      <ApprovalCard
+        eyebrow={requestDescription(request)}
+        title={request.title}
+        message={request.message}
+        titleId={titleId}
+        messageId={request.message ? messageId : undefined}
+        footer={footer}
+      >
+        <InteractionForm key={request.id} request={request} onRespond={onRespond} />
+      </ApprovalCard>
     </section>
   );
 }

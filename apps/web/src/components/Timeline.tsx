@@ -33,16 +33,17 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
-import { ContextLens, type ContextUsage } from "./ContextLens";
+import { AgentLoadingState } from "./AgentLoadingState";
+import { CompactionCard, type CompactionStatus } from "./CompactionCard";
+import { HandoffCard, type HandoffPresentation } from "./HandoffCard";
 import { InlineHtmlArtifact, InlineHtmlArtifactPending } from "./InlineHtmlArtifact";
 import { MarkdownText } from "./MarkdownText";
 import { MessageActions } from "./MessageActions";
 import { StreamingText } from "./StreamingText";
+import { ToolChip } from "./ToolChip";
 import { contextSourcesFromTool, ToolContextCards } from "./ToolContextCards";
 import { Button } from "./ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Dialog, DialogContent, DialogTitle, DialogTrigger } from "./ui/dialog";
-import { Spinner } from "./ui/spinner";
 import { useTimelineScroll } from "./timelineScroll";
 import { displayToolName, presentTool, type ToolCategory } from "./toolPresentation";
 
@@ -51,37 +52,12 @@ interface TimelineProps {
   projectName?: string;
   entries: TimelineEntry[];
   loading?: boolean;
-  contextUsage?: ContextUsage;
-  contextManifest?: ContextManifestV1;
-  contextLoading?: boolean;
   onSuggestion: (prompt: string) => void;
   onRequestProjectChange?: () => void;
   onOpenProjectResource?: (block: ProjectResourceContentBlock) => void;
-}
-
-const WORKING_MESSAGES = [
-  "Locking in…",
-  "Dialing in…",
-  "Cooking…",
-  "Bug hunting…",
-  "Reading stack…",
-  "Parsing vibes…",
-  "Tracing bugs…",
-  "Pushing pixels…",
-  "Moving bytes…",
-  "Diffmaxxing…",
-  "Contextmaxxing…",
-  "Refactormaxxing…",
-  "Testmaxxing…",
-  "Finding alpha…",
-  "Token farming…",
-  "Optimizing…",
-] as const;
-
-function workingMessage(key: string): string {
-  let hash = 0;
-  for (const character of key) hash = ((hash << 5) - hash + character.charCodeAt(0)) | 0;
-  return WORKING_MESSAGES[Math.abs(hash) % WORKING_MESSAGES.length]!;
+  sessions?: SessionSummary[];
+  onSelectSession?: (sessionId: string) => void;
+  workingMessage?: string;
 }
 
 function hasVisibleContent(blocks: ContentBlock[]): boolean {
@@ -204,6 +180,46 @@ function JsonDetails({ label, value }: { label: string; value?: JsonValue }) {
       <pre>{JSON.stringify(value, null, 2)}</pre>
     </details>
   );
+}
+
+function handoffPresentation(entry: SystemEventEntry): HandoffPresentation | undefined {
+  const details = jsonRecord(entry.details);
+  if (
+    entry.category !== "lifecycle" ||
+    details?.kind !== "ocode.handoff" ||
+    (details.direction !== "incoming" && details.direction !== "outgoing") ||
+    typeof details.sourceSessionId !== "string" ||
+    typeof details.targetSessionId !== "string"
+  ) return undefined;
+  return {
+    direction: details.direction,
+    sourceSessionId: details.sourceSessionId,
+    targetSessionId: details.targetSessionId,
+  };
+}
+
+function compactionEventType(entry: TimelineEntry): "compaction_start" | "compaction_end" | undefined {
+  if (entry.kind !== "event") return undefined;
+  const raw = jsonRecord(entry.raw);
+  return raw?.type === "compaction_start" || raw?.type === "compaction_end" ? raw.type : undefined;
+}
+
+function compactionStatus(events: SystemEventEntry[]): CompactionStatus {
+  const end = events.find((entry) => compactionEventType(entry) === "compaction_end");
+  if (!end) return "running";
+  if (end.title.includes("cancelled")) return "cancelled";
+  if (end.tone === "error") return "failed";
+  return "completed";
+}
+
+function compactionTokens(events: SystemEventEntry[]): { before?: number; after?: number } {
+  const end = events.find((entry) => compactionEventType(entry) === "compaction_end");
+  const raw = jsonRecord(end?.raw);
+  const result = jsonRecord(raw?.result);
+  return {
+    before: typeof result?.tokensBefore === "number" ? result.tokensBefore : undefined,
+    after: typeof result?.estimatedTokensAfter === "number" ? result.estimatedTokensAfter : undefined,
+  };
 }
 
 function ImageBlock({ source, alt, caption }: { source?: string; alt: string; caption?: string }) {
@@ -423,7 +439,6 @@ function ToolEventShell({
   category,
   appearanceCategory = category,
   status,
-  statusLabel,
   statusIcon,
   detailClassName,
   entering = false,
@@ -434,35 +449,33 @@ function ToolEventShell({
   category: ToolCategory;
   appearanceCategory?: ToolCategory;
   status: string;
-  statusLabel: string;
   statusIcon: ReactNode;
   detailClassName?: string;
   entering?: boolean;
   children: ReactNode;
 }) {
   return (
-    <Collapsible className={`tool-event tool-chip tool-event--${status} tool-event--${appearanceCategory}${entering ? " timeline-entry--entering" : ""}`}>
-      <CollapsibleTrigger className="tool-event-trigger">
-        <span className="tool-icon"><ToolGlyph category={category} /></span>
-        <span className="tool-main">
-          <strong>{title}</strong>
-          <span className={detailClassName} title={detail}>{detail}</span>
-        </span>
-        <span className="tool-status-copy" aria-hidden="true">{statusLabel}</span>
-        <span className="tool-status">{statusIcon}</span>
-        <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} className="disclosure-icon size-3.5" />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="tool-event-content" forceMount>
-        {children}
-      </CollapsibleContent>
-    </Collapsible>
+    <ToolChip
+      title={title}
+      detail={detail}
+      appearance={appearanceCategory}
+      status={status}
+      icon={<ToolGlyph category={category} />}
+      statusIcon={statusIcon}
+      detailClassName={detailClassName}
+      entering={entering}
+    >
+      {children}
+    </ToolChip>
   );
 }
 
-function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
+function TimelineItem({ entry, entering = false, onOpenProjectResource, sessions = [], onSelectSession }: {
   entry: TimelineEntry;
   entering?: boolean;
   onOpenProjectResource: (block: ProjectResourceContentBlock) => void;
+  sessions?: SessionSummary[];
+  onSelectSession?: (sessionId: string) => void;
 }) {
   const entranceClass = entering ? " timeline-entry--entering" : "";
   if (entry.kind === "message") {
@@ -477,7 +490,6 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
           category="agent"
           appearanceCategory="generic"
           status={entry.origin.status}
-          statusLabel={titleCase(entry.origin.status)}
           statusIcon={<HugeiconsIcon icon={successful ? CheckmarkCircle02Icon : AlertCircleIcon} strokeWidth={2} className="size-3.5" aria-label={titleCase(entry.origin.status)} />}
           entering={entering}
         >
@@ -588,7 +600,6 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
         detail={summaryDetail}
         category={presentation.category}
         status={entry.status}
-        statusLabel={presentation.status}
         statusIcon={<ToolStatus entry={entry} />}
         detailClassName={failureText ? "tool-failure-summary" : undefined}
         entering={entering}
@@ -646,6 +657,18 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
     );
   }
 
+  const handoff = handoffPresentation(entry);
+  if (handoff) {
+    return (
+      <HandoffCard
+        handoff={handoff}
+        sourceTitle={sessions.find((candidate) => candidate.id === handoff.sourceSessionId)?.title ?? "Source thread"}
+        targetTitle={sessions.find((candidate) => candidate.id === handoff.targetSessionId)?.title ?? "Handoff thread"}
+        onOpenSession={onSelectSession}
+      />
+    );
+  }
+
   return (
     <article className={`system-event system-event--${entry.tone}${entranceClass}`}>
       <span className="system-event-icon"><HugeiconsIcon icon={entry.tone === "error" ? AlertCircleIcon : InformationCircleIcon} strokeWidth={2} className="size-4" /></span>
@@ -662,7 +685,8 @@ function TimelineItem({ entry, entering = false, onOpenProjectResource }: {
 type TimelineRow =
   | { key: string; kind: "entry"; entry: TimelineEntry }
   | { key: string; kind: "tool-batch"; tools: ToolEntry[] }
-  | { key: string; kind: "retry"; retry: RetryCycle };
+  | { key: string; kind: "retry"; retry: RetryCycle }
+  | { key: string; kind: "compaction"; events: SystemEventEntry[] };
 
 function takeAssociatedRetryError(rows: TimelineRow[], expectedError: string | undefined): MessageEntry | undefined {
   if (!expectedError) return undefined;
@@ -682,11 +706,26 @@ function takeAssociatedRetryError(rows: TimelineRow[], expectedError: string | u
 function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   const rows: TimelineRow[] = [];
   let activeRetry: Extract<TimelineRow, { kind: "retry" }> | undefined;
+  let activeCompaction: Extract<TimelineRow, { kind: "compaction" }> | undefined;
   let index = 0;
   while (index < entries.length) {
     const entry = entries[index]!;
     if (isHumanUserMessage(entry)) activeRetry = undefined;
     if (entry.kind === "reasoning") {
+      index += 1;
+      continue;
+    }
+    const compactionType = compactionEventType(entry);
+    if (entry.kind === "event" && compactionType === "compaction_start") {
+      activeCompaction = { key: `compaction-${entry.id}`, kind: "compaction", events: [entry] };
+      rows.push(activeCompaction);
+      index += 1;
+      continue;
+    }
+    if (entry.kind === "event" && compactionType === "compaction_end") {
+      if (activeCompaction) activeCompaction.events.push(entry);
+      else rows.push({ key: `compaction-${entry.id}`, kind: "compaction", events: [entry] });
+      activeCompaction = undefined;
       index += 1;
       continue;
     }
@@ -736,14 +775,28 @@ function timelineRows(entries: TimelineEntry[]): TimelineRow[] {
   return rows;
 }
 
-function TimelineRowView({ row, entering = false, onOpenProjectResource }: {
+function TimelineRowView({ row, entering = false, onOpenProjectResource, sessions, onSelectSession }: {
   row: TimelineRow;
   entering?: boolean;
   onOpenProjectResource: (block: ProjectResourceContentBlock) => void;
+  sessions?: SessionSummary[];
+  onSelectSession?: (sessionId: string) => void;
 }) {
   const animateEntrance = useRef(entering).current;
-  if (row.kind === "entry") return <TimelineItem entry={row.entry} entering={animateEntrance} onOpenProjectResource={onOpenProjectResource} />;
+  if (row.kind === "entry") return <TimelineItem entry={row.entry} entering={animateEntrance} onOpenProjectResource={onOpenProjectResource} sessions={sessions} onSelectSession={onSelectSession} />;
   if (row.kind === "retry") return <RetryTimelineItem retry={row.retry} entering={animateEntrance} />;
+  if (row.kind === "compaction") {
+    const tokens = compactionTokens(row.events);
+    return (
+      <CompactionCard
+        status={compactionStatus(row.events)}
+        tokensBefore={tokens.before}
+        tokensAfter={tokens.after}
+        entering={animateEntrance}
+        details={<JsonDetails label="Technical details" value={row.events.map((entry) => entry.raw ?? entry.details ?? null)} />}
+      />
+    );
+  }
   const completed = row.tools.filter((tool) => tool.status === "completed").length;
   const running = row.tools.filter((tool) => tool.status === "running").length;
   const queued = row.tools.filter((tool) => tool.status === "queued").length;
@@ -775,12 +828,12 @@ function TimelineRowView({ row, entering = false, onOpenProjectResource }: {
         <span className="tool-batch-progress-complete" style={{ width: `${(completed / row.tools.length) * 100}%` }} />
         <span className="tool-batch-progress-error" style={{ width: `${((failed + cancelled) / row.tools.length) * 100}%` }} />
       </div>
-      {row.tools.map((tool) => <TimelineItem key={tool.id} entry={tool} onOpenProjectResource={onOpenProjectResource} />)}
+      {row.tools.map((tool) => <TimelineItem key={tool.id} entry={tool} onOpenProjectResource={onOpenProjectResource} sessions={sessions} onSelectSession={onSelectSession} />)}
     </section>
   );
 }
 
-export const Timeline = memo(function Timeline({ session, projectName = "this project", entries, loading = false, contextUsage, contextManifest, contextLoading, onRequestProjectChange = () => undefined, onOpenProjectResource = () => undefined }: TimelineProps) {
+export const Timeline = memo(function Timeline({ session, projectName = "this project", entries, loading = false, onRequestProjectChange = () => undefined, onOpenProjectResource = () => undefined, sessions = [], onSelectSession, workingMessage }: TimelineProps) {
   const hasEntries = entries.length > 0;
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -838,6 +891,7 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
   );
   const activeTool = entries.some((entry) => entry.kind === "tool" && (entry.status === "running" || entry.status === "queued"));
   const activeRetry = rows.some((row) => row.kind === "retry" && !row.retry.end);
+  const activeCompaction = rows.some((row) => row.kind === "compaction" && compactionStatus(row.events) === "running");
   const streamingResponse = entries.some((entry) => (
     entry.kind === "message" &&
     entry.role === "assistant" &&
@@ -845,8 +899,7 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
     hasVisibleContent(entry.content)
   ));
   const lastUserMessage = [...entries].reverse().find(isHumanUserMessage);
-  const showWorkingStatus = session.status === "running" && !activeTool && !activeRetry && !streamingResponse;
-  const statusMessage = workingMessage(`${session.id}:${lastUserMessage?.id ?? "start"}`);
+  const showWorkingStatus = session.status === "running" && !activeTool && !activeRetry && !activeCompaction && !streamingResponse;
 
   const previousUserMessageId = useRef(lastUserMessage?.id);
   useLayoutEffect(() => {
@@ -860,13 +913,9 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
   if (!hasEntries) {
     return (
       <div className="timeline-frame">
-        <ContextLens usage={contextUsage} manifest={contextManifest} loading={contextLoading} />
         <div ref={scrollRef} className="timeline timeline--empty">
           {loading ? (
-            <div className="timeline-loading-state" role="status" aria-label="Loading thread">
-              <Spinner role="presentation" aria-hidden="true" />
-              <span>Loading thread…</span>
-            </div>
+            <AgentLoadingState label="Loading thread" className="timeline-loading-state" />
           ) : (
             <h2>
               What are we building in{" "}
@@ -888,7 +937,6 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
 
   return (
     <div className="timeline-frame">
-      <ContextLens usage={contextUsage} manifest={contextManifest} loading={contextLoading} />
       <div
         ref={scrollRef}
         className={`timeline${virtualized ? " timeline--virtualized" : ""}${following ? "" : " timeline--detached"}`}
@@ -896,7 +944,7 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
       >
         <div ref={contentRef} className="timeline-inner">
           <div className="timeline-date"><span>Recorded session</span></div>
-          <div className="timeline-events" aria-live="polite" aria-relevant="additions text">
+          <div className="timeline-events" aria-live="polite" aria-relevant="additions">
             {virtualized ? (
               <div className="timeline-virtual-space" style={{ height: virtualizer.getTotalSize() }}>
                 {virtualizer.getVirtualItems().map((item) => {
@@ -909,20 +957,14 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
                       ref={virtualizer.measureElement}
                       style={{ transform: `translateY(${item.start}px)` }}
                     >
-                      <TimelineRowView row={row} entering={enteringRowKeys.has(row.key)} onOpenProjectResource={onOpenProjectResource} />
+                      <TimelineRowView row={row} entering={enteringRowKeys.has(row.key)} onOpenProjectResource={onOpenProjectResource} sessions={sessions} onSelectSession={onSelectSession} />
                     </div>
                   );
                 })}
               </div>
-            ) : rows.map((row) => <TimelineRowView key={row.key} row={row} entering={enteringRowKeys.has(row.key)} onOpenProjectResource={onOpenProjectResource} />)}
+            ) : rows.map((row) => <TimelineRowView key={row.key} row={row} entering={enteringRowKeys.has(row.key)} onOpenProjectResource={onOpenProjectResource} sessions={sessions} onSelectSession={onSelectSession} />)}
           </div>
-          {showWorkingStatus && (
-            <div className="working-status" role="status" aria-live="polite" aria-label={`Agent working: ${statusMessage}`}>
-              <span className="thinking-ellipsis" aria-hidden="true"><i /><i /><i /></span>
-              <strong>Working</strong>
-              <span aria-hidden="true">{statusMessage}</span>
-            </div>
-          )}
+          {showWorkingStatus && <AgentLoadingState label={workingMessage ? `Agent working: ${workingMessage}` : "Agent working"} text={workingMessage} className="working-status" />}
           <div className="timeline-follow-space" aria-hidden="true" />
           <div className="timeline-bottom-anchor" aria-hidden="true" />
         </div>

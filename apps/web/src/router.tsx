@@ -22,8 +22,13 @@ const usageRoute = createRoute({
   path: "/usage",
   component: EmptyRoute,
 });
+const piCatalogRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/pi",
+  component: EmptyRoute,
+});
 
-const routeTree = rootRoute.addChildren([indexRoute, settingsRoute, usageRoute]);
+const routeTree = rootRoute.addChildren([indexRoute, settingsRoute, usageRoute, piCatalogRoute]);
 
 export const router = createRouter({ routeTree });
 

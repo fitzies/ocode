@@ -11,6 +11,13 @@ describe("StreamingText", () => {
     expect(html).toContain("<strong>smoothly</strong>");
   });
 
+  it("uses the Beautiful UI word-resolution treatment for plain streaming copy", () => {
+    const html = renderToStaticMarkup(<StreamingText text="Building the interface" />);
+
+    expect(html).toContain("streaming-word--latest");
+    expect(html).toContain('aria-busy="true"');
+  });
+
   it("paces small deltas while catching up with large backlogs", () => {
     expect(nextStreamingTextLength(10, 10)).toBe(10);
     expect(nextStreamingTextLength(10, 12)).toBe(12);

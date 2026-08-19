@@ -8,7 +8,7 @@ import { Sidebar } from "./Sidebar";
 
 function renderSnapshot(
   snapshot: AnvilClientSnapshot,
-  activePage: "workspace" | "settings" | "usage" = "workspace",
+  activePage: "workspace" | "settings" | "usage" | "pi" = "workspace",
   projectChooserMode: "new" | "change" | null = null,
 ): string {
   return renderToStaticMarkup(
@@ -28,6 +28,7 @@ function renderSnapshot(
           activePage={activePage}
           onOpenSettings={() => undefined}
           onOpenUsage={() => undefined}
+          onOpenPiCatalog={() => undefined}
           onBack={() => undefined}
           projectChooserMode={projectChooserMode}
           onProjectChooserModeChange={() => undefined}
@@ -84,6 +85,7 @@ describe("Sidebar thread ordering", () => {
 
     expect(workspaceMarkup).toContain('aria-label="Settings"');
     expect(workspaceMarkup).toContain('aria-label="Usage"');
+    expect(workspaceMarkup).toContain('aria-label="Skills and extensions"');
     expect(workspaceMarkup).toContain('aria-label="Codex usage limits"');
     expect(workspaceMarkup).not.toContain('aria-label="Hide sidebar"');
     expect(settingsMarkup).toContain(">Back</span>");

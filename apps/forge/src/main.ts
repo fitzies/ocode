@@ -8,6 +8,7 @@ import { loadForgeConfig } from "./config.ts";
 import { DesktopUpdateStore } from "./desktop/desktopUpdateStore.ts";
 import { ForgeEventService } from "./events/eventService.ts";
 import { ForgeHttpServer } from "./http/server.ts";
+import { PiCatalogService } from "./pi/piCatalogService.ts";
 import { PiCommitMessageGenerator } from "./pi/commitMessageGenerator.ts";
 import { prepareGeneralProject } from "./projects/generalProject.ts";
 import { GitHubRepositoryCatalog } from "./projects/githubRepositoryCatalog.ts";
@@ -65,6 +66,7 @@ async function main(): Promise<void> {
     subagentApi = new SubagentInternalApi(subagents, subagentEndpoint(config.host, config.port));
     const indicators = new LiveIndicatorsService(sessions);
     const usage = new UsageService({ additionalSessionRoots: [config.sessionDir] });
+    const piCatalog = new PiCatalogService();
     let shutdownPromise: Promise<void> | undefined;
     let server: ForgeHttpServer;
     const shutdown = (exitCode = 0): Promise<void> => {
@@ -96,6 +98,7 @@ async function main(): Promise<void> {
       projectGit,
       terminals,
       usage,
+      piCatalog,
       subagentApi,
       searchFiles: sessions.searchFiles,
       listGitHubRepositories: githubRepositories.list,

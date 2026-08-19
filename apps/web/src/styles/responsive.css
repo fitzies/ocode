@@ -166,7 +166,8 @@
     margin-left: 36px;
   }
 
-  .tool-event {
+  .tool-event,
+  .tool-chip {
     margin-right: 0;
     margin-left: 0;
   }
@@ -247,11 +248,14 @@
 @media (max-width: 420px) {
   .thinking-event,
   .system-event,
-  .interaction-event {
+  .interaction-event,
+  .handoff-card,
+  .compaction-card {
     margin-left: 12px;
   }
 
   .tool-event,
+  .tool-chip,
   .tool-batch {
     margin-right: 0;
     margin-left: 0;

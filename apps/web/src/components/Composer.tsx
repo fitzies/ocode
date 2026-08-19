@@ -1,6 +1,7 @@
 import type {
   ArtifactReference,
   CommandDescriptor,
+  ContextManifestV1,
   ExtensionWidget,
   ModelDescriptor,
   SessionQueue,
@@ -30,6 +31,7 @@ import {
   useState,
 } from "react";
 
+import { ContextLens } from "@/components/ContextLens";
 import { Button } from "@/components/ui/button";
 import {
   Command,
@@ -71,6 +73,8 @@ export interface ComposerProps {
   pending?: boolean;
   creationError?: string;
   widgets: ExtensionWidget[];
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+  contextManifest?: ContextManifestV1;
   attachments: ComposerAttachment[];
   onAttachFiles: (sessionId: string, files: File[]) => void;
   onRemoveAttachment: (sessionId: string, attachmentId: string) => void;
@@ -226,6 +230,45 @@ function Widget({ widget }: { widget: ExtensionWidget }) {
   );
 }
 
+function ContextProgress({ usage, manifest }: {
+  usage: NonNullable<ComposerProps["contextUsage"]>;
+  manifest?: ContextManifestV1;
+}) {
+  const { percent } = usage;
+  const progress = Math.min(100, Math.max(0, percent ?? 0));
+  const level = progress >= 90 ? "danger" : progress >= 70 ? "warning" : "default";
+  const percentageLabel = percent === null ? "Unknown" : `${Math.round(percent)}%`;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className={`composer-context composer-context--${level}`}
+          role="img"
+          tabIndex={0}
+          aria-label={`${percentageLabel} of context window used`}
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle className="composer-context-track" cx="10" cy="10" r="7.5" />
+            <circle
+              className="composer-context-progress"
+              cx="10"
+              cy="10"
+              r="7.5"
+              pathLength="100"
+              strokeDasharray="100"
+              strokeDashoffset={100 - progress}
+            />
+          </svg>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="end" sideOffset={8} className="context-tooltip p-0">
+        <ContextLens usage={usage} manifest={manifest} loading={false} embedded />
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function Composer({
   sessionId,
   modelId,
@@ -241,6 +284,8 @@ export function Composer({
   pending = false,
   creationError,
   widgets,
+  contextUsage,
+  contextManifest,
   attachments,
   onAttachFiles,
   onRemoveAttachment,
@@ -893,6 +938,9 @@ export function Composer({
             </Select>
           </div>
           <div className="composer-actions">
+            {(contextUsage ?? contextManifest?.usage) && (
+              <ContextProgress usage={contextUsage ?? contextManifest!.usage} manifest={contextManifest} />
+            )}
             {running && !hasPrompt ? (
               <Button type="button" variant="secondary" size="icon-sm" className="stop-button" onClick={onCancel} aria-label="Stop run" title="Stop run">
                 <HugeiconsIcon icon={StopIcon} strokeWidth={2} />

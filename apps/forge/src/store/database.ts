@@ -290,11 +290,21 @@ export class ForgeDatabase {
     session: SessionSummary,
     event: UnsequencedAnvilEvent,
   ): AnvilEvent {
+    const [committed] = this.createSessionWithEvents(session, [event]);
+    if (!committed) throw new Error("Session creation did not produce an event");
+    return committed;
+  }
+
+  createSessionWithEvents(
+    session: SessionSummary,
+    events: readonly UnsequencedAnvilEvent[],
+  ): AnvilEvent[] {
+    if (!events.length) throw new Error("Session creation requires at least one event");
     this.database.exec("BEGIN IMMEDIATE");
     try {
       this.insertSession(session);
-      const [committed] = this.insertEvents([event]);
-      if (!committed) throw new Error("Session creation did not produce an event");
+      const committed = this.insertEvents(events);
+      if (committed.length !== events.length) throw new Error("Session creation did not produce every event");
       this.database.exec("COMMIT");
       return committed;
     } catch (error) {

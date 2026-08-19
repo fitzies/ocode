@@ -321,8 +321,12 @@ export class ForgeEventService extends EventEmitter {
   }
 
   createSession(session: SessionSummary, event: UnsequencedAnvilEvent): AnvilEvent {
-    const committed = this.database.createSessionWithEvent(session, event);
-    this.acceptCommitted([committed]);
+    return this.createSessionWithEvents(session, [event])[0]!;
+  }
+
+  createSessionWithEvents(session: SessionSummary, events: readonly UnsequencedAnvilEvent[]): AnvilEvent[] {
+    const committed = this.database.createSessionWithEvents(session, events);
+    this.acceptCommitted(committed);
     return committed;
   }
 

@@ -18,6 +18,7 @@ import {
 export * from "@anvil/protocol/content";
 export * from "./askUserQuestion.js";
 export * from "./contextManifest.js";
+export * from "./piCatalog.js";
 export * from "@anvil/protocol/resources";
 export * from "@anvil/protocol/terminal";
 export * from "./subagents.js";

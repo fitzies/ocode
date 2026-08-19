@@ -19,10 +19,18 @@
 .extension-widget,
 .composer-note,
 .composer-status {
-  width: min(100%, 790px);
+  width: min(100%, var(--message-column-width, 790px));
   margin-right: auto;
   margin-left: auto;
 }
+
+.approval-card {
+  max-width: var(--message-column-width, 790px);
+  border-color: color-mix(in oklab, var(--foreground) 10%, transparent);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 24%);
+}
+.approval-card-header { background: color-mix(in oklab, var(--card) 96%, transparent); }
+.approval-card-footer { background: color-mix(in oklab, var(--card) 96%, transparent); }
 
 .attention-banner {
   display: flex;
@@ -412,6 +420,50 @@
   flex-shrink: 0;
   gap: 8px;
 }
+
+.composer-context {
+  display: inline-grid;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  color: var(--legacy-text-low);
+  border-radius: 50%;
+  place-items: center;
+  cursor: help;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.composer-context:hover,
+.composer-context:focus-visible {
+  background: color-mix(in oklab, currentColor 9%, transparent);
+  outline: none;
+}
+
+.composer-context:focus-visible {
+  box-shadow: 0 0 0 1px color-mix(in oklab, currentColor 45%, transparent);
+}
+
+.composer-context svg {
+  width: 18px;
+  height: 18px;
+  overflow: visible;
+  transform: rotate(-90deg);
+}
+
+.composer-context circle {
+  fill: none;
+  stroke-width: 2.25;
+}
+
+.composer-context-track { stroke: color-mix(in oklab, var(--legacy-text-faint) 32%, transparent); }
+.composer-context-progress {
+  stroke: currentColor;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 180ms ease;
+}
+
+.composer-context--warning { color: var(--amber); }
+.composer-context--danger { color: var(--red); }
 
 .send-hint {
   color: var(--legacy-text-low);

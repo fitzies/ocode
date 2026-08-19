@@ -4,6 +4,7 @@ import {
   type ArtifactReference,
   type CapabilityCatalog,
   type ContextManifestV1,
+  type ExtensionStatus,
   type ProjectResourceContentBlock,
   type SessionSummary,
   type TimelineEntry,
@@ -55,6 +56,7 @@ import { InteractionPanel } from "./InteractionDialog";
 import { InternalSessionFooter } from "./InternalSessionFooter";
 import { FilePickerDialog } from "./FilePickerDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
+import { PiCatalogPage } from "./PiCatalogPage";
 import { ProjectGitAction } from "./ProjectGitAction";
 import { RecentlySettledDialog } from "./RecentlySettledDialog";
 import { Sidebar } from "./Sidebar";
@@ -119,16 +121,16 @@ type LiveIndicators = {
   };
 };
 
-function TimelineWithResources({ session, projectName, entries, loading, contextUsage, contextManifest, contextLoading, onSuggestion, onRequestProjectChange }: {
+function TimelineWithResources({ session, projectName, entries, loading, onSuggestion, onRequestProjectChange, sessions, onSelectSession, extensionStatuses }: {
   session: SessionSummary;
   projectName: string;
   entries: TimelineEntry[];
   loading: boolean;
-  contextUsage?: LiveIndicators["context"];
-  contextManifest?: ContextManifestV1;
-  contextLoading?: boolean;
   onSuggestion: (prompt: string) => void;
   onRequestProjectChange: () => void;
+  sessions: SessionSummary[];
+  onSelectSession: (sessionId: string) => void;
+  extensionStatuses: ExtensionStatus[];
 }) {
   const { openProjectResource } = useWorkspaceSurfaces();
   return (
@@ -137,11 +139,11 @@ function TimelineWithResources({ session, projectName, entries, loading, context
       projectName={projectName}
       entries={entries}
       loading={loading}
-      contextUsage={contextUsage}
-      contextManifest={contextManifest}
-      contextLoading={contextLoading}
       onSuggestion={onSuggestion}
       onRequestProjectChange={onRequestProjectChange}
+      sessions={sessions}
+      onSelectSession={onSelectSession}
+      workingMessage={extensionStatuses.find((status) => status.key === "working-message")?.text}
       onOpenProjectResource={(block: ProjectResourceContentBlock) => {
         openProjectResource(resolveProjectResourceReference(block, session), "timeline");
       }}
@@ -336,7 +338,7 @@ function AppShellContent() {
   const { theme, setTheme, accent, setAccent } = useTheme();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const activePage = pathname === "/settings" ? "settings" : pathname === "/usage" ? "usage" : "workspace";
+  const activePage = pathname === "/settings" ? "settings" : pathname === "/usage" ? "usage" : pathname === "/pi" ? "pi" : "workspace";
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [newProjectOpen, setNewProjectOpen] = useState(false);
@@ -656,7 +658,9 @@ function AppShellContent() {
       ? "Settings · ocode"
       : activePage === "usage"
         ? "Usage · ocode"
-        : activeSession?.title
+        : activePage === "pi"
+          ? "Skills & extensions · ocode"
+          : activeSession?.title
           ? `${activeSession.title} · ocode`
           : "ocode";
   }, [activePage, activeSession?.title]);
@@ -833,6 +837,7 @@ function AppShellContent() {
         activePage={activePage}
         onOpenSettings={() => void navigate({ to: "/settings" })}
         onOpenUsage={() => void navigate({ to: "/usage" })}
+        onOpenPiCatalog={() => void navigate({ to: "/pi" })}
         onBack={() => void navigate({ to: "/" })}
         projectChooserMode={projectChooserMode}
         onProjectChooserModeChange={setProjectChooserMode}
@@ -868,6 +873,8 @@ function AppShellContent() {
           />
         ) : activePage === "usage" ? (
           <UsagePage />
+        ) : activePage === "pi" ? (
+          <PiCatalogPage />
         ) : (
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
           <LiveProjectResourceAutoOpen />
@@ -972,11 +979,11 @@ function AppShellContent() {
               projectName={activeProject?.name ?? "this project"}
               entries={timeline}
               loading={snapshot.hydratingSessionIds.includes(activeSession.id)}
-              contextUsage={contextIndicatorsBySession.get(activeSession.id)}
-              contextManifest={contextManifest}
-              contextLoading={!contextResolvedSessionIds.has(activeSession.id) && !contextManifest}
               onSuggestion={sendSuggestion}
               onRequestProjectChange={() => setProjectChooserMode("change")}
+              sessions={snapshot.sessions}
+              onSelectSession={selectSession}
+              extensionStatuses={statuses}
             />
 
             <InteractionPanel requests={pendingInteractions} onRespond={anvilClient.respondToInteraction} />
@@ -1001,6 +1008,8 @@ function AppShellContent() {
               pending={activeSessionPending}
               creationError={activeSessionCreationError}
               widgets={composerWidgets}
+              contextUsage={contextIndicatorsBySession.get(activeSession.id)}
+              contextManifest={contextManifest}
               attachments={composerAttachments[activeSession.id] ?? []}
               onAttachFiles={attachFiles}
               onRemoveAttachment={removeAttachment}

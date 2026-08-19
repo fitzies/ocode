@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>T3 Code agents panel</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --background: #0a0a0a;
+      --background-soft: #0d0d0d;
+      --card: #0e0e0e;
+      --foreground: #f4f4f5;
+      --muted-foreground: #929298;
+      --muted-quiet: #6f6f76;
+      --border: rgba(255,255,255,.075);
+      --border-strong: rgba(255,255,255,.11);
+      --accent: rgba(255,255,255,.05);
+      --info: #3b82f6;
+      --info-fg: #60a5fa;
+      --success: #10b981;
+      --success-fg: #34d399;
+      --danger: #ef4444;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: transparent; }
+    body {
+      padding: clamp(10px, 2.2vw, 28px);
+      color: var(--foreground);
+      font-family: var(--sans);
+      font-size: 14px;
+    }
+    button, summary { font: inherit; }
+
+    .artifact {
+      width: min(1180px, 100%);
+      height: min(720px, calc(100vh - 32px));
+      min-height: 590px;
+      margin: auto;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: minmax(380px, 1fr) minmax(430px, 475px);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 13px;
+      background: var(--background);
+      box-shadow: 0 28px 80px rgba(0,0,0,.48), inset 0 1px rgba(255,255,255,.025);
+    }
+
+    .chat {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border-strong);
+      background: #0b0b0b;
+    }
+    .titlebar, .panel-tabs {
+      height: 42px;
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .titlebar { padding: 0 14px; gap: 8px; }
+    .traffic { display: flex; gap: 6px; margin-right: 6px; }
+    .traffic i { width: 8px; height: 8px; border-radius: 50%; background: #29292c; }
+    .project-name { font-size: 12px; color: #c6c6ca; }
+    .branch { margin-left: auto; color: #76767d; font: 10px var(--mono); }
+
+    .conversation {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      padding: 38px clamp(28px, 6vw, 74px) 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      gap: 22px;
+    }
+    .message { max-width: 540px; line-height: 1.55; color: #d5d5d8; }
+    .message.user {
+      align-self: flex-end;
+      max-width: 380px;
+      padding: 10px 13px;
+      border-radius: 16px;
+      background: rgba(255,255,255,.06);
+      color: #e8e8ea;
+    }
+    .muted-lines { display: grid; gap: 8px; width: 76%; }
+    .muted-lines i { display: block; height: 7px; border-radius: 9px; background: rgba(255,255,255,.047); }
+    .muted-lines i:nth-child(2) { width: 87%; }
+    .muted-lines i:nth-child(3) { width: 64%; }
+
+    .spawn-cta {
+      width: 100%;
+      min-height: 38px;
+      padding: 7px 10px;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      color: #d8d8dc;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 7px;
+      background: rgba(255,255,255,.022);
+      font-size: 12px;
+    }
+    .spawn-cta .bot { color: #8e8e96; }
+    .spawn-cta strong { font-weight: 550; }
+    .spawn-right { margin-left: auto; display: flex; gap: 11px; color: #8c8c93; font: 10px var(--mono); white-space: nowrap; }
+    .open-agents { color: var(--info-fg); }
+
+    .composer-wrap { padding: 0 14px 14px; }
+    .background-banner {
+      min-height: 37px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 5px 7px 5px 15px;
+      border: 1px solid rgba(255,255,255,.07);
+      border-radius: 20px 20px 7px 7px;
+      background: #0d0d0d;
+      box-shadow: inset 0 1px rgba(255,255,255,.015);
+      font-size: 12px;
+      font-weight: 560;
+    }
+    .stop {
+      margin-left: auto;
+      min-height: 25px;
+      padding: 0 10px;
+      color: #d4d4d8;
+      border: 1px solid rgba(255,255,255,.11);
+      border-radius: 7px;
+      background: rgba(255,255,255,.035);
+      font-size: 10px;
+    }
+    .composer {
+      height: 78px;
+      margin-top: 5px;
+      padding: 13px 14px;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 7px 7px 17px 17px;
+      background: #0f0f10;
+      color: #727279;
+      font-size: 12px;
+    }
+
+    .agents-panel {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: var(--background);
+      animation: panel-in 420ms cubic-bezier(.22,1,.36,1) both;
+    }
+    .panel-tabs { padding: 0 9px; gap: 5px; }
+    .active-tab {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 25px;
+      padding: 0 9px 0 7px;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #e8e8eb;
+      font-size: 11px;
+    }
+    .tab-x { color: #77777d; font-size: 13px; }
+    .plus { margin-left: 2px; color: #7e7e85; font-size: 18px; font-weight: 300; }
+    .panel-controls { margin-left: auto; display: flex; align-items: center; gap: 10px; color: #77777e; }
+
+    .panel-scroll {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #29292d transparent;
+      padding: 8px;
+    }
+    .workflow {
+      overflow: hidden;
+      border: 1px solid rgba(255,255,255,.075);
+      border-radius: 9px;
+      background: rgba(255,255,255,.014);
+      padding: 6px;
+    }
+    .workflow-head {
+      min-height: 24px;
+      padding: 1px 7px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #94949a;
+      text-transform: uppercase;
+      letter-spacing: .09em;
+      font-size: 9px;
+      font-weight: 650;
+    }
+    .workflow-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #aaaab0;
+    }
+    .script {
+      padding: 1px 5px;
+      border: 1px solid rgba(255,255,255,.09);
+      border-radius: 4px;
+      text-transform: none;
+      letter-spacing: 0;
+      font: 9px var(--mono);
+      color: #8d8d94;
+    }
+    .settled { margin-left: auto; text-transform: none; letter-spacing: 0; font: 9px var(--mono); color: #77777e; }
+    .collapse-icon { color: #6e6e75; }
+
+    .phase-rail {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
+      padding: 5px 7px 8px;
+    }
+    .phase-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      height: 20px;
+      padding: 0 6px;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 4px;
+      color: #7e7e85;
+      font: 9px var(--mono);
+    }
+    .phase-chip.done { border-color: rgba(16,185,129,.26); color: var(--success-fg); }
+    .phase-chip.running { border-color: rgba(59,130,246,.34); color: var(--info-fg); }
+    .chev { color: #45454a; font-size: 10px; }
+    .mini-dots { display: flex; gap: 3px; }
+    .mini-dots i { width: 4px; height: 4px; border-radius: 50%; background: #65656b; }
+    .mini-dots i.blue { background: var(--info); }
+    .mini-dots i.green { background: var(--success); }
+
+    details { margin-top: 4px; }
+    details > summary {
+      list-style: none;
+      min-height: 24px;
+      padding: 3px 7px;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--muted-foreground);
+      text-transform: uppercase;
+      letter-spacing: .09em;
+      font-size: 9px;
+      font-weight: 650;
+    }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary:hover { background: rgba(255,255,255,.035); }
+    details > summary::before { content: "›"; color: #76767d; font-size: 15px; line-height: 1; transition: transform 150ms ease; }
+    details[open] > summary::before { transform: rotate(90deg); }
+    details.done > summary { color: var(--success-fg); }
+    details.running > summary { color: var(--info-fg); }
+    .phase-count { color: #77777e; text-transform: none; letter-spacing: 0; font-weight: 400; }
+
+    .agent-row {
+      height: 62px;
+      padding: 4px 7px;
+      display: grid;
+      grid-template-columns: 6px minmax(0,1fr) auto;
+      grid-template-rows: 20px 18px 16px;
+      column-gap: 8px;
+      align-items: center;
+      border-radius: 6px;
+      animation: row-in 450ms cubic-bezier(.22,1,.36,1) both;
+    }
+    .agent-row:nth-of-type(2) { animation-delay: 60ms; }
+    .agent-row:nth-of-type(3) { animation-delay: 100ms; }
+    .agent-row:hover { background: rgba(255,255,255,.025); }
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--info);
+    }
+    .dot.live { animation: breathe 1.8s ease-in-out infinite; }
+    .dot.green { background: var(--success); animation: none; }
+    .dot.gray { background: #65656b; animation: none; }
+    .agent-name {
+      min-width: 0;
+      display: flex;
+      align-items: baseline;
+      gap: 7px;
+      overflow: hidden;
+      font-size: 12px;
+      font-weight: 580;
+      white-space: nowrap;
+    }
+    .agent-name > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+    .role {
+      flex: 0 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      padding: 1px 4px;
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 3px;
+      color: #85858c;
+      font: 9px var(--mono);
+      font-weight: 400;
+    }
+    .elapsed { min-width: 56px; text-align: right; color: #7e7e85; font: 9px var(--mono); }
+    .check { color: var(--success-fg); margin-left: 3px; }
+    .activity {
+      grid-column: 2 / 4;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #96969c;
+      font-size: 10px;
+    }
+    .metadata {
+      grid-column: 2 / 4;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #6f6f76;
+      font: 9px var(--mono);
+    }
+
+    .direct { margin-top: 12px; }
+    .direct-title {
+      padding: 0 8px 3px;
+      color: #85858c;
+      text-transform: uppercase;
+      letter-spacing: .09em;
+      font-size: 9px;
+      font-weight: 650;
+    }
+
+    .panel-footer {
+      min-height: 35px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 13px;
+      border-top: 1px solid var(--border);
+      color: #77777e;
+      font: 9px var(--mono);
+    }
+    .working { color: var(--info-fg); }
+    .tokens { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+    .source-note {
+      position: fixed;
+      inset-inline-start: 50%;
+      bottom: 5px;
+      transform: translateX(-50%);
+      color: rgba(255,255,255,.3);
+      font: 9px var(--mono);
+      white-space: nowrap;
+    }
+
+    svg { display: block; }
+
+    @keyframes panel-in {
+      from { opacity: 0; transform: translateX(14px); filter: blur(2px); }
+      to { opacity: 1; transform: translateX(0); filter: blur(0); }
+    }
+    @keyframes row-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes breathe {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+      50% { opacity: .62; box-shadow: 0 0 0 3px rgba(59,130,246,.08); }
+    }
+
+    @media (max-width: 820px) {
+      body { padding: 8px; }
+      .artifact { grid-template-columns: 1fr; min-height: 620px; height: calc(100vh - 20px); }
+      .chat { display: none; }
+      .agents-panel { width: 100%; }
+      .source-note { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .agents-panel, .agent-row, .dot.live { animation: none; }
+      details > summary::before { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="artifact" aria-label="Reconstruction of the T3 Code agents panel">
+    <section class="chat" aria-label="Chat context">
+      <header class="titlebar">
+        <span class="traffic" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="project-name">t3code</span>
+        <span class="branch">main</span>
+      </header>
+
+      <div class="conversation">
+        <div class="message user">Find the source of the reconnect bug, fix it, and have separate agents review the UI and tests.</div>
+        <div class="muted-lines" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="spawn-cta">
+          <span class="dot live" aria-hidden="true"></span>
+          <svg class="bot" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M9 3h6M12 3v4M8.5 12h.01M15.5 12h.01M9 16h6"/></svg>
+          <span><strong>Kicked off 4 subagents</strong> <span style="color:#797980">· Reconnect hardening</span></span>
+          <span class="spawn-right"><span>2 working</span><span>Σ 42.8k</span><span class="open-agents">Open Agents ›</span></span>
+        </div>
+      </div>
+
+      <div class="composer-wrap">
+        <div class="background-banner" role="status">
+          <span class="dot live" aria-hidden="true"></span>
+          <span>2 agents working in the background</span>
+          <button class="stop" type="button">Stop</button>
+        </div>
+        <div class="composer">Ask anything, @tag files/folders, $use skills, or / for commands</div>
+      </div>
+    </section>
+
+    <aside class="agents-panel" aria-label="Agents panel">
+      <header class="panel-tabs">
+        <div class="active-tab">
+          <span class="tab-x" aria-hidden="true">×</span>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M9 3h6M12 3v4M8.5 12h.01M15.5 12h.01M9 16h6"/></svg>
+          <span>Agents</span>
+        </div>
+        <span class="plus" aria-hidden="true">+</span>
+        <div class="panel-controls" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 4h16v16H4zM15 4v16"/></svg>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m15 3 6 6M21 3l-6 6M9 21l-6-6M3 21l6-6"/></svg>
+        </div>
+      </header>
+
+      <div class="panel-scroll">
+        <section class="workflow">
+          <div class="workflow-head">
+            <span class="dot live" aria-hidden="true"></span>
+            <span class="workflow-title">Reconnect hardening</span>
+            <span class="script">{} script</span>
+            <span class="settled">2/4 settled</span>
+            <span class="collapse-icon">⌄</span>
+          </div>
+
+          <div class="phase-rail" aria-label="Workflow phases">
+            <span class="phase-chip done">✓ Research <span class="mini-dots"><i class="green"></i></span></span>
+            <span class="chev">›</span>
+            <span class="phase-chip running">Implement <span class="mini-dots"><i class="blue"></i><i class="blue"></i></span></span>
+            <span class="chev">›</span>
+            <span class="phase-chip">Review <span class="mini-dots"><i></i></span></span>
+          </div>
+
+          <details class="done" open>
+            <summary>✓ Research <span class="phase-count">1 done</span></summary>
+            <div class="agent-row">
+              <span class="dot green" aria-hidden="true"></span>
+              <span class="agent-name"><span>Trace reconnect lifecycle</span><span class="role">scout</span></span>
+              <span class="elapsed">1m 42s <span class="check">✓</span></span>
+              <span class="activity">Mapped the stale-session path and identified the missed reset.</span>
+              <span class="metadata">gpt-5.4 · 12.4k tok · 7 tools</span>
+            </div>
+          </details>
+
+          <details class="running" open>
+            <summary>Implement <span class="phase-count">2 active · 0 done</span></summary>
+            <div class="agent-row">
+              <span class="dot live" aria-hidden="true"></span>
+              <span class="agent-name"><span>Patch session reducer</span><span class="role">builder</span></span>
+              <span class="elapsed">36s</span>
+              <span class="activity">▸ edit</span>
+              <span class="metadata">gpt-5.4-codex · 18.7k tok · 11 tools</span>
+            </div>
+            <div class="agent-row">
+              <span class="dot live" aria-hidden="true"></span>
+              <span class="agent-name"><span>Add reconnect regression coverage</span><span class="role">builder</span></span>
+              <span class="elapsed">28s</span>
+              <span class="activity">▸ bash · running focused reducer tests</span>
+              <span class="metadata">gpt-5.4-codex · 8.9k tok · 6 tools</span>
+            </div>
+          </details>
+
+          <details>
+            <summary>Review <span class="phase-count">pending</span></summary>
+          </details>
+        </section>
+
+        <section class="direct">
+          <div class="direct-title">Direct spawns</div>
+          <div class="agent-row">
+            <span class="dot green" aria-hidden="true"></span>
+            <span class="agent-name"><span>Audit panel accessibility</span><span class="role">reviewer</span></span>
+            <span class="elapsed">54s <span class="check">✓</span></span>
+            <span class="activity">No blocking accessibility issues found.</span>
+            <span class="metadata">gpt-5.4 · 2.8k tok · 3 tools</span>
+          </div>
+        </section>
+      </div>
+
+      <footer class="panel-footer">
+        <span class="working">● 2 working</span>
+        <span>2 settled</span>
+        <span class="tokens">Σ 42.8k tok</span>
+      </footer>
+    </aside>
+  </main>
+  <div class="source-note">Faithful reconstruction from pingdotgg/t3code current AgentsPanel source</div>
+</body>
+</html>

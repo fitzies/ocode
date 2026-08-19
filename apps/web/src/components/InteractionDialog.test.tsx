@@ -105,12 +105,12 @@ describe("InteractionPanel", () => {
     expect(html).toContain('data-presentation="confirmation-card"');
     expect(html).toContain("Publish the current branch?");
     expect(html).toContain("create a commit and push it");
-    expect(html).toContain("Confirm before continuing");
-    expect(html).toContain("yes or no response");
+    expect(html).toContain('data-presentation="approval-card"');
     expect(html).toContain(">No</button>");
     expect(html).toContain(">Confirm</button>");
     expect(html).not.toContain("Approve");
     expect(html).toContain('data-slot="card"');
+    expect(html).not.toContain("Confirm before continuing");
   });
 
   it("renders multi-select inside the originating thread rather than a global modal", () => {

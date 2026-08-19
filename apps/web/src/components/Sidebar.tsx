@@ -12,6 +12,7 @@ import {
   Mail01Icon,
   MailOpen01Icon,
   MessageAdd01Icon,
+  PuzzleIcon,
   Search01Icon,
   DatabaseSettingIcon,
   Settings01Icon,
@@ -92,9 +93,10 @@ interface SidebarProps {
   onMarkSessionRead: (sessionId: string) => void;
   onMarkSessionUnread: (sessionId: string) => void;
   onSearchThreads: (query: string) => Promise<ThreadSearchMatch[]>;
-  activePage: "workspace" | "settings" | "usage";
+  activePage: "workspace" | "settings" | "usage" | "pi";
   onOpenSettings: () => void;
   onOpenUsage: () => void;
+  onOpenPiCatalog: () => void;
   onBack: () => void;
   projectChooserMode: "new" | "change" | null;
   onProjectChooserModeChange: (mode: "new" | "change" | null) => void;
@@ -156,6 +158,7 @@ export const Sidebar = memo(function Sidebar({
   activePage,
   onOpenSettings,
   onOpenUsage,
+  onOpenPiCatalog,
   onBack,
   projectChooserMode,
   onProjectChooserModeChange,
@@ -619,6 +622,23 @@ export const Sidebar = memo(function Sidebar({
                     </SidebarMenuButton>
                   </TooltipTrigger>
                   <TooltipContent side="top">Usage</TooltipContent>
+                </Tooltip>
+              </SidebarMenuItem>
+              <SidebarMenuItem className="shrink-0">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <SidebarMenuButton
+                      aria-label="Skills and extensions"
+                      className="size-8 w-8 justify-center p-0"
+                      onClick={() => {
+                        onOpenPiCatalog();
+                        closeMobile();
+                      }}
+                    >
+                      <HugeiconsIcon icon={PuzzleIcon} strokeWidth={2} />
+                    </SidebarMenuButton>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">Skills &amp; extensions</TooltipContent>
                 </Tooltip>
               </SidebarMenuItem>
             </>

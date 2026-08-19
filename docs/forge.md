@@ -63,6 +63,8 @@ Vite proxies `/api` HTTP requests and WebSocket upgrades to `http://127.0.0.1:32
 
 The owner-authenticated `GET /api/v1/threads/search?q=` endpoint powers thread search. Queries are limited to 2–200 characters; Forge searches completed user-authored and assistant text, returns at most one bounded excerpt per ordinary thread and 50 matches overall, and never returns internal worker sessions.
 
+The owner-authenticated `GET /api/v1/pi/catalog` endpoint powers the read-only Skills & extensions page. Forge scans the global `~/.pi/agent/skills` and `~/.pi/agent/extensions` directories with bounded depth and item counts, ignores symlinks, reads only bounded skill frontmatter, and returns display paths rather than absolute Forge paths. It does not expose extension source or full skill instructions.
+
 Stop the system service before starting a development Forge that uses the same data directory. Forge takes an exclusive instance lock before opening SQLite, so a second process cannot mutate the journal even when it uses a different port. Use a separate `OCODE_DATA_DIR` when production and development instances must run at the same time.
 
 ## Service installation

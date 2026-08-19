@@ -7,6 +7,7 @@ const nodeFsSpecifier = "node:fs";
 const { readFileSync } = await import(nodeFsSpecifier);
 const timelineSource = readFileSync(new URL("./Timeline.tsx", import.meta.url), "utf8");
 const appShellSource = readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
+const timelineStyles = readFileSync(new URL("../styles/timeline.css", import.meta.url), "utf8");
 
 const session: SessionSummary = {
   id: "session-markdown",
@@ -59,8 +60,9 @@ describe("Timeline empty state", () => {
     );
 
     expect(html).toContain('aria-label="Loading thread"');
-    expect(html).toContain("Loading thread…");
-    expect(html).toContain('data-slot="spinner"');
+    expect(html).toContain("agent-loading-pixels");
+    expect(html).not.toContain("Loading thread…");
+    expect(html).not.toContain("Churning");
   });
 
   it("uses an explicit AppShell callback instead of a global project-change event", () => {
@@ -81,19 +83,94 @@ describe("Timeline empty state", () => {
 });
 
 describe("Timeline loading state", () => {
-  it("keeps the custom working copy inside a truthful status", () => {
+  it("shows the extension working message beside the Beautiful UI loader", () => {
     const html = renderToStaticMarkup(
       <Timeline
         session={{ ...session, status: "running" }}
         entries={[{ ...message, role: "user" }]}
+        workingMessage="Diffmaxxing..."
         onSuggestion={() => undefined}
       />,
     );
 
     expect(html).toContain("working-status");
-    expect(html).toContain("Agent working:");
-    expect(html).toContain(">Working</strong>");
-    expect(html).toContain("thinking-ellipsis");
+    expect(html).toContain('aria-label="Agent working: Diffmaxxing..."');
+    expect(html).toContain("agent-loading-pixels");
+    expect(html).toContain('<span class="agent-loading-copy" aria-hidden="true">Diffmaxxing...</span>');
+    expect(html).not.toContain(">Working</strong>");
+  });
+});
+
+describe("Timeline lifecycle cards", () => {
+  it("keeps the context lens absolute without shifting the shared chat axis", () => {
+    expect(timelineStyles).toContain(".context-lens");
+    expect(timelineStyles).toContain("position: absolute");
+    expect(timelineStyles).not.toContain("padding-inline-end: 272px");
+    expect(timelineStyles).toContain("padding-inline: 272px");
+    expect(timelineStyles).not.toContain("left: calc(50% - 136px)");
+    expect(timelineSource).toContain('aria-relevant="additions"');
+    expect(timelineSource).not.toContain('aria-relevant="additions text"');
+  });
+
+  it("coalesces compaction start and completion into one token-aware card", () => {
+    const start: SystemEventEntry = {
+      id: "compact-start",
+      kind: "event",
+      category: "lifecycle",
+      tone: "info",
+      title: "Compacting context",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      raw: { type: "compaction_start", reason: "threshold" },
+    };
+    const end: SystemEventEntry = {
+      id: "compact-end",
+      kind: "event",
+      category: "lifecycle",
+      tone: "success",
+      title: "Context compacted",
+      createdAt: "2026-03-22T00:00:01.000Z",
+      raw: { type: "compaction_end", result: { tokensBefore: 12_000, estimatedTokensAfter: 3_200 } },
+    };
+    const html = renderToStaticMarkup(
+      <Timeline session={session} entries={[start, end]} onSuggestion={() => undefined} />,
+    );
+
+    expect(html.match(/data-presentation="compaction-card"/g)).toHaveLength(1);
+    expect(html).toContain("Context compacted");
+    expect(html).toContain("12,000 → 3,200 tokens");
+  });
+
+  it("renders durable incoming handoffs with navigation to their source thread", () => {
+    const source = { ...session, id: "source", title: "Original implementation" };
+    const target = { ...session, id: "target", title: "Follow-up work" };
+    const handoff: SystemEventEntry = {
+      id: "handoff-incoming",
+      kind: "event",
+      category: "lifecycle",
+      tone: "info",
+      title: "Continued from another thread",
+      createdAt: "2026-03-22T00:00:00.000Z",
+      details: {
+        kind: "ocode.handoff",
+        schemaVersion: 1,
+        direction: "incoming",
+        sourceSessionId: source.id,
+        targetSessionId: target.id,
+      },
+    };
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={target}
+        entries={[handoff]}
+        sessions={[source, target]}
+        onSelectSession={() => undefined}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain('data-presentation="handoff-card"');
+    expect(html).toContain("Original implementation");
+    expect(html).toContain(">View source");
   });
 });
 
@@ -172,9 +249,9 @@ describe("Timeline subagent completions", () => {
       />,
     );
 
-    expect(html).toContain("tool-event--generic");
-    expect(html).not.toContain("tool-event--agent");
-    expect(html).toContain("tool-event--completed");
+    expect(html).toContain("tool-chip--generic");
+    expect(html).not.toContain("tool-chip--agent");
+    expect(html).toContain("tool-chip--completed");
     expect(html).toContain("Reviewer subagent");
     expect(html).toContain("Found **two race conditions**.");
     expect(html).toContain('data-state="closed"');
@@ -461,8 +538,12 @@ describe("Timeline tool presentation", () => {
     expect(html).toContain("Running");
     expect(html).toContain("Arguments");
     expect(html).toContain("Raw RPC event");
-    expect(html).toContain("tool-event--file");
-    expect(html).toContain("tool-chip");
+    expect(html).toContain("tool-chip--file");
+    expect(html).toContain("tool-chip-detail");
+    expect(html).not.toContain("tool-chip-target");
+    expect(html).not.toContain("tool-chip-status-copy");
+    expect(html).not.toContain("tool-chip-disclosure");
+    expect(html).toContain('aria-label="Running"');
   });
 
   it("renders final web-search source URLs as bounded context cards", () => {
@@ -494,7 +575,9 @@ describe("Timeline tool presentation", () => {
     expect(html).toContain("docs.example.test");
     expect(html).toContain('href="https://docs.example.test/extensions"');
     expect(html).toContain('data-slot="button"');
-    expect(html.match(/context-card py-0/g)).toHaveLength(2);
+    expect(html.match(/context-card gap-0 py-0/g)).toHaveLength(2);
+    expect(html).toContain("context-card-list-header");
+    expect(html).toContain(">Sources</strong>");
   });
 
   it.each(["ocode_render_html_file", "anvil_render_html_file"])(
@@ -572,7 +655,7 @@ describe("Timeline tool presentation", () => {
     );
 
     expect(html).toContain("Subagent finished");
-    expect(html).toContain("tool-event--agent");
+    expect(html).toContain("tool-chip--agent");
     expect(html).toContain(">Message<");
     expect(html).toContain("<strong>Review</strong>");
     expect(html).toContain(">Response<");
@@ -626,9 +709,9 @@ describe("Timeline tool presentation", () => {
     expect(html).toContain("Output available");
     expect(html).toContain("Extension result");
     expect(html).toContain("extensionMetadata");
-    expect(html).toContain("Done · 1.3s");
-    expect(html).toContain("tool-event--generic");
-    expect(html).not.toContain("tool-event--file");
+    expect(html).not.toContain("Done · 1.3s");
+    expect(html).toContain("tool-chip--generic");
+    expect(html).not.toContain("tool-chip--file");
   });
 
   it("presents legacy ocode tool aliases without exposing the former product name", () => {
@@ -667,7 +750,7 @@ describe("Timeline tool presentation", () => {
 
     expect(html).toContain("Deploy preview");
     expect(html).toContain("extension.deploy · Preview service unavailable");
-    expect(html).toContain("tool-event--generic");
+    expect(html).toContain("tool-chip--generic");
   });
 
   it("groups and reports progress for parallel tools", () => {

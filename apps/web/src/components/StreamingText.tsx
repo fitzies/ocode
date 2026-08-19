@@ -28,6 +28,34 @@ function avoidSplittingSurrogatePair(text: string, length: number): number {
     : length;
 }
 
+function completeCurrentWord(text: string, length: number): number {
+  if (length >= text.length || /\s/.test(text[length - 1] ?? "")) return length;
+  const boundary = text.slice(length).search(/\s/);
+  return boundary < 0 ? text.length : length + boundary + 1;
+}
+
+function isSimpleStreamingText(text: string): boolean {
+  return !/[\n*_`#[\]<>|]/.test(text);
+}
+
+function StreamingWords({ text, className }: { text: string; className: string }) {
+  const words = text.match(/\S+\s*/g) ?? [];
+  return (
+    <div className={className} aria-busy="true">
+      <p>
+        {words.map((word, index) => (
+          <span
+            className={index === words.length - 1 ? "streaming-word streaming-word--latest" : "streaming-word"}
+            key={index === words.length - 1 ? `${index}-${text.length}` : index}
+          >
+            {word}
+          </span>
+        ))}
+      </p>
+    </div>
+  );
+}
+
 /**
  * Buffered text reveal adapted for Pi's real, growing response.
  * Existing text is shown immediately on mount; only newly received deltas are
@@ -54,9 +82,12 @@ export function StreamingText({ text, className = "text-block markdown-body stre
 
     const reveal = () => {
       const target = targetRef.current;
-      const nextLength = avoidSplittingSurrogatePair(
+      const nextLength = completeCurrentWord(
         target,
-        nextStreamingTextLength(shownRef.current.length, target.length),
+        avoidSplittingSurrogatePair(
+          target,
+          nextStreamingTextLength(shownRef.current.length, target.length),
+        ),
       );
       const next = target.slice(0, nextLength);
       shownRef.current = next;
@@ -76,5 +107,7 @@ export function StreamingText({ text, className = "text-block markdown-body stre
     if (frameRef.current !== undefined) cancelAnimationFrame(frameRef.current);
   }, []);
 
-  return <MarkdownText className={className}>{shown}</MarkdownText>;
+  return isSimpleStreamingText(shown)
+    ? <StreamingWords text={shown} className={className} />
+    : <MarkdownText className={className}>{shown}</MarkdownText>;
 }

@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pi skills and extensions preview</title>
+<style>
+  :root{--bg:#fafafa;--panel:#f4f4f5;--card:#fff;--line:#e4e4e7;--text:#18181b;--muted:#71717a;--soft:#f7f7f8;--accent:#27272a;--green:#16835d;--green-bg:#eaf7f1;--radius:8px}
+  *{box-sizing:border-box} body{margin:0;padding:24px;background:transparent;color:var(--text);font:13px/1.45 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .frame{height:min(760px,calc(100vh - 48px));min-height:590px;max-width:1180px;margin:auto;display:grid;grid-template-columns:244px 1fr;overflow:hidden;border:1px solid #d7d7dc;border-radius:12px;background:var(--bg);box-shadow:0 18px 50px rgba(24,24,27,.10)}
+  .sidebar{display:flex;min-width:0;flex-direction:column;border-right:1px solid var(--line);background:#f5f5f6}.brand{height:52px;display:flex;align-items:center;gap:9px;padding:0 14px;border-bottom:1px solid var(--line);font-weight:650}.mark{width:24px;height:24px;border-radius:7px;background:#202024;color:#fff;display:grid;place-items:center;font-size:11px}.project{margin:12px 10px 7px;padding:8px 9px;display:flex;align-items:center;gap:8px;border-radius:7px}.project:hover{background:#ececef}.folder{color:#73737b}.project strong{font-size:12px}.project small{display:block;color:var(--muted);font-size:10px}.new{margin:0 10px 12px;height:32px;border:1px solid var(--line);border-radius:7px;background:#fff;text-align:left;padding:0 10px;color:#3f3f46}.label{padding:4px 14px 7px;color:#8a8a93;font-size:10px;font-weight:650;text-transform:uppercase;letter-spacing:.06em}.threads{padding:0 7px}.thread{padding:8px 9px;border-radius:7px;color:#52525b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.thread.active{background:#e7e7ea;color:#18181b;font-weight:550}.time{float:right;color:#9a9aa2;font-size:10px}.spacer{flex:1}.footer{border-top:1px solid var(--line);padding:10px;display:flex;align-items:center;gap:4px}.icon-btn{width:32px;height:32px;border:0;border-radius:7px;background:transparent;color:#686871;display:grid;place-items:center;position:relative}.icon-btn.selected{color:#18181b;background:#e4e4e7;box-shadow:inset 0 0 0 1px #d4d4d8}.icon-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.8}.quota{margin-left:auto;width:28px;height:28px;display:grid;place-items:center}.ring{width:19px;height:19px;border-radius:50%;background:conic-gradient(#29292d 0 61%,#d7d7dc 61%);position:relative}.ring:after{content:"";position:absolute;inset:3px;border-radius:50%;background:#f5f5f6}.tooltip{position:absolute;bottom:39px;left:50%;transform:translateX(-50%);padding:4px 7px;background:#18181b;color:white;border-radius:5px;font-size:10px;white-space:nowrap;opacity:1}
+  .main{min-width:0;display:flex;flex-direction:column}.topbar{height:52px;display:flex;align-items:center;padding:0 22px;border-bottom:1px solid var(--line);background:rgba(250,250,250,.92)}.topbar h1{font-size:13px;margin:0;font-weight:630}.content{overflow:auto;padding:34px 42px 46px}.inner{max-width:830px;margin:0 auto}.eyebrow{display:flex;align-items:center;gap:8px;color:var(--green);font-size:11px;font-weight:650;margin-bottom:8px}.status-dot{width:6px;height:6px;border-radius:50%;background:var(--green)}h2{font-size:25px;line-height:1.18;letter-spacing:-.025em;margin:0 0 7px}.intro{margin:0;color:var(--muted);font-size:13px}.path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#52525b;background:#f0f0f2;border:1px solid var(--line);border-radius:4px;padding:1px 5px}.controls{margin-top:25px;display:flex;align-items:center;justify-content:space-between;gap:12px}.tabs{display:flex;gap:2px;padding:3px;border:1px solid var(--line);background:#f1f1f3;border-radius:8px}.tabs label{cursor:pointer;border-radius:5px;padding:5px 10px;color:var(--muted);font-size:12px;font-weight:550}.search{height:32px;width:220px;border:1px solid var(--line);border-radius:7px;background:#fff;display:flex;align-items:center;gap:7px;padding:0 10px;color:#92929a}.search svg{width:14px}.search kbd{margin-left:auto;font-size:9px;border:1px solid var(--line);border-radius:3px;padding:0 3px;background:#fafafa}.section-head{display:flex;align-items:end;justify-content:space-between;margin-top:25px;margin-bottom:9px}.section-head h3{font-size:12px;margin:0}.section-head span{font-size:10px;color:var(--muted)}.list{border:1px solid var(--line);border-radius:9px;background:#fff;overflow:hidden}.row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:11px;align-items:center;padding:12px 13px;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.item-icon{width:32px;height:32px;border-radius:7px;background:#f1f1f3;display:grid;place-items:center;color:#52525b}.item-icon svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7}.name{font-weight:620;font-size:12px}.desc{font-size:11px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.meta{text-align:right}.source{font-size:9px;font-weight:650;color:#666670;background:#f3f3f4;border:1px solid var(--line);border-radius:99px;padding:2px 6px}.modified{display:block;color:#9898a1;font-size:9px;margin-top:4px}.empty-note{margin-top:13px;color:var(--muted);font-size:10px;display:flex;gap:6px;align-items:center}.empty-note svg{width:13px}.panel{display:none}#skills:checked~.content-wrap .skills-panel,#extensions:checked~.content-wrap .extensions-panel{display:block}#skills:checked~.content-wrap label[for=skills],#extensions:checked~.content-wrap label[for=extensions]{background:#fff;color:#18181b;box-shadow:0 1px 2px rgba(0,0,0,.08)}input[type=radio]{display:none}
+  @media(max-width:760px){body{padding:10px}.frame{grid-template-columns:58px;height:calc(100vh - 20px)}.sidebar .brand span,.project,.new,.label,.threads{display:none}.brand{justify-content:center;padding:0}.footer{flex-direction:column}.quota{margin:4px 0 0}.content{padding:25px 18px}.controls{align-items:stretch;flex-direction:column}.search{width:100%}.intro{max-width:44ch}.tooltip{display:none}}
+</style>
+</head>
+<body>
+<div class="frame">
+  <aside class="sidebar">
+    <div class="brand"><div class="mark">o</div><span>ocode</span></div>
+    <div class="project"><span class="folder">◆</span><div><strong>anvil</strong><small>/home/oli/code/anvil</small></div></div>
+    <button class="new">＋ New thread</button>
+    <div class="label">Threads</div>
+    <div class="threads">
+      <div class="thread active"><span class="time">now</span>Skills and extensions</div>
+      <div class="thread"><span class="time">8m</span>Forge reconnect issue</div>
+      <div class="thread"><span class="time">1h</span>Review usage charts</div>
+    </div>
+    <div class="spacer"></div>
+    <div class="footer">
+      <button class="icon-btn" aria-label="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 13.5v-3l-2-.6-.8-1.8 1-1.8-2.2-2.2-1.8 1-1.8-.8-.6-2h-3l-.6 2-1.8.8-1.8-1-2.2 2.2 1 1.8-.8 1.8-2 .6v3l2 .6.8 1.8-1 1.8 2.2 2.2 1.8-1 1.8.8.6 2h3l.6-2 1.8-.8 1.8 1 2.2-2.2-1-1.8.8-1.8z"/></svg></button>
+      <button class="icon-btn" aria-label="Usage"><svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg></button>
+      <button class="icon-btn selected" aria-label="Skills and extensions"><span class="tooltip">Skills &amp; extensions</span><svg viewBox="0 0 24 24"><path d="M5 4h5a2 2 0 0 1 2 2v14a2.7 2.7 0 0 0-2.5-2H5zM19 4h-5a2 2 0 0 0-2 2v14a2.7 2.7 0 0 1 2.5-2H19z"/><path d="M16 8h1M16 11h1"/></svg></button>
+      <div class="quota" title="61% remaining"><div class="ring"></div></div>
+    </div>
+  </aside>
+  <main class="main">
+    <div class="topbar"><h1>Skills &amp; extensions</h1></div>
+    <input type="radio" name="tab" id="skills" checked><input type="radio" name="tab" id="extensions">
+    <div class="content content-wrap"><div class="inner">
+      <div class="eyebrow"><span class="status-dot"></span> Read from Forge</div>
+      <h2>Your Pi setup</h2>
+      <p class="intro">Browse the skills and extensions available to Pi on this Forge. Files stay read-only in ocode.</p>
+      <div class="controls"><div class="tabs"><label for="skills">Skills&nbsp; 12</label><label for="extensions">Extensions&nbsp; 5</label></div><div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m16 16 4 4"/></svg>Search <kbd>⌘ K</kbd></div></div>
+      <section class="panel skills-panel">
+        <div class="section-head"><h3>Installed skills</h3><span><span class="path">~/.pi/agent/skills</span></span></div>
+        <div class="list">
+          <div class="row"><div class="item-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h6"/></svg></div><div><div class="name">frontend-design</div><div class="desc">Create, modify, or review frontend UI with stronger default design taste.</div></div><div class="meta"><span class="source">USER</span><span class="modified">SKILL.md</span></div></div>
+          <div class="row"><div class="item-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h6"/></svg></div><div><div class="name">github-investigation</div><div class="desc">Inspect repositories, issues, pull requests, releases, and commits with gh.</div></div><div class="meta"><span class="source">USER</span><span class="modified">SKILL.md</span></div></div>
+          <div class="row"><div class="item-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h6"/></svg></div><div><div class="name">thinking-orbs</div><div class="desc">Add truthful animated status indicators for agent interfaces.</div></div><div class="meta"><span class="source">USER</span><span class="modified">SKILL.md</span></div></div>
+          <div class="row"><div class="item-icon"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM8 8h8M8 12h6"/></svg></div><div><div class="name">use-railway</div><div class="desc">Deploy and manage Railway services, databases, variables, and domains.</div></div><div class="meta"><span class="source">AGENT</span><span class="modified">SKILL.md</span></div></div>
+        </div>
+        <div class="empty-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>Select a skill to open its folder and preview its instructions.</div>
+      </section>
+      <section class="panel extensions-panel">
+        <div class="section-head"><h3>Loaded extensions</h3><span><span class="path">~/.pi/agent/extensions</span></span></div>
+        <div class="list">
+          <div class="row"><div class="item-icon"><svg viewBox="0 0 24 24"><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/><rect x="8" y="8" width="8" height="8" rx="2"/></svg></div><div><div class="name">agent-browser</div><div class="desc">Browser automation tools for live pages, screenshots, and extraction.</div></div><div class="meta"><span class="source">PACKAGE</span><span class="modified">index.ts</span></div></div>
+          <div class="row"><div class="item-icon"><svg viewBox="0 0 24 24"><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/><rect x="8" y="8" width="8" height="8" rx="2"/></svg></div><div><div class="name">ocode-forge</div><div class="desc">Resource viewing, durable workers, and artifact rendering for remote sessions.</div></div><div class="meta"><span class="source">USER</span><span class="modified">index.ts</span></div></div>
+          <div class="row"><div class="item-icon"><svg viewBox="0 0 24 24"><path d="M8 3v5H3M16 3v5h5M8 21v-5H3M16 21v-5h5"/><rect x="8" y="8" width="8" height="8" rx="2"/></svg></div><div><div class="name">theme-sync</div><div class="desc">Keeps the Pi terminal theme aligned with the active ocode appearance.</div></div><div class="meta"><span class="source">USER</span><span class="modified">extension.ts</span></div></div>
+        </div>
+        <div class="empty-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>Extension status reflects what Forge can resolve from Pi's configuration.</div>
+      </section>
+    </div></div>
+  </main>
+</div>
+</body>
+</html>

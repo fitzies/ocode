@@ -232,6 +232,7 @@ export class SessionManager {
   private readonly interactionTimers = new Map<string, NodeJS.Timeout>();
   private readonly internalDeliveryCounts = new Map<string, number>();
   private readonly internalLifecycleCommandIds = new Set<string>();
+  private readonly pendingSessionCreationEvents = new Map<string, UnsequencedAnvilEvent[]>();
   private readonly deleting = new Set<string>();
   private readonly deletingProjects = new Set<string>();
   private readonly cloneReservations = new Set<string>();
@@ -1167,10 +1168,12 @@ export class SessionManager {
       branch: gitBranch(project.path),
       readThroughSequence: 0,
     };
-    this.events.createSession(
-      session,
+    const initialEvents = this.pendingSessionCreationEvents.get(session.id) ?? [];
+    this.pendingSessionCreationEvents.delete(session.id);
+    this.events.createSessionWithEvents(session, [
       domainEvent("session.upserted", { session }, session.id),
-    );
+      ...initialEvents,
+    ]);
 
     void this.ensureRuntime({ session }).catch((error) => {
       if (this.shuttingDown || this.deleting.has(session.id)) return;
@@ -1627,14 +1630,50 @@ export class SessionManager {
     }
 
     const sessionId = randomUUID();
-    const created = await this.handleCommand({
-      protocolVersion: ANVIL_PROTOCOL_VERSION,
-      id: randomUUID(),
-      sessionId: null,
-      timestamp: new Date().toISOString(),
-      type: "session.create",
-      payload: { projectId: source.session.projectId, sessionId },
-    });
+    const handoffCreatedAt = new Date().toISOString();
+    const handoffDetails = {
+      kind: "ocode.handoff",
+      schemaVersion: 1,
+      sourceSessionId,
+      targetSessionId: sessionId,
+    } as const;
+    this.pendingSessionCreationEvents.set(sessionId, [
+      domainEvent("timeline.event", {
+        entry: {
+          id: `handoff-outgoing-${sessionId}`,
+          kind: "event",
+          category: "lifecycle",
+          tone: "success",
+          title: "Handoff created",
+          details: { ...handoffDetails, direction: "outgoing" },
+          createdAt: handoffCreatedAt,
+        },
+      }, sourceSessionId),
+      domainEvent("timeline.event", {
+        entry: {
+          id: `handoff-incoming-${sessionId}`,
+          kind: "event",
+          category: "lifecycle",
+          tone: "info",
+          title: "Continued from another thread",
+          details: { ...handoffDetails, direction: "incoming" },
+          createdAt: handoffCreatedAt,
+        },
+      }, sessionId),
+    ]);
+    let created: AnvilCommandResponse;
+    try {
+      created = await this.handleCommand({
+        protocolVersion: ANVIL_PROTOCOL_VERSION,
+        id: randomUUID(),
+        sessionId: null,
+        timestamp: handoffCreatedAt,
+        type: "session.create",
+        payload: { projectId: source.session.projectId, sessionId },
+      });
+    } finally {
+      this.pendingSessionCreationEvents.delete(sessionId);
+    }
     if (!created.success) throw new Error(created.error ?? "Forge could not create the handoff thread");
 
     const fresh = this.database.getSession(sessionId);

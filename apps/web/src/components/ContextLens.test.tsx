@@ -74,6 +74,12 @@ describe("ContextLens", () => {
     expect(renderToStaticMarkup(<ContextLens loading={false} />)).toBe("");
   });
 
+  it("stays hidden while known context usage is zero", () => {
+    expect(renderToStaticMarkup(
+      <ContextLens usage={{ tokens: 0, contextWindow: 200_000, percent: 0 }} />,
+    )).toBe("");
+  });
+
   it("keeps the card footprint stable with a Mira skeleton while loading", () => {
     const missingHtml = renderToStaticMarkup(<ContextLens />);
     const compactingHtml = renderToStaticMarkup(
@@ -102,6 +108,8 @@ describe("ContextLens", () => {
     expect(html).not.toContain('data-slot="popover-trigger"');
     expect(html).not.toContain("Healthy");
     expect(html).not.toContain("Pi estimate");
+    expect(html).not.toContain("context-lens-map");
+    expect(html).toContain("t-panel-slide");
   });
 
   it("does not let an older polled value replace a newer manifest", () => {
@@ -126,16 +134,11 @@ describe("ContextLens", () => {
     expect(html).toContain("Overhead 25k");
   });
 
-  it("presents concise per-cell tooltip details for categories and free space", () => {
-    expect(presentContextCellTooltip("system", true, manifest().usage, manifest().categories)).toEqual({
+  it("presents concise tooltip details for categorized cells", () => {
+    expect(presentContextCellTooltip("system", manifest().usage, manifest().categories)).toEqual({
       label: "System",
       detail: "20k tokens · 10% of context",
-      colorClass: "bg-slate-400 dark:bg-slate-500",
-    });
-    expect(presentContextCellTooltip(undefined, false, manifest().usage, manifest().categories)).toEqual({
-      label: "Available",
-      detail: "120k tokens · 60% free",
-      colorClass: "bg-muted-foreground",
+      colorClass: "bg-neutral-400",
     });
   });
 
@@ -146,11 +149,13 @@ describe("ContextLens", () => {
     expect(html).toContain("Tool output 10k");
     expect(html).not.toContain('aria-label="Context categories"');
     expect(html).not.toContain("<ul");
-    expect(html).toContain("bg-slate-400");
-    expect(html).toContain("bg-blue-500");
-    expect(html).toContain("bg-cyan-500");
-    expect(html).toContain("data-context-cell-index");
+    expect(html).toContain("bg-neutral-400");
+    expect(html).toContain("bg-blue-400");
+    expect(html).toContain("bg-pink-400");
+    expect(html.match(/data-context-cell-index/g)).toHaveLength(50);
+    expect(html.match(/data-context-interactive/g)).toHaveLength(20);
+    expect(html).not.toContain("Available");
     expect(html).not.toContain('data-slot="tooltip"');
-    expect(html).toContain('class="context-lens-cell"');
+    expect(html).toContain('class="context-lens-cell');
   });
 });

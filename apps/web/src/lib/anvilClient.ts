@@ -293,6 +293,21 @@ function addOptimisticPrompt(
   };
 }
 
+const EXPANDED_SKILL_PROMPT = /^<skill name="([^"]+)" location="[^"]+">\r?\n[\s\S]*?\r?\n<\/skill>(?:[\t ]*\r?\n){0,2}([\s\S]*)$/;
+const COMPACT_SKILL_PROMPT = /^\/skill:([^\s]+)(?:[\t\n\r ]+([\s\S]*))?$/;
+
+export function promptConfirmsOptimistic(expectedContent: string, optimisticContent: string): boolean {
+  if (expectedContent.startsWith(optimisticContent)) return true;
+  const expanded = EXPANDED_SKILL_PROMPT.exec(expectedContent);
+  const compact = COMPACT_SKILL_PROMPT.exec(optimisticContent);
+  return Boolean(
+    expanded &&
+    compact &&
+    expanded[1] === compact[1] &&
+    (expanded[2] ?? "").trim() === (compact[2] ?? "").trim(),
+  );
+}
+
 function settleOptimisticPrompt(
   snapshot: AnvilClientSnapshot,
   sessionId: string,
@@ -304,7 +319,7 @@ function settleOptimisticPrompt(
     entry.kind === "message" &&
     entry.status === "streaming" &&
     entry.id.startsWith("optimistic-") &&
-    (expectedContent === undefined || entry.content.some((block) => block.type === "text" && expectedContent.startsWith(block.text))),
+    (expectedContent === undefined || entry.content.some((block) => block.type === "text" && promptConfirmsOptimistic(expectedContent, block.text))),
   );
   if (index < 0) return snapshot;
   const next = [...timeline];

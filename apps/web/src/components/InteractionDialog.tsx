@@ -8,6 +8,7 @@ import type {
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
+  ArrowUp02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
@@ -272,7 +273,7 @@ function InteractionForm({
         <RadioGroup className="gap-0" value={selected[0] ?? ""} onValueChange={(value) => setSelected([value])} aria-label={request.title}>
           {request.options.map((option) => (
             <Label
-              className="grid min-h-9 cursor-pointer grid-cols-[auto_1fr] items-center gap-2.5 border-b border-border/70 px-0 py-1.5 transition-colors last:border-b-0 hover:bg-accent/30 has-data-[state=checked]:bg-accent/40"
+              className="approval-option"
               key={option.id}
               htmlFor={`${request.id}-${option.id}`}
             >
@@ -359,9 +360,17 @@ function InteractionForm({
         }} />
       )}
       {genericError && <FieldError role="alert">{genericError}</FieldError>}
-      <div className="flex justify-end gap-2 border-t border-border/60 pt-3">
-        <Button variant="outline" type="button" onClick={cancel}>Cancel</Button>
-        <Button type="submit" disabled={(request.method === "select" && !selected.length) || !selectionCountValid}>Submit response</Button>
+      <div className="approval-card-actions flex justify-end border-t border-border/60 pt-3">
+        <Button
+          type="submit"
+          size="icon-sm"
+          className="approval-card-submit"
+          disabled={(request.method === "select" && !selected.length) || !selectionCountValid}
+          aria-label="Submit response"
+          title="Submit response"
+        >
+          <HugeiconsIcon icon={ArrowUp02Icon} strokeWidth={2.5} />
+        </Button>
       </div>
     </form>
   );
@@ -378,13 +387,30 @@ export function InteractionPanel({ requests, onRespond }: InteractionPanelProps)
   const messageId = `interaction-message-${request.id}`;
 
   const footer = requests.length > 1 ? (
-    <div className="grid w-full grid-cols-[2rem_1fr_2rem] items-center text-center text-[0.6875rem] text-muted-foreground">
+    <div className="flex w-full items-center justify-center gap-1.5">
       <Button variant="ghost" size="icon-sm" type="button" onClick={() => setIndex((current) => Math.max(0, current - 1))} disabled={index === 0} aria-label="Previous pending request">
-        <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />
+        <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2.2} />
       </Button>
-      <span>{index + 1} of {requests.length} pending in this thread</span>
-      <Button variant="ghost" size="icon-sm" className="justify-self-end" type="button" onClick={() => setIndex((current) => Math.min(requests.length - 1, current + 1))} disabled={index >= requests.length - 1} aria-label="Next pending request">
-        <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />
+      <span className="flex items-center gap-1" aria-label={`${index + 1} of ${requests.length} pending requests`}>
+        {requests.map((pendingRequest, requestIndex) => (
+          <Button
+            key={pendingRequest.id}
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="approval-pager-step"
+            data-current={requestIndex === index || undefined}
+            data-complete={requestIndex < index || undefined}
+            aria-label={`Go to pending request ${requestIndex + 1}`}
+            aria-current={requestIndex === index ? "step" : undefined}
+            onClick={() => setIndex(requestIndex)}
+          >
+            <span />
+          </Button>
+        ))}
+      </span>
+      <Button variant="ghost" size="icon-sm" type="button" onClick={() => setIndex((current) => Math.min(requests.length - 1, current + 1))} disabled={index >= requests.length - 1} aria-label="Next pending request">
+        <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2.2} />
       </Button>
     </div>
   ) : undefined;
@@ -398,6 +424,7 @@ export function InteractionPanel({ requests, onRespond }: InteractionPanelProps)
         titleId={titleId}
         messageId={request.message ? messageId : undefined}
         footer={footer}
+        onDismiss={() => onRespond({ requestId: request.id, cancelled: true })}
       >
         <InteractionForm key={request.id} request={request} onRespond={onRespond} />
       </ApprovalCard>

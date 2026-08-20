@@ -10,7 +10,9 @@ import type {
   ThinkingLevel,
 } from "@anvil/protocol";
 import {
+  Add01Icon,
   AiMagicIcon,
+  ArrowDown01Icon,
   ArrowUp02Icon,
   AtIcon,
   Attachment01Icon,
@@ -18,12 +20,14 @@ import {
   CommandIcon,
   File01Icon,
   StopIcon,
+  Tick02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   type ClipboardEvent,
   type FormEvent,
   type KeyboardEvent,
+  type ReactNode,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -34,6 +38,12 @@ import {
 import { ContextLens } from "@/components/ContextLens";
 import { Button } from "@/components/ui/button";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Command,
   CommandEmpty,
   CommandGroup,
@@ -41,7 +51,6 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -73,6 +82,7 @@ export interface ComposerProps {
   pending?: boolean;
   creationError?: string;
   widgets: ExtensionWidget[];
+  taskRow?: ReactNode;
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
   contextManifest?: ContextManifestV1;
   attachments: ComposerAttachment[];
@@ -269,6 +279,129 @@ function ContextProgress({ usage, manifest }: {
   );
 }
 
+type GlidingMenuEntry = {
+  key: string;
+  label: string;
+  description?: string;
+  meta?: string;
+  icon?: ReactNode;
+  checked?: boolean;
+};
+
+function GlidingMenuItems({
+  entries,
+  onSelect,
+  roomy = false,
+}: {
+  entries: GlidingMenuEntry[];
+  onSelect: (key: string) => void;
+  roomy?: boolean;
+}) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [highlight, setHighlight] = useState<{ top: number; height: number }>();
+  const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  useLayoutEffect(() => {
+    if (activeIndex === null) return;
+    const target = rowRefs.current[activeIndex];
+    if (target) setHighlight({ top: target.offsetTop, height: target.offsetHeight });
+  }, [activeIndex]);
+
+  return (
+    <div className="composer-gliding-menu" onPointerLeave={() => setActiveIndex(null)}>
+      <span
+        aria-hidden="true"
+        className="composer-menu-highlight"
+        data-visible={activeIndex !== null || undefined}
+        style={{ top: highlight?.top ?? 0, height: highlight?.height ?? 0 }}
+      />
+      {entries.map((entry, index) => (
+        <DropdownMenuItem
+          key={entry.key}
+          ref={(element) => { rowRefs.current[index] = element; }}
+          className={`composer-menu-row${roomy ? " composer-menu-row--roomy" : ""}`}
+          onFocus={() => setActiveIndex(index)}
+          onPointerMove={() => setActiveIndex(index)}
+          onSelect={() => onSelect(entry.key)}
+        >
+          {entry.icon && <span className="composer-menu-row-icon">{entry.icon}</span>}
+          <span className="composer-menu-row-copy">
+            <strong>{entry.label}</strong>
+            {entry.description && <small>{entry.description}</small>}
+          </span>
+          {entry.meta && <small className="composer-menu-row-meta">{entry.meta}</small>}
+          <span className={`composer-menu-check${entry.checked ? "" : " invisible"}`} aria-hidden="true">
+            <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} />
+          </span>
+        </DropdownMenuItem>
+      ))}
+    </div>
+  );
+}
+
+function SmoothPicker({
+  label,
+  value,
+  placeholder,
+  entries,
+  disabled = false,
+  loading = false,
+  loadingLabel,
+  className,
+  onChange,
+}: {
+  label: string;
+  value?: string;
+  placeholder: string;
+  entries: GlidingMenuEntry[];
+  disabled?: boolean;
+  loading?: boolean;
+  loadingLabel?: string;
+  className: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = entries.find((entry) => entry.key === value);
+
+  return (
+    <DropdownMenu open={open} onOpenChange={setOpen}>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={disabled}
+          className={`composer-picker ${className}`}
+          aria-label={loading ? loadingLabel ?? `Loading ${label.toLowerCase()}` : label}
+          aria-busy={loading}
+        >
+          {loading ? (
+            <Spinner className="size-3.5" aria-hidden="true" />
+          ) : (
+            <>
+              <span className="composer-picker-label">{selected?.label ?? placeholder}</span>
+              <HugeiconsIcon
+                icon={ArrowDown01Icon}
+                strokeWidth={2.4}
+                className="composer-picker-chevron"
+                data-open={open || undefined}
+              />
+            </>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        side="top"
+        align="start"
+        sideOffset={8}
+        className="composer-picker-menu min-w-44 rounded-[10px]"
+      >
+        <GlidingMenuItems entries={entries} onSelect={onChange} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function Composer({
   sessionId,
   modelId,
@@ -284,6 +417,7 @@ export function Composer({
   pending = false,
   creationError,
   widgets,
+  taskRow,
   contextUsage,
   contextManifest,
   attachments,
@@ -306,7 +440,18 @@ export function Composer({
   const [fileMenuDismissed, setFileMenuDismissed] = useState(false);
   const [fileSearchPending, setFileSearchPending] = useState(false);
   const [fileDropActive, setFileDropActive] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [plusOpen, setPlusOpen] = useState(false);
+  const [composerMenuPosition, setComposerMenuPosition] = useState({
+    width: 0,
+    sideOffset: 8,
+    alignOffset: 0,
+  });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerFormRef = useRef<HTMLFormElement>(null);
+  const composerControlsRef = useRef<HTMLDivElement>(null);
+  const measureRef = useRef<HTMLSpanElement>(null);
+  const plusButtonRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileDragDepthRef = useRef(0);
   const running = status === "running";
@@ -320,6 +465,17 @@ export function Composer({
   const hasPrompt = Boolean(displayPrompt.trim()) || Boolean(selectedSkill) || Boolean(selectedCommand) || readyAttachments.length > 0;
   const visibleModels = useMemo(() => selectAnvilModels(models), [models]);
   const model = visibleModels.find((candidate) => candidate.id === modelId);
+  const modelEntries = visibleModels.map((candidate) => ({
+    key: candidate.id,
+    label: candidate.name,
+    meta: candidate.provider.replace(/^openai-/, ""),
+    checked: candidate.id === modelId,
+  }));
+  const thinkingEntries = (model?.supportedThinkingLevels ?? []).map((level) => ({
+    key: level,
+    label: level,
+    checked: level === thinkingLevel,
+  }));
   const modelsLoading = !modelsReady && status !== "failed";
   const queueCount = queue.steering.length + queue.followUp.length;
   const aboveWidgets = widgets.filter((widget) => widget.placement === "aboveEditor");
@@ -427,12 +583,30 @@ export function Composer({
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, [draft, onDraftConsumed, onPromptChange, prompt, sessionId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = "auto";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
-  }, [displayPrompt]);
+    const controls = composerControlsRef.current;
+    const measure = measureRef.current;
+    if (!textarea || !controls || !measure) return;
+
+    const fixedControlsWidth = [
+      plusButtonRef.current,
+      controls.querySelector<HTMLElement>(".model-select"),
+      controls.querySelector<HTMLElement>(".thinking-level"),
+      controls.querySelector<HTMLElement>(".composer-context-slot"),
+      controls.querySelector<HTMLElement>(".send-button, .stop-button"),
+    ].reduce((width, element) => width + (element?.offsetWidth ?? 0), 0);
+    const invocationWidth = controls.querySelector<HTMLElement>(".composer-invocation")?.offsetWidth ?? 0;
+    const inlineInputWidth = Math.max(0, controls.clientWidth - fixedControlsWidth - (4 * 5));
+    const nextExpanded = displayPrompt.includes("\n")
+      || measure.offsetWidth + invocationWidth + 8 > inlineInputWidth;
+    if (nextExpanded !== expanded) setExpanded(nextExpanded);
+
+    textarea.style.height = "0px";
+    const contentHeight = textarea.scrollHeight;
+    textarea.style.height = `${Math.min(Math.max(contentHeight, 28), 100)}px`;
+    textarea.style.overflowY = contentHeight > 100 ? "auto" : "hidden";
+  }, [displayPrompt, expanded, model?.name, selectedCommand?.name, selectedSkill?.name, thinkingLevel]);
 
   useEffect(() => {
     setSlashIndex(0);
@@ -684,6 +858,36 @@ export function Composer({
     };
   }, []);
 
+  useLayoutEffect(() => {
+    const composer = composerFormRef.current;
+    const trigger = plusButtonRef.current;
+    if (!composer || !trigger) return;
+    const updatePosition = () => {
+      const composerRect = composer.getBoundingClientRect();
+      const triggerRect = trigger.getBoundingClientRect();
+      const taskRowRect = composerWrapRef.current?.querySelector<HTMLElement>(".composer-task-row")?.getBoundingClientRect();
+      const menuClearanceTop = taskRowRect?.top ?? composerRect.top;
+      const nextPosition = {
+        width: Math.round(composerRect.width),
+        sideOffset: Math.round(Math.max(8, triggerRect.top - menuClearanceTop + 8)),
+        alignOffset: Math.round(composerRect.left - triggerRect.left),
+      };
+      setComposerMenuPosition((current) => (
+        current.width === nextPosition.width
+        && current.sideOffset === nextPosition.sideOffset
+        && current.alignOffset === nextPosition.alignOffset
+          ? current
+          : nextPosition
+      ));
+    };
+    updatePosition();
+    const observer = new ResizeObserver(updatePosition);
+    observer.observe(composer);
+    observer.observe(trigger);
+    if (composerWrapRef.current) observer.observe(composerWrapRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div ref={composerWrapRef} className="composer-wrap">
       {aboveWidgets.map((widget) => <Widget key={widget.key} widget={widget} />)}
@@ -695,7 +899,8 @@ export function Composer({
           {" queued"}
         </div>
       )}
-      <form className={`composer${fileDropActive ? " composer--file-drop-active" : ""}`} onSubmit={submit}>
+      {taskRow}
+      <form ref={composerFormRef} className={`composer${expanded ? " composer--expanded" : ""}${fileDropActive ? " composer--file-drop-active" : ""}`} onSubmit={submit}>
         <span className="sr-only" aria-live="polite">
           {fileDropActive ? "Drop files anywhere on this page to attach them." : ""}
         </span>
@@ -711,7 +916,7 @@ export function Composer({
               const index = fileItems.findIndex((item) => item.path === value);
               if (index >= 0) setFileIndex(index);
             }}
-            className="absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-30 h-auto w-auto rounded-lg shadow-md ring-1 ring-foreground/10"
+            className="composer-menu absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-30 h-auto w-auto rounded-[10px] shadow-md ring-1 ring-foreground/10"
             aria-label="Workspace files"
           >
             <CommandList id="file-mention-menu" className="max-h-[min(20rem,55vh)]">
@@ -742,6 +947,7 @@ export function Composer({
                 </CommandGroup>
               )}
             </CommandList>
+            <div className="composer-menu-footer">Type to search workspace files</div>
           </Command>
         )}
         {slashMenuOpen && (
@@ -755,7 +961,7 @@ export function Composer({
                 setSlashIndex(index);
               }
             }}
-            className="absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-30 h-auto w-auto rounded-lg shadow-md ring-1 ring-foreground/10"
+            className="composer-menu absolute inset-x-0 bottom-[calc(100%+0.5rem)] z-30 h-auto w-auto rounded-[10px] shadow-md ring-1 ring-foreground/10"
             aria-label="Commands and skills"
           >
             <CommandList id="slash-command-menu" className="max-h-[min(20rem,55vh)]">
@@ -802,6 +1008,7 @@ export function Composer({
                 </CommandGroup>
               )}
             </CommandList>
+            <div className="composer-menu-footer">Type to search commands and skills</div>
           </Command>
         )}
         {attachments.length > 0 && (
@@ -828,136 +1035,164 @@ export function Composer({
             })}
           </div>
         )}
-        <div className="composer-input-row">
-          {selectedSkill && (
-            <button type="button" className="composer-invocation composer-invocation--skill" onClick={clearInvocation} aria-label={`Remove ${selectedSkill.name} skill`}>
-              {selectedSkill.name}
-            </button>
-          )}
-          {selectedCommand && (
-            <button type="button" className="composer-invocation composer-invocation--command" onClick={clearInvocation} aria-label={`Remove ${selectedCommand.name} command`}>
-              {selectedCommand.name}
-            </button>
-          )}
-          <Textarea
-          ref={textareaRef}
-          rows={1}
-          value={displayPrompt}
+        <span ref={measureRef} className="composer-measure" aria-hidden="true">{displayPrompt}</span>
+        <input
+          ref={fileInputRef}
+          className="sr-only"
+          type="file"
+          multiple
+          tabIndex={-1}
           onChange={(event) => {
-            updateDisplayPrompt(event.target.value);
-            setCursorPosition(event.target.selectionStart);
+            const files = Array.from(event.target.files ?? []);
+            if (files.length) onAttachFiles(sessionId, files);
+            event.target.value = "";
           }}
-          onSelect={(event) => setCursorPosition(event.currentTarget.selectionStart)}
-          onClick={(event) => setCursorPosition(event.currentTarget.selectionStart)}
-          onKeyUp={(event) => setCursorPosition(event.currentTarget.selectionStart)}
-          onPaste={onPaste}
-          onKeyDown={onKeyDown}
-          placeholder={running ? "Steer Pi…" : "Message Pi…"}
-          aria-label="Message Pi"
-          role="combobox"
-          aria-autocomplete="list"
-          aria-expanded={fileMenuOpen || slashMenuOpen}
-          aria-controls={fileMenuOpen ? "file-mention-menu" : slashMenuOpen ? "slash-command-menu" : undefined}
-          aria-activedescendant={fileMenuOpen && fileItems.length ? `file-option-${fileIndex}` : slashMenuOpen && slashItems.length ? `slash-option-${activeSlashIndex}` : undefined}
-          />
-        </div>
-        <div className="composer-toolbar">
-          <div className="composer-tools">
-            <input
-              ref={fileInputRef}
-              className="sr-only"
-              type="file"
-              multiple
-              tabIndex={-1}
-              onChange={(event) => {
-                const files = Array.from(event.target.files ?? []);
-                if (files.length) onAttachFiles(sessionId, files);
-                event.target.value = "";
-              }}
-            />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" variant="ghost" size="icon-sm" className="composer-icon" aria-label="Attach file" onClick={() => fileInputRef.current?.click()}>
-                  <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Attach files from this device</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button type="button" variant="ghost" size="icon-sm" className="composer-icon" aria-label="Tag workspace file" onClick={() => insertToken("@")}>
-                  <HugeiconsIcon icon={AtIcon} strokeWidth={2} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Tag a workspace file</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-sm"
-                  className="composer-icon"
-                  aria-label="Open commands and skills"
-                  onClick={() => insertToken("/")}
-                >
-                  <HugeiconsIcon icon={AiMagicIcon} strokeWidth={2} />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Open commands and skills</TooltipContent>
-            </Tooltip>
-            <span className="toolbar-divider" />
-            <Select value={model?.id} onValueChange={onModelChange} disabled={modelsLoading || visibleModels.length === 0}>
-              <SelectTrigger
-                size="sm"
-                className={`model-select max-w-32${modelsLoading ? " model-select--loading" : ""}`}
-                aria-label={modelsLoading ? "Loading models" : "Model"}
-                aria-busy={modelsLoading}
+        />
+        <div ref={composerControlsRef} className="composer-controls">
+          <DropdownMenu
+            open={plusOpen}
+            onOpenChange={(open) => {
+              setPlusOpen(open);
+              if (open) {
+                setSlashMenuDismissed(true);
+                setFileMenuDismissed(true);
+              }
+            }}
+          >
+            <DropdownMenuTrigger asChild>
+              <Button
+                ref={plusButtonRef}
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="composer-plus"
+                aria-label="Add attachments, files, commands, or skills"
               >
-                {modelsLoading
-                  ? <Spinner className="size-3.5" aria-hidden="true" />
-                  : <SelectValue placeholder={visibleModels.length ? "Choose model" : "No models available"} />}
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectLabel>Model</SelectLabel>
-                  {visibleModels.map((option) => <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>)}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <Select value={thinkingLevel} onValueChange={(value) => onThinkingLevelChange(value as ThinkingLevel)} disabled={modelsLoading || !model?.reasoning}>
-              <SelectTrigger size="sm" className="thinking-level" aria-label="Reasoning level">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent position="popper" side="top" align="start" sideOffset={6}>
-                <SelectGroup>
-                  <SelectLabel>Reasoning</SelectLabel>
-                  {model?.supportedThinkingLevels.map((level) => <SelectItem key={level} value={level}>{level}</SelectItem>)}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+                <HugeiconsIcon icon={Add01Icon} strokeWidth={2} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              side="top"
+              align="start"
+              alignOffset={composerMenuPosition.alignOffset}
+              sideOffset={composerMenuPosition.sideOffset}
+              className="composer-add-menu rounded-[10px]"
+              style={{ width: composerMenuPosition.width || undefined }}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault();
+                textareaRef.current?.focus();
+              }}
+            >
+              <GlidingMenuItems
+                roomy
+                entries={[
+                  {
+                    key: "attach",
+                    label: "Add photos & files",
+                    description: "Upload from this device",
+                    icon: <HugeiconsIcon icon={Attachment01Icon} strokeWidth={2} />,
+                  },
+                  {
+                    key: "files",
+                    label: "Tag workspace file",
+                    description: "Search files in this project",
+                    icon: <HugeiconsIcon icon={AtIcon} strokeWidth={2} />,
+                  },
+                  {
+                    key: "commands",
+                    label: "Commands & skills",
+                    description: "Use Pi and extension actions",
+                    icon: <HugeiconsIcon icon={AiMagicIcon} strokeWidth={2} />,
+                  },
+                ]}
+                onSelect={(key) => {
+                  if (key === "attach") fileInputRef.current?.click();
+                  if (key === "files") insertToken("@");
+                  if (key === "commands") insertToken("/");
+                }}
+              />
+              <div className="composer-menu-footer">Add context to your message</div>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <div className="composer-input-row">
+            {selectedSkill && (
+              <button type="button" className="composer-invocation composer-invocation--skill" onClick={clearInvocation} aria-label={`Remove ${selectedSkill.name} skill`}>
+                {selectedSkill.name}
+              </button>
+            )}
+            {selectedCommand && (
+              <button type="button" className="composer-invocation composer-invocation--command" onClick={clearInvocation} aria-label={`Remove ${selectedCommand.name} command`}>
+                {selectedCommand.name}
+              </button>
+            )}
+            <Textarea
+              ref={textareaRef}
+              rows={1}
+              value={displayPrompt}
+              onChange={(event) => {
+                updateDisplayPrompt(event.target.value);
+                setCursorPosition(event.target.selectionStart);
+              }}
+              onSelect={(event) => setCursorPosition(event.currentTarget.selectionStart)}
+              onClick={(event) => setCursorPosition(event.currentTarget.selectionStart)}
+              onKeyUp={(event) => setCursorPosition(event.currentTarget.selectionStart)}
+              onPaste={onPaste}
+              onKeyDown={onKeyDown}
+              placeholder={running ? "Steer Pi…" : "Message Pi…"}
+              aria-label="Message Pi"
+              role="combobox"
+              aria-autocomplete="list"
+              aria-expanded={fileMenuOpen || slashMenuOpen}
+              aria-controls={fileMenuOpen ? "file-mention-menu" : slashMenuOpen ? "slash-command-menu" : undefined}
+              aria-activedescendant={fileMenuOpen && fileItems.length ? `file-option-${fileIndex}` : slashMenuOpen && slashItems.length ? `slash-option-${activeSlashIndex}` : undefined}
+            />
           </div>
-          <div className="composer-actions">
+
+          <SmoothPicker
+            label="Model"
+            value={model?.id}
+            placeholder={visibleModels.length ? "Choose model" : "No models available"}
+            entries={modelEntries}
+            disabled={modelsLoading || visibleModels.length === 0}
+            loading={modelsLoading}
+            loadingLabel="Loading models"
+            className={`model-select${modelsLoading ? " model-select--loading" : ""}`}
+            onChange={onModelChange}
+          />
+
+          <SmoothPicker
+            label="Reasoning level"
+            value={thinkingLevel}
+            placeholder="Reasoning"
+            entries={thinkingEntries}
+            disabled={modelsLoading || !model?.reasoning}
+            className="thinking-level"
+            onChange={(value) => onThinkingLevelChange(value as ThinkingLevel)}
+          />
+
+          <div className="composer-context-slot">
             {(contextUsage ?? contextManifest?.usage) && (
               <ContextProgress usage={contextUsage ?? contextManifest!.usage} manifest={contextManifest} />
             )}
-            {running && !hasPrompt ? (
-              <Button type="button" variant="secondary" size="icon-sm" className="stop-button" onClick={onCancel} aria-label="Stop run" title="Stop run">
-                <HugeiconsIcon icon={StopIcon} strokeWidth={2} />
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                size="icon-sm"
-                className="send-button"
-                disabled={!hasPrompt || uploadsPending || Boolean(creationError)}
-                aria-label={pending ? "Queue message while thread starts" : running ? "Send steering message" : "Send message"}
-                title={creationError ? "Thread creation failed" : pending ? "Queue while starting" : running ? "Steer Pi" : undefined}
-              >
-                <HugeiconsIcon icon={ArrowUp02Icon} strokeWidth={2} />
-              </Button>
-            )}
           </div>
+
+          {running && !hasPrompt ? (
+            <Button type="button" variant="secondary" size="icon" className="stop-button" onClick={onCancel} aria-label="Stop run" title="Stop run">
+              <HugeiconsIcon icon={StopIcon} strokeWidth={2} />
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="icon"
+              className="send-button"
+              disabled={!hasPrompt || uploadsPending || Boolean(creationError)}
+              aria-label={pending ? "Queue message while thread starts" : running ? "Send steering message" : "Send message"}
+              title={creationError ? "Thread creation failed" : pending ? "Queue while starting" : running ? "Steer Pi" : undefined}
+            >
+              <HugeiconsIcon icon={ArrowUp02Icon} strokeWidth={2} />
+            </Button>
+          )}
         </div>
       </form>
       {belowWidgets.map((widget) => <Widget key={widget.key} widget={widget} />)}

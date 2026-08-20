@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ArtifactStore } from "../artifacts/artifactStore.ts";
 import { DesktopUpdateStore, publishDesktopRelease } from "../desktop/desktopUpdateStore.ts";
 import { ForgeEventService } from "../events/eventService.ts";
+import { PiCatalogService } from "../pi/piCatalogService.ts";
 import {
   GITHUB_REPOSITORY_MAX_PAGE,
   GitHubRepositoryCatalogError,
@@ -539,6 +540,39 @@ describe("ForgeHttpServer", () => {
     expect(text).toContain("id: 1");
     expect(text).toContain("event: anvil");
     controller.abort();
+  });
+
+  it("serves read-only extension source and same-origin skill mutations", async () => {
+    const piRoot = mkdtempSync(join(tmpdir(), "ocode-http-pi-resources-"));
+    mkdirSync(join(piRoot, "extensions"), { recursive: true });
+    writeFileSync(join(piRoot, "extensions", "read-only.ts"), "export default () => {};\n");
+    await server.close();
+    server = new ForgeHttpServer({ events, ownerLogin: "owner@example.com", piCatalog: new PiCatalogService({ agentRoot: piRoot }) });
+    await server.listen("127.0.0.1", 0);
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected a TCP test address");
+    baseUrl = `http://127.0.0.1:${address.port}`;
+    try {
+      const rejectedOwner = await fetch(`${baseUrl}/api/v1/pi/skills`, { method: "POST", headers: { origin: baseUrl, "content-type": "application/json" }, body: JSON.stringify({ name: "test-skill" }) });
+      expect(rejectedOwner.status).toBe(403);
+
+      const rejectedOrigin = await fetch(`${baseUrl}/api/v1/pi/skills`, { method: "POST", headers: { "tailscale-user-login": "owner@example.com", origin: "https://attacker.example", "content-type": "application/json" }, body: JSON.stringify({ name: "test-skill" }) });
+      expect(rejectedOrigin.status).toBe(403);
+
+      const extensionSource = await fetch(`${baseUrl}/api/v1/pi/resources/content?kind=extension&id=read-only.ts`, { headers: { "tailscale-user-login": "owner@example.com" } });
+      expect(extensionSource.status).toBe(200);
+      expect(await extensionSource.json()).toMatchObject({ item: { kind: "extension", id: "read-only.ts" }, text: "export default () => {};\n" });
+
+      const rejectedGenericMutation = await fetch(`${baseUrl}/api/v1/pi/resources`, { method: "POST", headers: { "tailscale-user-login": "owner@example.com", origin: baseUrl, "content-type": "application/json" }, body: JSON.stringify({ kind: "extension", name: "test-extension" }) });
+      expect(rejectedGenericMutation.status).toBe(405);
+      expect(await rejectedGenericMutation.json()).toMatchObject({ code: "method_not_allowed" });
+
+      const created = await fetch(`${baseUrl}/api/v1/pi/skills`, { method: "POST", headers: { "tailscale-user-login": "owner@example.com", origin: baseUrl, "content-type": "application/json" }, body: JSON.stringify({ name: "test-skill" }) });
+      expect(created.status).toBe(201);
+      expect(await created.json()).toMatchObject({ item: { id: "test-skill/SKILL.md", name: "test-skill" } });
+    } finally {
+      rmSync(piRoot, { recursive: true, force: true });
+    }
   });
 
   it("enforces the configured Tailscale owner identity", async () => {

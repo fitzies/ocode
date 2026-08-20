@@ -1,6 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { FixtureAnvilClient } from "./anvilClient";
+import { FixtureAnvilClient, promptConfirmsOptimistic } from "./anvilClient";
+
+it("matches Pi's expanded skill message to its optimistic command", () => {
+  const expanded = `<skill name="wait-what" location="/skills/wait-what/SKILL.md">
+References are relative to /skills/wait-what.
+
+Internal instructions
+</skill>
+
+Explain the current plan`;
+
+  expect(promptConfirmsOptimistic(expanded, "/skill:wait-what Explain the current plan")).toBe(true);
+  expect(promptConfirmsOptimistic(expanded, "/skill:other Explain the current plan")).toBe(false);
+  expect(promptConfirmsOptimistic(expanded, "/skill:wait-what Different instructions")).toBe(false);
+});
 
 describe("FixtureAnvilClient", () => {
   beforeEach(() => vi.useFakeTimers());

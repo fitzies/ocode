@@ -4,7 +4,6 @@ import {
   type ArtifactReference,
   type CapabilityCatalog,
   type ContextManifestV1,
-  type ExtensionStatus,
   type ProjectResourceContentBlock,
   type SessionSummary,
   type TimelineEntry,
@@ -60,6 +59,7 @@ import { PiCatalogPage } from "./PiCatalogPage";
 import { ProjectGitAction } from "./ProjectGitAction";
 import { RecentlySettledDialog } from "./RecentlySettledDialog";
 import { Sidebar } from "./Sidebar";
+import { SubagentTaskRow } from "./SubagentTaskRow";
 import {
   type DisplayPreferences,
   type InterfaceFont,
@@ -121,7 +121,7 @@ type LiveIndicators = {
   };
 };
 
-function TimelineWithResources({ session, projectName, entries, loading, onSuggestion, onRequestProjectChange, sessions, onSelectSession, extensionStatuses }: {
+function TimelineWithResources({ session, projectName, entries, loading, onSuggestion, onRequestProjectChange, sessions, onSelectSession }: {
   session: SessionSummary;
   projectName: string;
   entries: TimelineEntry[];
@@ -130,7 +130,6 @@ function TimelineWithResources({ session, projectName, entries, loading, onSugge
   onRequestProjectChange: () => void;
   sessions: SessionSummary[];
   onSelectSession: (sessionId: string) => void;
-  extensionStatuses: ExtensionStatus[];
 }) {
   const { openProjectResource } = useWorkspaceSurfaces();
   return (
@@ -143,7 +142,6 @@ function TimelineWithResources({ session, projectName, entries, loading, onSugge
       onRequestProjectChange={onRequestProjectChange}
       sessions={sessions}
       onSelectSession={onSelectSession}
-      workingMessage={extensionStatuses.find((status) => status.key === "working-message")?.text}
       onOpenProjectResource={(block: ProjectResourceContentBlock) => {
         openProjectResource(resolveProjectResourceReference(block, session), "timeline");
       }}
@@ -221,6 +219,11 @@ function FileSurfaceToggle({ isMobile }: { isMobile: boolean }) {
       <TooltipContent side="bottom">{filesActive ? "Hide files" : "Files"}</TooltipContent>
     </Tooltip>
   );
+}
+
+function ComposerSubagentTaskRow({ count }: { count: number }) {
+  const { openSidePage } = useWorkspaceSurfaces();
+  return <SubagentTaskRow count={count} onOpen={() => openSidePage("agents")} />;
 }
 
 function SubagentSurfaceAutoOpen({
@@ -338,7 +341,7 @@ function AppShellContent() {
   const { theme, setTheme, accent, setAccent } = useTheme();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const activePage = pathname === "/settings" ? "settings" : pathname === "/usage" ? "usage" : pathname === "/pi" ? "pi" : "workspace";
+  const activePage = pathname === "/settings" ? "settings" : pathname === "/usage" ? "usage" : pathname.startsWith("/pi") ? "pi" : "workspace";
   const [composerDrafts, setComposerDrafts] = useState<Record<string, string>>({});
   const [composerAttachments, setComposerAttachments] = useState<Record<string, ComposerAttachment[]>>({});
   const [newProjectOpen, setNewProjectOpen] = useState(false);
@@ -390,7 +393,9 @@ function AppShellContent() {
     ? snapshot.pendingInteractions.filter((request) => request.sessionId === activeSession.id)
     : [];
   const statuses = activeSession
-    ? snapshot.extensionStatuses.filter((status) => status.sessionId === activeSession.id)
+    ? snapshot.extensionStatuses.filter((status) => (
+        status.sessionId === activeSession.id && status.key !== "working-message"
+      ))
     : [];
   const sessionWidgets = activeSession
     ? snapshot.widgets.filter((widget) => widget.sessionId === activeSession.id)
@@ -983,7 +988,6 @@ function AppShellContent() {
               onRequestProjectChange={() => setProjectChooserMode("change")}
               sessions={snapshot.sessions}
               onSelectSession={selectSession}
-              extensionStatuses={statuses}
             />
 
             <InteractionPanel requests={pendingInteractions} onRespond={anvilClient.respondToInteraction} />
@@ -1008,6 +1012,7 @@ function AppShellContent() {
               pending={activeSessionPending}
               creationError={activeSessionCreationError}
               widgets={composerWidgets}
+              taskRow={subagents.active > 0 ? <ComposerSubagentTaskRow count={subagents.active} /> : undefined}
               contextUsage={contextIndicatorsBySession.get(activeSession.id)}
               contextManifest={contextManifest}
               attachments={composerAttachments[activeSession.id] ?? []}

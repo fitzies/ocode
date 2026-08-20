@@ -5,6 +5,8 @@ import {
   type InteractionResponse,
   type JsonValue,
 } from "@anvil/protocol";
+import { ArrowUp02Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { type FormEvent, useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -64,7 +66,6 @@ export function AskUserQuestion({
   const blankOther = otherSelected && text.trim().length === 0;
   const otherLabel = request.presentation.otherLabel ?? "Other";
 
-  const cancel = () => onRespond({ requestId: request.id, cancelled: true });
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const value = buildAskUserQuestionResponseValue(mode, selectedOptionIndexes, otherSelected, text);
@@ -105,30 +106,23 @@ export function AskUserQuestion({
             }}
           >
             {options.map((option, index) => (
-              <Label
-                className="grid min-h-9 cursor-pointer grid-cols-[auto_1fr] items-center gap-2.5 border-b border-border/70 px-0 py-1.5 transition-colors hover:bg-accent/30 has-data-[state=checked]:bg-accent/40"
-                key={option.id}
-                htmlFor={`ask-${request.id}-${option.id}`}
-              >
-                <RadioGroupItem className="size-3.5" id={`ask-${request.id}-${option.id}`} value={`option-${index}`} />
-                <strong className="text-[13px] font-normal leading-relaxed">{option.label}</strong>
+              <Label className="approval-option" key={option.id} htmlFor={`ask-${request.id}-${option.id}`}>
+                <RadioGroupItem id={`ask-${request.id}-${option.id}`} value={`option-${index}`} />
+                <strong>{option.label}</strong>
               </Label>
             ))}
-            <Label
-              className="grid min-h-9 cursor-pointer grid-cols-[auto_1fr] items-center gap-2.5 px-0 py-1.5 transition-colors hover:bg-accent/30 has-data-[state=checked]:bg-accent/40"
-              htmlFor={`ask-${request.id}-other`}
-            >
-              <RadioGroupItem className="size-3.5" id={`ask-${request.id}-other`} value="other" />
-              <strong className="text-[13px] font-normal leading-relaxed">{otherLabel}</strong>
+            <Label className="approval-option" htmlFor={`ask-${request.id}-other`}>
+              <RadioGroupItem id={`ask-${request.id}-other`} value="other" />
+              <strong>{otherLabel}</strong>
             </Label>
           </RadioGroup>
           {otherSelected && (
-            <Field>
-              <FieldLabel htmlFor={`ask-other-${request.id}`}>Custom answer</FieldLabel>
+            <Field className="mt-1.5">
+              <FieldLabel className="sr-only" htmlFor={`ask-other-${request.id}`}>Custom answer</FieldLabel>
               <Input
                 id={`ask-other-${request.id}`}
                 autoFocus
-                placeholder="Type another answer…"
+                placeholder="Type something…"
                 value={text}
                 aria-invalid={blankOther || undefined}
                 onChange={(event) => setText(event.target.value)}
@@ -141,16 +135,12 @@ export function AskUserQuestion({
 
       {mode === "multi-select" && (
         <FieldSet className="gap-0">
-          <FieldLegend>Choose one or more answers</FieldLegend>
+          <FieldLegend className="sr-only">Choose one or more answers</FieldLegend>
           <div className="grid gap-0">
             {options.map((option, index) => {
               const checked = selectedOptionIndexes.includes(index);
               return (
-                <Label
-                  className="grid min-h-9 cursor-pointer grid-cols-[auto_1fr] items-center gap-2.5 border-b border-border/70 px-0 py-1.5 transition-colors hover:bg-accent/30 has-data-checked:bg-accent/40"
-                  key={option.id}
-                  htmlFor={`ask-${request.id}-${option.id}`}
-                >
+                <Label className="approval-option" key={option.id} htmlFor={`ask-${request.id}-${option.id}`}>
                   <Checkbox
                     id={`ask-${request.id}-${option.id}`}
                     checked={checked}
@@ -158,28 +148,25 @@ export function AskUserQuestion({
                       ? [...current, index]
                       : current.filter((value) => value !== index))}
                   />
-                  <strong className="text-[13px] font-normal leading-relaxed">{option.label}</strong>
+                  <strong>{option.label}</strong>
                 </Label>
               );
             })}
-            <Label
-              className="grid min-h-9 cursor-pointer grid-cols-[auto_1fr] items-center gap-2.5 px-0 py-1.5 transition-colors hover:bg-accent/30 has-data-checked:bg-accent/40"
-              htmlFor={`ask-${request.id}-other`}
-            >
+            <Label className="approval-option" htmlFor={`ask-${request.id}-other`}>
               <Checkbox
                 id={`ask-${request.id}-other`}
                 checked={otherSelected}
                 onCheckedChange={(checked) => setOtherSelected(checked === true)}
               />
-              <strong className="text-[13px] font-normal leading-relaxed">{otherLabel}</strong>
+              <strong>{otherLabel}</strong>
             </Label>
           </div>
           {otherSelected && (
-            <Field>
-              <FieldLabel htmlFor={`ask-other-${request.id}`}>Custom answer</FieldLabel>
+            <Field className="mt-1.5">
+              <FieldLabel className="sr-only" htmlFor={`ask-other-${request.id}`}>Custom answer</FieldLabel>
               <Input
                 id={`ask-other-${request.id}`}
-                placeholder="Type another answer…"
+                placeholder="Type something…"
                 value={text}
                 aria-invalid={blankOther || undefined}
                 onChange={(event) => setText(event.target.value)}
@@ -190,9 +177,17 @@ export function AskUserQuestion({
         </FieldSet>
       )}
 
-      <div className="mt-2 flex justify-end gap-2 pt-2">
-        <Button variant="outline" type="button" onClick={cancel}>Cancel</Button>
-        <Button type="submit" disabled={!valid}>Submit</Button>
+      <div className="approval-card-actions mt-2 flex justify-end pt-2">
+        <Button
+          type="submit"
+          size="icon-sm"
+          className="approval-card-submit"
+          disabled={!valid}
+          aria-label="Submit answer"
+          title="Submit answer"
+        >
+          <HugeiconsIcon icon={ArrowUp02Icon} strokeWidth={2.5} />
+        </Button>
       </div>
     </form>
   );

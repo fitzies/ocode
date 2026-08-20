@@ -33,6 +33,7 @@ import type { SubagentInternalApi } from "../subagents/internalApi.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
 import { UsageService } from "../usage/usageService.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
+import { PiCatalogRoutes } from "./piCatalogRoutes.ts";
 import { ProjectFileRoutes } from "./projectFileRoutes.ts";
 import { ProjectGitRoutes } from "./projectGitRoutes.ts";
 import { authorizedOwner, sameOrigin } from "./security.ts";
@@ -114,6 +115,7 @@ export class ForgeHttpServer {
   private readonly instanceId: string;
   private readonly projectFileRoutes?: ProjectFileRoutes;
   private readonly projectGitRoutes?: ProjectGitRoutes;
+  private readonly piCatalogRoutes?: PiCatalogRoutes;
   private readonly terminalChannel?: TerminalWebSocketChannel;
 
   constructor(private readonly options: ForgeHttpServerOptions) {
@@ -128,6 +130,7 @@ export class ForgeHttpServer {
       });
     });
     if (options.projectFiles) this.projectFileRoutes = new ProjectFileRoutes(options.projectFiles);
+    if (options.piCatalog) this.piCatalogRoutes = new PiCatalogRoutes(options.piCatalog);
     if (options.projectGit) {
       this.projectGitRoutes = new ProjectGitRoutes(options.projectGit, (projectId, sessionId) => {
         const session = options.events.sessionSummary(sessionId);
@@ -233,6 +236,7 @@ export class ForgeHttpServer {
       await this.updateProjectsRoot(request, response);
       return;
     }
+    if (this.piCatalogRoutes && await this.piCatalogRoutes.handle(request, response, url)) return;
     if (this.projectFileRoutes && await this.projectFileRoutes.handle(request, response, url)) return;
     if (this.projectGitRoutes && await this.projectGitRoutes.handle(request, response, url)) return;
     if (request.method === "POST" && url.pathname === "/api/v1/admin/rebuild") {

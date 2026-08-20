@@ -57,7 +57,6 @@ interface TimelineProps {
   onOpenProjectResource?: (block: ProjectResourceContentBlock) => void;
   sessions?: SessionSummary[];
   onSelectSession?: (sessionId: string) => void;
-  workingMessage?: string;
 }
 
 function hasVisibleContent(blocks: ContentBlock[]): boolean {
@@ -95,12 +94,13 @@ function contentPreview(blocks: ContentBlock[]): string {
 
 const EMPTY_FILE_ATTACHMENT_MARKER = /^<file name="[^"\r\n]*"><\/file>\r?$/gm;
 const SKILL_INVOCATION_PREFIX = /^\/skill:([^\s]+)(?:[\t\n\r ]+|$)/;
+const EXPANDED_SKILL_INVOCATION = /^<skill name="([^"]+)" location="[^"]+">\r?\n[\s\S]*?\r?\n<\/skill>(?:[\t ]*\r?\n){0,2}([\s\S]*)$/;
 const COMMAND_INVOCATION_PREFIX = /^\/([^\s:]+)[\t\n\r ]+/;
 
 function userSkillName(blocks: ContentBlock[]): string | undefined {
   for (const block of blocks) {
     if (block.type !== "text") continue;
-    return SKILL_INVOCATION_PREFIX.exec(block.text)?.[1];
+    return SKILL_INVOCATION_PREFIX.exec(block.text)?.[1] ?? EXPANDED_SKILL_INVOCATION.exec(block.text)?.[1];
   }
   return undefined;
 }
@@ -122,7 +122,8 @@ function userVisibleContent(blocks: ContentBlock[]): ContentBlock[] {
 
     let text = block.text;
     if (!checkedSkillPrefix) {
-      text = text.replace(SKILL_INVOCATION_PREFIX, "");
+      const expandedSkill = EXPANDED_SKILL_INVOCATION.exec(text);
+      text = expandedSkill ? expandedSkill[2] ?? "" : text.replace(SKILL_INVOCATION_PREFIX, "");
       checkedSkillPrefix = true;
     }
     if (hasImage) text = text.replace(EMPTY_FILE_ATTACHMENT_MARKER, "");
@@ -833,7 +834,7 @@ function TimelineRowView({ row, entering = false, onOpenProjectResource, session
   );
 }
 
-export const Timeline = memo(function Timeline({ session, projectName = "this project", entries, loading = false, onRequestProjectChange = () => undefined, onOpenProjectResource = () => undefined, sessions = [], onSelectSession, workingMessage }: TimelineProps) {
+export const Timeline = memo(function Timeline({ session, projectName = "this project", entries, loading = false, onRequestProjectChange = () => undefined, onOpenProjectResource = () => undefined, sessions = [], onSelectSession }: TimelineProps) {
   const hasEntries = entries.length > 0;
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -889,17 +890,7 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
     instance.scrollDirection !== "backward" &&
     item.start < (instance.scrollOffset ?? 0)
   );
-  const activeTool = entries.some((entry) => entry.kind === "tool" && (entry.status === "running" || entry.status === "queued"));
-  const activeRetry = rows.some((row) => row.kind === "retry" && !row.retry.end);
-  const activeCompaction = rows.some((row) => row.kind === "compaction" && compactionStatus(row.events) === "running");
-  const streamingResponse = entries.some((entry) => (
-    entry.kind === "message" &&
-    entry.role === "assistant" &&
-    entry.status === "streaming" &&
-    hasVisibleContent(entry.content)
-  ));
   const lastUserMessage = [...entries].reverse().find(isHumanUserMessage);
-  const showWorkingStatus = session.status === "running" && !activeTool && !activeRetry && !activeCompaction && !streamingResponse;
 
   const previousUserMessageId = useRef(lastUserMessage?.id);
   useLayoutEffect(() => {
@@ -964,7 +955,6 @@ export const Timeline = memo(function Timeline({ session, projectName = "this pr
               </div>
             ) : rows.map((row) => <TimelineRowView key={row.key} row={row} entering={enteringRowKeys.has(row.key)} onOpenProjectResource={onOpenProjectResource} sessions={sessions} onSelectSession={onSelectSession} />)}
           </div>
-          {showWorkingStatus && <AgentLoadingState label={workingMessage ? `Agent working: ${workingMessage}` : "Agent working"} text={workingMessage} className="working-status" />}
           <div className="timeline-follow-space" aria-hidden="true" />
           <div className="timeline-bottom-anchor" aria-hidden="true" />
         </div>

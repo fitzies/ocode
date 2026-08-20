@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ocode sidebar agents concept</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #111211;
+    --sidebar: #151615;
+    --surface: #191a19;
+    --surface-raised: #1d1e1d;
+    --muted: #222422;
+    --line: rgba(255,255,255,.075);
+    --line-strong: rgba(255,255,255,.12);
+    --text: #f0f1ee;
+    --text-2: #a3a7a1;
+    --text-3: #70746f;
+    --blue: #81a7ff;
+    --green: #70c594;
+    --amber: #dbad62;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: transparent; }
+  body {
+    padding: clamp(8px, 2vw, 22px);
+    color: var(--text);
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  button { color: inherit; font: inherit; }
+  .frame {
+    width: min(1120px, 100%);
+    height: min(760px, calc(100vh - 44px));
+    min-height: 570px;
+    margin: auto;
+    display: grid;
+    grid-template-columns: 284px minmax(0, 1fr);
+    overflow: hidden;
+    background: var(--bg);
+    border: 1px solid rgba(255,255,255,.11);
+    border-radius: 15px;
+    box-shadow: 0 28px 80px rgba(0,0,0,.36);
+  }
+  .sidebar {
+    position: relative;
+    min-width: 0;
+    overflow: hidden;
+    background: var(--sidebar);
+    border-right: 1px solid var(--line);
+  }
+  .side-head {
+    height: 98px;
+    padding: 12px;
+    border-bottom: 1px solid var(--line);
+  }
+  .topline { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; }
+  .brand { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 650; letter-spacing: -.01em; }
+  .brand-mark { width: 15px; height: 15px; border: 1px solid var(--line-strong); border-radius: 5px; display: grid; place-items: center; color: var(--text-2); font-size: 10px; }
+  .ghost-icon { width: 27px; height: 27px; border: 0; border-radius: 7px; display: grid; place-items: center; background: transparent; color: var(--text-3); }
+  .controls { display: grid; grid-template-columns: 1fr 28px; gap: 6px; }
+  .control { height: 29px; display: flex; align-items: center; gap: 7px; padding: 0 9px; color: var(--text-2); background: rgba(255,255,255,.025); border: 1px solid var(--line); border-radius: 7px; font-size: 10.5px; }
+  .new { justify-content: center; padding: 0; font-size: 17px; line-height: 1; }
+  .threads {
+    position: absolute;
+    inset: 98px 0 51px;
+    padding: 10px 8px 180px;
+    overflow: hidden;
+  }
+  .section-label { display: flex; justify-content: space-between; padding: 6px 7px 8px; color: var(--text-3); font-size: 9px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; }
+  .thread { display: grid; grid-template-columns: 24px minmax(0,1fr); align-items: center; min-height: 55px; padding: 7px 8px; gap: 7px; border-radius: 8px; }
+  .thread.active { background: rgba(255,255,255,.045); box-shadow: inset 0 0 0 1px rgba(255,255,255,.025); }
+  .favicon { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 6px; color: #b9c7ff; background: #272c42; font-size: 9px; font-weight: 700; }
+  .thread-copy { min-width: 0; }
+  .thread-title { display: flex; align-items: center; gap: 6px; min-width: 0; color: #d9dbd7; font-size: 11px; }
+  .thread-title span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thread-meta { display: flex; justify-content: space-between; margin-top: 5px; color: var(--text-3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 8px; }
+  .spinner { width: 9px; height: 9px; flex: none; border: 1.5px solid rgba(255,255,255,.14); border-top-color: var(--blue); border-radius: 50%; animation: spin 1.1s linear infinite; }
+  .settled { margin-top: 14px; padding-top: 8px; border-top: 1px solid var(--line); opacity: .58; }
+  .settled-row { height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 9px; color: var(--text-2); font-size: 10.5px; }
+  .settled-row i { width: 6px; height: 6px; border: 1px solid var(--text-3); border-radius: 2px; }
+  .settled-row time { margin-left: auto; color: var(--text-3); font: 8px ui-monospace, monospace; }
+  .settled-fade { position: absolute; z-index: 2; right: 0; bottom: 50px; left: 0; height: 204px; background: linear-gradient(to bottom, transparent, var(--sidebar) 29%); pointer-events: none; }
+  .agent-dock {
+    position: absolute;
+    z-index: 3;
+    right: 8px;
+    bottom: 58px;
+    left: 8px;
+    height: clamp(172px, 25%, 206px);
+    overflow: hidden;
+    background: color-mix(in srgb, var(--surface-raised) 96%, transparent);
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    box-shadow: 0 16px 34px rgba(0,0,0,.3), inset 0 1px rgba(255,255,255,.025);
+    animation: dock-in 380ms cubic-bezier(.22,1,.36,1) both;
+  }
+  .agent-head { height: 39px; display: flex; align-items: center; padding: 0 9px 0 11px; gap: 7px; border-bottom: 1px solid var(--line); }
+  .agent-head strong { font-size: 11px; font-weight: 620; }
+  .agent-total { color: var(--text-3); font: 8.5px ui-monospace, monospace; }
+  .agent-head .collapse { margin-left: auto; width: 25px; height: 25px; border: 0; border-radius: 6px; color: var(--text-3); background: transparent; }
+  .agent-list { padding: 5px; }
+  .agent-row { width: 100%; min-height: 52px; display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 7px; text-align: left; background: transparent; border: 0; border-radius: 7px; }
+  .agent-row.selected { background: rgba(255,255,255,.045); }
+  .agent-state { position: relative; width: 18px; height: 18px; display: grid; place-items: center; }
+  .agent-state::before { width: 7px; height: 7px; content: ""; border-radius: 50%; background: var(--blue); box-shadow: 0 0 0 4px rgba(129,167,255,.08); }
+  .agent-state.attention::before { background: var(--amber); box-shadow: 0 0 0 4px rgba(219,173,98,.08); }
+  .agent-state.running::after { position: absolute; inset: 1px; content: ""; border: 1px solid transparent; border-top-color: rgba(129,167,255,.72); border-radius: 50%; animation: spin 1.15s linear infinite; }
+  .agent-copy { min-width: 0; }
+  .agent-identity { display: flex; align-items: baseline; gap: 6px; }
+  .agent-name { font-size: 10.5px; font-weight: 590; }
+  .agent-status { color: var(--blue); font-size: 9px; }
+  .agent-status.attention { color: var(--amber); }
+  .agent-task { display: block; margin-top: 4px; overflow: hidden; color: var(--text-2); font-size: 9.5px; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-time { color: var(--text-3); font: 8px ui-monospace, monospace; }
+  .side-foot { position: absolute; z-index: 5; right: 0; bottom: 0; left: 0; height: 51px; display: flex; align-items: center; padding: 8px 11px; gap: 3px; background: var(--sidebar); border-top: 1px solid var(--line); }
+  .foot-button { width: 31px; height: 31px; display: grid; place-items: center; color: var(--text-2); background: transparent; border: 0; border-radius: 7px; }
+  .usage { margin-left: auto; width: 24px; height: 24px; border: 2px solid rgba(255,255,255,.1); border-top-color: var(--text-2); border-radius: 50%; display: grid; place-items: center; color: var(--text-2); font: 7px ui-monospace, monospace; }
+  .main { position: relative; min-width: 0; background: radial-gradient(circle at 50% 0, rgba(255,255,255,.025), transparent 36%), var(--bg); }
+  .main-head { height: 58px; display: flex; align-items: center; padding: 0 19px; border-bottom: 1px solid var(--line); }
+  .main-head strong { font-size: 12px; font-weight: 610; }
+  .repo { color: var(--text-2); }
+  .main-actions { margin-left: auto; display: flex; gap: 7px; }
+  .action { height: 29px; padding: 0 10px; color: var(--text-2); background: rgba(255,255,255,.02); border: 1px solid var(--line); border-radius: 7px; font-size: 10px; }
+  .chat { position: absolute; inset: 58px 0 0; padding: 38px clamp(28px, 7vw, 80px) 180px; overflow: hidden; }
+  .message { max-width: 690px; margin: 0 auto; }
+  .you { width: fit-content; max-width: 77%; margin: 0 0 27px auto; padding: 9px 12px; color: #dfe2dd; background: var(--muted); border: 1px solid var(--line); border-radius: 10px; font-size: 11px; line-height: 1.5; }
+  .answer { color: #c9ccc7; font-size: 11.5px; line-height: 1.75; }
+  .answer h2 { margin: 0 0 10px; color: var(--text); font-size: 13px; }
+  .tool { margin: 13px 0; padding: 9px 10px; display: flex; align-items: center; gap: 8px; color: var(--text-2); background: rgba(255,255,255,.025); border: 1px solid var(--line); border-radius: 8px; font: 9px ui-monospace, monospace; }
+  .tool .ok { color: var(--green); }
+  .composer-shell { position: absolute; right: clamp(22px, 6vw, 70px); bottom: 18px; left: clamp(22px, 6vw, 70px); max-width: 760px; margin: auto; }
+  .composer {
+    min-height: 132px;
+    padding: 15px 15px 12px;
+    background: rgba(30,31,30,.97);
+    border: 1px solid rgba(255,255,255,.11);
+    border-radius: 21px;
+    box-shadow: 0 20px 42px rgba(0,0,0,.3), inset 0 1px rgba(255,255,255,.02);
+  }
+  .placeholder { min-height: 67px; color: #6f736e; font-size: 12px; line-height: 1.6; }
+  .composer-foot { display: flex; align-items: center; gap: 5px; }
+  .model, .mode { height: 28px; display: flex; align-items: center; padding: 0 9px; gap: 6px; color: var(--text-2); background: transparent; border: 0; border-radius: 8px; font-size: 10px; }
+  .model b { color: #f0b36f; font-size: 12px; }
+  .mode::after, .model::after { content: "⌄"; color: var(--text-3); font-size: 10px; }
+  .composer-spacer { flex: 1; }
+  .context { width: 24px; height: 24px; display: grid; place-items: center; color: var(--text-2); border: 2px solid rgba(255,255,255,.1); border-top-color: var(--text-2); border-radius: 50%; font-size: 7px; }
+  .send { width: 32px; height: 32px; display: grid; place-items: center; color: #e8eee8; background: #3f516e; border: 0; border-radius: 50%; font-size: 15px; }
+  .note { margin-top: 10px; display: flex; justify-content: space-between; color: var(--text-3); font: 8.5px ui-monospace, monospace; }
+  .concept-label { position: absolute; z-index: 6; top: 10px; left: 297px; padding: 5px 8px; color: var(--text-2); background: rgba(20,21,20,.88); border: 1px solid var(--line); border-radius: 999px; font-size: 9px; backdrop-filter: blur(8px); }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes dock-in { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
+  @media (max-width: 720px) {
+    body { padding: 8px; }
+    .frame { grid-template-columns: minmax(0,1fr); height: calc(100vh - 16px); }
+    .sidebar { border-right: 0; }
+    .main, .concept-label { display: none; }
+    .agent-dock { height: 25%; min-height: 172px; }
+  }
+  @media (prefers-reduced-motion: reduce) { .spinner, .agent-state.running::after, .agent-dock { animation: none; } }
+</style>
+</head>
+<body>
+  <main class="frame" aria-label="Proposed ocode interface with agents docked in the left sidebar">
+    <aside class="sidebar">
+      <div class="side-head">
+        <div class="topline"><div class="brand"><span class="brand-mark">o</span> ocode</div><button class="ghost-icon" aria-label="Collapse sidebar">‹</button></div>
+        <div class="controls"><div class="control">⌕ <span>Search threads</span></div><button class="control new" aria-label="New thread">+</button><div class="control">▣ <span>All projects</span></div><button class="control new" aria-label="New project">+</button></div>
+      </div>
+
+      <div class="threads">
+        <div class="section-label"><span>Threads</span><span>4</span></div>
+        <div class="thread active"><span class="favicon">A</span><div class="thread-copy"><div class="thread-title"><span>Move subagents to sidebar</span><span class="spinner"></span></div><div class="thread-meta"><span>anvil/main</span><span>2m 18s</span></div></div></div>
+        <div class="thread"><span class="favicon">W</span><div class="thread-copy"><div class="thread-title"><span>Harden artifact previews</span></div><div class="thread-meta"><span>web/preview</span><span>12m</span></div></div></div>
+        <div class="thread"><span class="favicon">F</span><div class="thread-copy"><div class="thread-title"><span>Forge reconnect tests</span></div><div class="thread-meta"><span>forge/recovery</span><span>1h</span></div></div></div>
+        <div class="settled">
+          <div class="section-label"><span>⌄ Settled</span><span>6</span></div>
+          <div class="settled-row"><i></i><span>Composer cleanup</span><time>2h</time></div>
+          <div class="settled-row"><i></i><span>Usage indicators</span><time>4h</time></div>
+          <div class="settled-row"><i></i><span>Desktop build fixes</span><time>1d</time></div>
+        </div>
+      </div>
+      <div class="settled-fade" aria-hidden="true"></div>
+
+      <section class="agent-dock" aria-label="Agents, two active">
+        <header class="agent-head"><strong>Agents</strong><span class="agent-total">2 active</span><button class="collapse" aria-label="Collapse agents">⌄</button></header>
+        <div class="agent-list">
+          <button class="agent-row selected">
+            <span class="agent-state running"></span>
+            <span class="agent-copy"><span class="agent-identity"><span class="agent-name">researcher</span><span class="agent-status">Running</span></span><span class="agent-task">Compare T3 Code composer patterns</span></span>
+            <time class="agent-time">1m 42s</time>
+          </button>
+          <button class="agent-row">
+            <span class="agent-state running"></span>
+            <span class="agent-copy"><span class="agent-identity"><span class="agent-name">reviewer</span><span class="agent-status">Running</span></span><span class="agent-task">Inspect sidebar layout constraints</span></span>
+            <time class="agent-time">38s</time>
+          </button>
+          <button class="agent-row">
+            <span class="agent-state attention"></span>
+            <span class="agent-copy"><span class="agent-identity"><span class="agent-name">builder</span><span class="agent-status attention">Needs you</span></span><span class="agent-task">Choose compact or expanded detail</span></span>
+            <time class="agent-time">now</time>
+          </button>
+        </div>
+      </section>
+
+      <footer class="side-foot">
+        <button class="foot-button" aria-label="Settings">⚙</button>
+        <button class="foot-button" aria-label="Usage">▥</button>
+        <button class="foot-button" aria-label="Skills and extensions">◇</button>
+        <span class="usage" aria-label="85 percent usage">85</span>
+      </footer>
+    </aside>
+
+    <section class="main">
+      <span class="concept-label">Proposed: left agent dock + T3-style composer proportions</span>
+      <header class="main-head"><strong><span class="repo">anvil</span> / Move subagents to sidebar</strong><div class="main-actions"><button class="action">GitHub</button><button class="action">Terminal</button><button class="action">Files</button></div></header>
+      <div class="chat">
+        <div class="message">
+          <div class="you">Move the subagents panel into the left sidebar, above the settled threads.</div>
+          <div class="answer"><h2>I'll update the workspace layout.</h2><p>The agent list will stay visible while work runs, without taking width from the conversation. Settings, usage, and skills remain pinned below it.</p><div class="tool"><span class="ok">✓</span><span>Read Sidebar.tsx and SubagentActivityPanel.tsx</span></div><p>The composer uses T3 Code's proportions rather than copying its branding: a taller writing area, controls on a separate footer row, a softer 20px shell, and a circular send action.</p></div>
+        </div>
+      </div>
+      <div class="composer-shell">
+        <div class="composer">
+          <div class="placeholder">Ask a follow-up, @tag workspace files, or / for commands</div>
+          <div class="composer-foot"><button class="model"><b>✦</b> GPT-5.6</button><button class="mode">high</button><span class="composer-spacer"></span><span class="context">42</span><button class="send" aria-label="Send">↑</button></div>
+        </div>
+        <div class="note"><span>anvil / main</span><span>Pi · Forge connected</span></div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

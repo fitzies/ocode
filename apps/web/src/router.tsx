@@ -27,8 +27,37 @@ const piCatalogRoute = createRoute({
   path: "/pi",
   component: EmptyRoute,
 });
+const piSkillsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/pi/skills",
+  component: EmptyRoute,
+});
+const piSkillDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/pi/skills/$resourceId",
+  component: EmptyRoute,
+});
+const piExtensionsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/pi/extensions",
+  component: EmptyRoute,
+});
+const piExtensionDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/pi/extensions/$resourceId",
+  component: EmptyRoute,
+});
 
-const routeTree = rootRoute.addChildren([indexRoute, settingsRoute, usageRoute, piCatalogRoute]);
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  settingsRoute,
+  usageRoute,
+  piCatalogRoute,
+  piSkillsRoute,
+  piSkillDetailRoute,
+  piExtensionsRoute,
+  piExtensionDetailRoute,
+]);
 
 export const router = createRouter({ routeTree });
 

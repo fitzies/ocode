@@ -141,8 +141,7 @@
 }
 
 .timeline-date,
-.timeline-events,
-.working-status {
+.timeline-events {
   overflow-anchor: none;
 }
 
@@ -1090,10 +1089,6 @@ max-width: min(72rem, calc(100vw - 21.625rem));
 .compaction-card .technical-detail > summary { min-height: 28px; gap: 5px; }
 .compaction-card .technical-detail pre { position: absolute; right: 8px; left: 8px; z-index: 2; margin-top: 4px; }
 
-.working-status {
-  margin: 17px 0 0 3px;
-  color: var(--legacy-text-low);
-}
 
 @media (prefers-reduced-motion: reduce) {
   .agent-loading-pixels i,

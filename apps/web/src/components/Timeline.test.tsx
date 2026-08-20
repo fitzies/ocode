@@ -65,6 +65,10 @@ describe("Timeline empty state", () => {
     expect(html).not.toContain("Churning");
   });
 
+  it("hides the working-message extension status from the global status bar", () => {
+    expect(appShellSource).toContain('status.key !== "working-message"');
+  });
+
   it("uses an explicit AppShell callback instead of a global project-change event", () => {
     expect(timelineSource).toContain("onClick={onRequestProjectChange}");
     expect(appShellSource).toContain('onRequestProjectChange={() => setProjectChooserMode("change")}');
@@ -79,25 +83,6 @@ describe("Timeline empty state", () => {
 
     expect(changeSource.indexOf("startSession(projectId)")).toBeLessThan(changeSource.indexOf("anvilClient.deleteSession(previousSessionId)"));
     expect(changeSource).not.toContain("await anvilClient.deleteSession");
-  });
-});
-
-describe("Timeline loading state", () => {
-  it("shows the extension working message beside the Beautiful UI loader", () => {
-    const html = renderToStaticMarkup(
-      <Timeline
-        session={{ ...session, status: "running" }}
-        entries={[{ ...message, role: "user" }]}
-        workingMessage="Diffmaxxing..."
-        onSuggestion={() => undefined}
-      />,
-    );
-
-    expect(html).toContain("working-status");
-    expect(html).toContain('aria-label="Agent working: Diffmaxxing..."');
-    expect(html).toContain("agent-loading-pixels");
-    expect(html).toContain('<span class="agent-loading-copy" aria-hidden="true">Diffmaxxing...</span>');
-    expect(html).not.toContain(">Working</strong>");
   });
 });
 
@@ -321,6 +306,73 @@ describe("Timeline markdown", () => {
     expect(html).not.toContain("/skill:frontend-design");
   });
 
+  it("hides Pi's expanded skill payload and keeps additional instructions", () => {
+    const expanded = `<skill name="wait-what" location="/home/oli/.pi/agent/skills/wait-what/SKILL.md">
+References are relative to /home/oli/.pi/agent/skills/wait-what.
+
+Internal skill instructions
+</skill>
+
+Explain the current plan`;
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          role: "user",
+          content: [{ id: "expanded-skill", type: "text", text: expanded }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Skill: wait-what");
+    expect(html).toContain("Explain the current plan");
+    expect(html).not.toContain("Internal skill instructions");
+    expect(html).not.toContain("/home/oli/.pi/agent/skills");
+    expect(html).not.toContain("&lt;skill");
+  });
+
+  it("renders an expanded skill with no additional instructions as only a chip", () => {
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          role: "user",
+          content: [{
+            id: "expanded-skill-only",
+            type: "text",
+            text: `<skill name="wait-what" location="/skills/wait-what/SKILL.md">\nSkill body\n</skill>`,
+          }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("Skill: wait-what");
+    expect(html).not.toContain("Skill body");
+  });
+
+  it("leaves malformed expanded skill text visible", () => {
+    const malformed = `<skill name="wait-what" location="/skills/wait-what/SKILL.md">\nSkill body`;
+    const html = renderToStaticMarkup(
+      <Timeline
+        session={session}
+        entries={[{
+          ...message,
+          role: "user",
+          content: [{ id: "malformed-skill", type: "text", text: malformed }],
+        }]}
+        onSuggestion={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("&lt;skill name=&quot;wait-what&quot;");
+    expect(html).toContain("Skill body");
+    expect(html).not.toContain("Skill: wait-what");
+  });
+
   it("renders commands inline without their slash using a distinct color", () => {
     const html = renderToStaticMarkup(
       <Timeline
@@ -489,7 +541,7 @@ describe("Timeline markdown", () => {
     expect(html).toContain("/api/v1/artifacts/01959f7e-7d64-7000-8000-000000000001");
   });
 
-  it("hides reasoning entries and keeps the custom working state", () => {
+  it("hides reasoning entries without adding a separate working row", () => {
     const html = renderToStaticMarkup(
       <Timeline
         session={{ ...session, status: "running" }}
@@ -505,7 +557,7 @@ describe("Timeline markdown", () => {
     expect(html).not.toContain('aria-label="Agent reasoning"');
     expect(html).not.toContain("Checking:");
     expect(html).not.toContain("Investigating app name source");
-    expect(html).toContain("working-status");
+    expect(html).not.toContain("working-status");
     expect(html).toContain("Read apps/web/src/App.tsx");
   });
 });

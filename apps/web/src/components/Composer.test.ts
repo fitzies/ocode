@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { SubagentTaskRow } from "@/components/SubagentTaskRow";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Composer,
@@ -35,13 +36,17 @@ function renderComposer(modelsReady: boolean, options: {
   commands?: CommandDescriptor[];
   skills?: SkillDescriptor[];
   attachments?: ComposerAttachment[];
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
+  models?: ModelDescriptor[];
+  modelId?: string;
+  activeSubagents?: number;
 } = {}): string {
   return renderToStaticMarkup(createElement(TooltipProvider, null, createElement(Composer, {
     sessionId: "session-1",
-    modelId: "unknown",
+    modelId: options.modelId ?? "unknown",
     thinkingLevel: "off",
     status: options.status ?? "idle",
-    models: [],
+    models: options.models ?? [],
     modelsReady,
     commands: options.commands ?? [],
     skills: options.skills ?? [],
@@ -50,6 +55,10 @@ function renderComposer(modelsReady: boolean, options: {
     pending: options.pending,
     creationError: options.creationError,
     widgets: [],
+    taskRow: options.activeSubagents
+      ? createElement(SubagentTaskRow, { count: options.activeSubagents, onOpen: () => undefined })
+      : undefined,
+    contextUsage: options.contextUsage,
     attachments: options.attachments ?? [],
     onAttachFiles: () => undefined,
     onRemoveAttachment: () => undefined,
@@ -72,6 +81,35 @@ describe("Composer footer", () => {
     expect(html).not.toContain("home workspace");
     expect(html).not.toContain("composer-status");
     expect(html).not.toContain(">agents</span>");
+  });
+});
+
+describe("Composer prompt bar", () => {
+  it("shows a full-width task row only while subagents are running", () => {
+    const activeHtml = renderComposer(true, { activeSubagents: 3 });
+    const idleHtml = renderComposer(true);
+
+    expect(activeHtml).toContain("composer-task-row");
+    expect(activeHtml).toContain("3 agents running");
+    expect(activeHtml).toContain("subagent-task-count");
+    expect(idleHtml).not.toContain("composer-task-row");
+  });
+
+  it("uses the compact add menu, smooth pickers, and context control", () => {
+    const selectedModel = model("openai-codex/gpt-5.6", "GPT-5.6");
+    const html = renderComposer(true, {
+      contextUsage: { tokens: 42_000, contextWindow: 100_000, percent: 42 },
+      models: [selectedModel],
+      modelId: selectedModel.id,
+    });
+
+    expect(html).toContain('aria-label="Add attachments, files, commands, or skills"');
+    expect(html).toContain("composer-picker model-select");
+    expect(html).toContain("composer-picker thinking-level");
+    expect(html).not.toContain('data-slot="select-trigger"');
+    expect(html).toContain('class="composer-context-slot"');
+    expect(html).toContain('aria-label="42% of context window used"');
+    expect(html).not.toContain("dictation");
   });
 });
 

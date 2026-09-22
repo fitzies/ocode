@@ -452,3 +452,6 @@ body,
 .approval-card-footer {
   border-top: 0;
 }
+.sidebar-agents {
+  display: none;
+}

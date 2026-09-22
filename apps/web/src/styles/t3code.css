@@ -455,3 +455,13 @@ body,
 .sidebar-agents {
   display: none;
 }
+.session-recency {
+  min-width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.thread-section-heading > span:last-child {
+  min-width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

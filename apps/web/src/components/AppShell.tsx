@@ -34,6 +34,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useAppZoom } from "../lib/appZoom";
 import { anvilClient, type DeliveryMode } from "../lib/anvilClient";
 import {
   isTerminalInputTarget,
@@ -331,6 +332,7 @@ export function AppShell() {
 }
 
 function AppShellContent() {
+  useAppZoom();
   const snapshot = useExternalStoreSelector(
     anvilClient.subscribe,
     anvilClient.getSnapshot,

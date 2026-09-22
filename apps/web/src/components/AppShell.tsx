@@ -392,11 +392,6 @@ function AppShellContent() {
   const pendingInteractions = activeSession
     ? snapshot.pendingInteractions.filter((request) => request.sessionId === activeSession.id)
     : [];
-  const statuses = activeSession
-    ? snapshot.extensionStatuses.filter((status) => (
-        status.sessionId === activeSession.id && status.key !== "working-message"
-      ))
-    : [];
   const sessionWidgets = activeSession
     ? snapshot.widgets.filter((widget) => widget.sessionId === activeSession.id)
     : [];
@@ -505,7 +500,7 @@ function AppShellContent() {
     anvilClient.selectSession(sessionId);
     void navigate({ to: "/" });
     requestAnimationFrame(() => {
-      document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Message Pi']")?.focus();
+      document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Ask anything']")?.focus();
     });
   }, [navigate]);
   const startSession = useCallback((projectId: string) => {
@@ -513,7 +508,7 @@ function AppShellContent() {
     void navigate({ to: "/" });
     if (isMobile) setOpenMobile(false);
     requestAnimationFrame(() => {
-      document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Message Pi']")?.focus();
+      document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Ask anything']")?.focus();
     });
   }, [isMobile, navigate, setOpenMobile]);
   const changeEmptySessionProject = useCallback((projectId: string) => {
@@ -950,11 +945,6 @@ function AppShellContent() {
           </div>
         </header>
 
-        {statuses.length > 0 && (
-          <div className="extension-status-bar" aria-live="polite">
-            {statuses.map((status) => <span key={status.key}><i />{status.text}<small>{status.key}</small></span>)}
-          </div>
-        )}
         {sequenceGap && (
           <div className="reconciliation-banner" role="status">
             Reconnecting event stream · waiting for sequence {sequenceGap.expected} before {sequenceGap.received}

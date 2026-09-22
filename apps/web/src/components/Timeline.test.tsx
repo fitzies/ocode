@@ -65,8 +65,8 @@ describe("Timeline empty state", () => {
     expect(html).not.toContain("Churning");
   });
 
-  it("hides the working-message extension status from the global status bar", () => {
-    expect(appShellSource).toContain('status.key !== "working-message"');
+  it("never renders the global extension status bar", () => {
+    expect(appShellSource).not.toContain("extension-status-bar");
   });
 
   it("uses an explicit AppShell callback instead of a global project-change event", () => {

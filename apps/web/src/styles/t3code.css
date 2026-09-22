@@ -1,0 +1,454 @@
+/* ocode T3-Code look — visual-only override layer.
+   Keeps all Pi/Forge functionality identical. No logic changes.
+   Mirrors pingdotgg/t3code compact glass IDE: 52px topbar, 8px controls,
+   flat background, thin scrollbars, floating 20px composer, 16px user bubbles. */
+
+:root {
+  --radius: 0.5rem;
+  --control-radius: 0.5rem;
+  --sidebar-content-inset: 0.5rem;
+  --sidebar-row-content-inset: 0.625rem;
+  --floating-content-inset: 0.75rem;
+  --glass-blur: 12px;
+  --glass-saturation: 1.14;
+  --workspace-topbar-height: 52px;
+  --workspace-pane-header-height: 52px;
+  --app-scrollbar-width: 6px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+.dark {
+  --glass-blur: 16px;
+  --glass-saturation: 1.08;
+}
+
+/* Flat background like T3 — kill radial washes */
+body,
+.workspace,
+.sidebar {
+  background: var(--bg);
+}
+.workspace {
+  --workspace-pane-header-height: 52px;
+}
+.sidebar {
+  flex-basis: 288px;
+  background: var(--sidebar);
+  border-right: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+}
+
+/* Thin T3 scrollbars */
+.sidebar-scroll,
+.timeline {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(0 0 0 / 18%) transparent;
+}
+.dark .sidebar-scroll,
+.dark .timeline {
+  scrollbar-color: rgb(255 255 255 / 12%) transparent;
+}
+.sidebar-scroll::-webkit-scrollbar,
+.timeline::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.sidebar-scroll::-webkit-scrollbar-thumb,
+.timeline::-webkit-scrollbar-thumb {
+  background: rgb(0 0 0 / 18%);
+  border-radius: 999px;
+}
+.dark .sidebar-scroll::-webkit-scrollbar-thumb,
+.dark .timeline::-webkit-scrollbar-thumb {
+  background: rgb(255 255 255 / 12%);
+}
+.sidebar-scroll::-webkit-scrollbar-track,
+.timeline::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 52px glass header */
+.session-header {
+  min-height: var(--workspace-topbar-height);
+  padding: 0 12px 0 14px;
+  gap: 12px;
+  background: color-mix(in oklab, var(--background) 80%, transparent);
+  border-bottom: 1px solid color-mix(in oklab, var(--border) 60%, transparent);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+}
+.session-heading h1 {
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+.header-outline-control {
+  width: 1.75rem;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  min-height: 1.75rem;
+  border-radius: var(--control-radius);
+  border-color: color-mix(in oklab, var(--border) 55%, transparent);
+}
+.icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--control-radius);
+}
+
+/* Sidebar rows → T3 cards */
+.session-row {
+  height: 4.875rem;
+  padding: 8px var(--sidebar-row-content-inset);
+  border-radius: var(--control-radius);
+  border-color: transparent;
+}
+.session-row:hover {
+  background: color-mix(in oklab, var(--foreground) 4%, transparent);
+}
+.session-row--active,
+.session-row--active:hover {
+  background: color-mix(in oklab, var(--foreground) 6%, transparent);
+  border-color: color-mix(in oklab, var(--border) 60%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 6%);
+}
+.session-project {
+  font-size: 12px;
+  font-weight: 500;
+}
+.session-title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: color-mix(in oklab, var(--foreground) 90%, transparent);
+}
+.session-meta {
+  font-size: 12px;
+}
+.thread-section-heading {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.thread-search,
+.sidebar-search-row .thread-search {
+  border-radius: var(--control-radius);
+  border-color: color-mix(in oklab, var(--border) 60%, transparent);
+  background: color-mix(in oklab, var(--foreground) 3%, transparent);
+}
+.thread-create,
+.project-filter,
+.project-filter-add {
+  border-radius: var(--control-radius);
+}
+
+/* Timeline → centered T3 column */
+.conversation-surface {
+  --message-column-width: 768px;
+}
+.timeline-inner {
+  padding: 20px 16px 0;
+}
+.user-message {
+  margin: 0 0 20px 20%;
+}
+.user-message > .content-blocks,
+.user-invocation-message {
+  max-width: 80%;
+  padding: 12px;
+  border-radius: 1rem;
+  background: var(--muted);
+  border-color: color-mix(in oklab, var(--border) 55%, transparent);
+  box-shadow: none;
+}
+.assistant-message {
+  margin: 20px 0 24px;
+}
+.system-message {
+  border-radius: var(--control-radius);
+}
+
+/* Tool cards flatter */
+.tool-event-trigger,
+.artifact-block > a,
+.attention-banner,
+.queue-banner {
+  border-radius: var(--control-radius);
+}
+.markdown-body pre,
+.CodeBlock,
+.artifact-block > pre {
+  border-radius: 0.75rem;
+}
+
+/* Floating composer → T3 pill */
+.composer-wrap {
+  padding: 8px 16px 12px;
+}
+.composer {
+  padding: 10px 10px 8px;
+  border-radius: 20px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  border: 1px solid color-mix(in oklab, var(--border) 55%, transparent);
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 35%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+}
+.light .composer {
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  box-shadow: 0 12px 28px -18px rgb(0 0 0 / 35%);
+}
+.composer textarea {
+  font-size: 14px;
+}
+.send-button,
+.stop-button {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+}
+.approval-card {
+  border-radius: 1rem;
+}
+.new-thread-menu,
+.thread-context-menu,
+.composer-menu {
+  border-radius: 0.75rem;
+  border-color: color-mix(in oklab, var(--border) 60%, transparent);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 25%);
+}
+.timeline-jump-latest {
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--background) 95%, transparent);
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+/* ---- T3-Code composer clone (visual only) ----
+   Studied from pingdotgg/t3code ChatComposer + ComposerSurface:
+   max-w-3xl glass shell, 22px surface, 14px prompt, ghost footer row,
+   32px circular send/stop. No behavior changes. */
+
+/* Shell: center like T3's max-w-3xl, tighter dock padding */
+.composer-wrap {
+  padding: 8px 16px 12px;
+}
+.composer,
+.attention-banner,
+.queue-banner,
+.extension-widget,
+.composer-note,
+.composer-status {
+  width: min(100%, 768px);
+}
+
+/* Surface: 22px glass, T3 outline + shadow recipe */
+.composer {
+  padding: 0;
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+  border: 1px solid rgb(0 0 0 / 8%);
+  border-radius: 22px;
+  box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  -webkit-backdrop-filter: blur(12px) saturate(1.14);
+  backdrop-filter: blur(12px) saturate(1.14);
+}
+.dark .composer {
+  border-color: color-mix(in srgb, #fff 5%, transparent);
+  box-shadow: inset 0 1px rgb(255 255 255 / 3%), 0 14px 32px -18px rgb(0 0 0 / 75%);
+}
+.light .composer {
+  background: color-mix(in srgb, var(--card) 80%, transparent);
+  border-color: rgb(0 0 0 / 8%);
+  box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+  -webkit-backdrop-filter: blur(12px) saturate(1.14);
+  backdrop-filter: blur(12px) saturate(1.14);
+}
+.composer:focus-within {
+  border-color: rgb(0 0 0 / 8%);
+  box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+}
+.dark .composer:focus-within {
+  border-color: color-mix(in srgb, #fff 7%, transparent);
+  box-shadow: inset 0 1px rgb(255 255 255 / 3%), 0 14px 32px -18px rgb(0 0 0 / 75%);
+}
+.light .composer:focus-within {
+  border-color: rgb(0 0 0 / 8%);
+  box-shadow: 0 12px 28px -18px rgb(0 0 0 / 40%);
+}
+.composer--file-drop-active {
+  border-radius: 22px;
+}
+
+/* Body: T3 pt-3.5/px-3/pb-2 rhythm */
+.composer-input-row {
+  padding: 14px 12px 0;
+}
+.composer textarea {
+  min-height: 44px;
+  padding: 0 4px 6px;
+  font-size: 14px;
+  line-height: 1.55;
+}
+.composer textarea::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+.composer-invocation {
+  padding: 0 0 6px 4px;
+  font-size: 14px;
+}
+
+/* Attachments: T3 mb-3 scroll row, no divider, rounder chips */
+.composer-attachments {
+  margin: 12px 12px 0;
+  padding: 0 0 10px;
+  gap: 8px;
+  border-bottom: 0;
+}
+.composer-attachment {
+  border-radius: 12px;
+  border-color: color-mix(in oklab, var(--border) 80%, transparent);
+}
+.composer-attachment-preview {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+}
+.composer-attachment--image {
+  grid-template-columns: 40px minmax(0, 1fr) 20px;
+}
+.composer-attachment strong {
+  font-size: 12px;
+}
+
+/* Footer controls row: T3 px-3/pb-3 ghost cluster + circular send */
+.composer-controls {
+  align-items: center;
+  gap: 4px;
+  min-height: 48px;
+  padding: 4px 12px 12px;
+}
+.composer-plus {
+  border-radius: 8px;
+}
+.composer .model-select,
+.composer .thinking-level {
+  height: 32px;
+  padding: 0 8px;
+  gap: 6px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+.toolbar-divider {
+  height: 20px;
+  margin: 0 4px;
+}
+
+/* Send: 32px dark circle, arrow glyph; Stop: 32px destructive circle */
+.composer .send-button,
+.composer .stop-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+}
+.composer .send-button {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  box-shadow: none;
+}
+.composer .send-button:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--primary) 90%, var(--background));
+}
+.composer .send-button:disabled {
+  color: var(--primary-foreground);
+  background: var(--primary);
+  opacity: 0.3;
+  box-shadow: none;
+}
+.composer .send-button svg {
+  width: 16px;
+  height: 16px;
+}
+.composer .stop-button {
+  color: #fff;
+  background: color-mix(in oklab, var(--destructive) 90%, transparent);
+  border: 0;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 24%);
+}
+.composer .stop-button:hover {
+  background: var(--destructive);
+}
+
+/* Menus: T3 rounded-xl glass dropdowns */
+.composer-menu,
+.composer-add-menu,
+.composer-picker-menu,
+.model-menu,
+.new-thread-menu {
+  border-radius: 12px;
+  border-color: color-mix(in oklab, var(--border) 60%, transparent);
+  background: color-mix(in srgb, var(--popover) 95%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.14);
+  backdrop-filter: blur(12px) saturate(1.14);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 25%);
+}
+.model-option {
+  min-height: 32px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+/* Banners docked above the pill */
+.attention-banner,
+.queue-banner {
+  border-radius: 12px;
+}
+
+/* Stacked T3 footer: prompt row on top, ghost controls + round send below.
+   ocode only stacks when expanded/narrow; T3 always stacks. Unconditional
+   here — same elements, same grid, just always two rows. */
+.composer-controls {
+  grid-template-columns: 28px auto auto minmax(0, 1fr) 24px 32px;
+  row-gap: 8px;
+  align-items: center;
+  min-height: 0;
+  padding: 0 12px 12px;
+}
+.composer-input-row {
+  grid-column: 1 / -1;
+  grid-row: 1;
+}
+.composer-plus,
+.composer .model-select,
+.composer .thinking-level,
+.composer-context-slot,
+.composer .send-button,
+.composer .stop-button {
+  grid-row: 2;
+}
+.composer .model-select {
+  grid-column: 2;
+}
+.composer .thinking-level {
+  grid-column: 3;
+}
+
+/* Agents-running pill: same cap + centering as the composer pill. */
+.composer-task-row {
+  width: min(100%, 768px);
+  margin: 0 auto 8px;
+}
+
+/* Interaction/approval card: same column as the composer, flat like T3.
+   The old 2/3-width cap + heavy drop shadow was the Mira floating-card look. */
+.approval-card {
+  width: min(100%, 768px);
+  max-width: none;
+  border-radius: 16px;
+  border-color: color-mix(in oklab, var(--border) 60%, transparent);
+  box-shadow: none;
+}
+
+/* Approval card: no interior divider lines (T3 panels are borderless inside). */
+.approval-card-actions {
+  border-top: 0;
+}
+.approval-card-footer {
+  border-top: 0;
+}

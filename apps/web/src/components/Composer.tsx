@@ -1139,8 +1139,8 @@ export function Composer({
               onKeyUp={(event) => setCursorPosition(event.currentTarget.selectionStart)}
               onPaste={onPaste}
               onKeyDown={onKeyDown}
-              placeholder={running ? "Steer Pi…" : "Message Pi…"}
-              aria-label="Message Pi"
+              placeholder={running ? "Steer…" : "Ask anything…"}
+              aria-label="Ask anything"
               role="combobox"
               aria-autocomplete="list"
               aria-expanded={fileMenuOpen || slashMenuOpen}
@@ -1188,7 +1188,7 @@ export function Composer({
               className="send-button"
               disabled={!hasPrompt || uploadsPending || Boolean(creationError)}
               aria-label={pending ? "Queue message while thread starts" : running ? "Send steering message" : "Send message"}
-              title={creationError ? "Thread creation failed" : pending ? "Queue while starting" : running ? "Steer Pi" : undefined}
+              title={creationError ? "Thread creation failed" : pending ? "Queue while starting" : running ? "Steer" : undefined}
             >
               <HugeiconsIcon icon={ArrowUp02Icon} strokeWidth={2} />
             </Button>

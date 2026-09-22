@@ -8,6 +8,7 @@
 @import "./styles/resource.css";
 @import "./styles/responsive.css";
 @import "./styles/desktop.css";
+@import "./styles/t3code.css";
 @import "@xterm/xterm/css/xterm.css";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

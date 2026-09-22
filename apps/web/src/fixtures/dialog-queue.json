@@ -51,17 +51,6 @@
       }
     },
     {
-      "at": 280,
-      "record": {
-        "type": "extension_ui_request",
-        "id": "widget-dialog-demo",
-        "method": "setWidget",
-        "widgetKey": "fixture-progress",
-        "widgetLines": ["Interaction fixture", "Answer each queued request to continue"],
-        "widgetPlacement": "aboveEditor"
-      }
-    },
-    {
       "at": 500,
       "record": {
         "type": "extension_ui_request",

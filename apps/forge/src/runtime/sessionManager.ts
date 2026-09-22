@@ -28,6 +28,7 @@ import {
   type ProjectSummary,
   type SessionSummary,
   type SubagentRun,
+  type ThinkingLevel,
   type ToolEntry,
 } from "@anvil/protocol";
 
@@ -326,6 +327,8 @@ export class SessionManager {
     sessionId: string;
     parentSessionId: string;
     title: string;
+    modelId?: string;
+    thinkingLevel?: ThinkingLevel;
   }): void {
     const existing = this.database.getSession(input.sessionId);
     if (existing) {
@@ -341,8 +344,8 @@ export class SessionManager {
       title: input.title.slice(0, SESSION_TITLE_MAX_LENGTH),
       updatedAt: timestamp,
       status: "idle",
-      modelId: parent.session.modelId,
-      thinkingLevel: parent.session.thinkingLevel,
+      modelId: input.modelId ?? parent.session.modelId,
+      thinkingLevel: input.thinkingLevel ?? parent.session.thinkingLevel,
       settled: false,
       branch: parent.session.branch,
       readThroughSequence: 0,

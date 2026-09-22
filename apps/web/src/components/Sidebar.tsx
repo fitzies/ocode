@@ -61,6 +61,38 @@ export function projectRepositoryName(project: { name: string; path: string }): 
   const segments = project.path.replace(/\/+$/, "").split("/");
   return segments.at(-1) || project.name;
 }
+
+const SETTLED_OPEN_STORAGE_KEY = "ocode.sidebar.settled-open";
+
+function loadSettledOpen(): boolean {
+  try {
+    if (typeof window === "undefined") return true;
+    return window.localStorage.getItem(SETTLED_OPEN_STORAGE_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
+function compareProjectsMainFirst(
+  a: { workspaceKind?: string },
+  b: { workspaceKind?: string },
+): number {
+  const rank = (project: { workspaceKind?: string }) => (project.workspaceKind === "main" ? 0 : 1);
+  return rank(a) - rank(b);
+}
+
+export function sortProjectsMainFirst<T extends { workspaceKind?: string }>(
+  projects: readonly T[],
+): T[] {
+  return [...projects].sort(compareProjectsMainFirst);
+}
+
+export function singleMainProjectId(
+  projects: readonly { id: string; workspaceKind?: string }[],
+): string | undefined {
+  const mains = projects.filter((project) => project.workspaceKind === "main");
+  return mains.length === 1 ? mains[0]!.id : undefined;
+}
 import {
   Sidebar as SidebarPrimitive,
   SidebarContent,
@@ -169,7 +201,7 @@ export const Sidebar = memo(function Sidebar({
   const [query, setQuery] = useState("");
   const [projectQuery, setProjectQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState<string | null>(null);
-  const [settledOpen, setSettledOpen] = useState(true);
+  const [settledOpen, setSettledOpen] = useState(loadSettledOpen);
   const [settlementPending, setSettlementPending] = useState<Set<string>>(new Set());
   const [contentMatches, setContentMatches] = useState<ThreadSearchMatch[]>([]);
   const [contentSearchPending, setContentSearchPending] = useState(false);
@@ -209,6 +241,14 @@ export const Sidebar = memo(function Sidebar({
     };
   }, [onSearchThreads, query, searchOpen]);
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SETTLED_OPEN_STORAGE_KEY, String(settledOpen));
+    } catch {
+      // Storage is best-effort; the accordion still works for this session.
+    }
+  }, [settledOpen]);
+
   const closeMobile = () => {
     if (isMobile) setOpenMobile(false);
   };
@@ -222,7 +262,9 @@ export const Sidebar = memo(function Sidebar({
 
   const sortedSessions = sortSessionsByActivity(snapshot.sessions.filter((session) => !session.internal));
   const generalProject = snapshot.projects.find(isGeneralProject);
-  const regularProjects = snapshot.projects.filter((project) => !isGeneralProject(project));
+  const regularProjects = sortProjectsMainFirst(
+    snapshot.projects.filter((project) => !isGeneralProject(project)),
+  );
   const selectedProject = snapshot.projects.find((project) => project.id === projectFilter);
   const visibleSessions = sortedSessions.filter((session) => !projectFilter || session.projectId === projectFilter);
   const unsettledSessions = visibleSessions.filter((session) => !session.settled);
@@ -373,7 +415,17 @@ export const Sidebar = memo(function Sidebar({
               size="icon"
               className="border-input bg-muted/20 dark:bg-muted/30"
               aria-label="Create thread"
-              onClick={() => onProjectChooserModeChange("new")}
+              onClick={() => {
+                if (!projectFilter) {
+                  const mainId = singleMainProjectId(regularProjects);
+                  if (mainId) {
+                    onCreateSession(mainId);
+                    closeMobile();
+                    return;
+                  }
+                }
+                onProjectChooserModeChange("new");
+              }}
             >
               <HugeiconsIcon icon={MessageAdd01Icon} strokeWidth={2} className="size-3.5" />
             </Button>
@@ -441,7 +493,7 @@ export const Sidebar = memo(function Sidebar({
         </section>
 
         {settledSessions.length > 0 && (
-          <Collapsible open={settledOpen} onOpenChange={setSettledOpen} className="thread-section thread-section--settled min-w-0 w-full">
+          <Collapsible open={settledOpen} onOpenChange={setSettledOpen} className="thread-section thread-section--settled sticky bottom-0 z-10 mt-auto! w-full min-w-0 shrink-0 bg-sidebar">
             <CollapsibleTrigger asChild>
               <button className="thread-section-heading thread-section-toggle" id="settled-heading">
                 <span className="flex items-center gap-1">
@@ -452,7 +504,7 @@ export const Sidebar = memo(function Sidebar({
               </button>
             </CollapsibleTrigger>
             <CollapsibleContent>
-              <div className="session-list session-list--settled">{settledSessions.map((session) => renderSession(session, true))}</div>
+              <div className="session-list session-list--settled max-h-[36dvh] overflow-y-auto">{settledSessions.map((session) => renderSession(session, true))}</div>
             </CollapsibleContent>
           </Collapsible>
         )}
@@ -628,7 +680,7 @@ export const Sidebar = memo(function Sidebar({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <SidebarMenuButton
-                      aria-label="Skills and extensions"
+                      aria-label="Agents and models"
                       className="size-8 w-8 justify-center p-0"
                       onClick={() => {
                         onOpenPiCatalog();
@@ -638,7 +690,7 @@ export const Sidebar = memo(function Sidebar({
                       <HugeiconsIcon icon={PuzzleIcon} strokeWidth={2} />
                     </SidebarMenuButton>
                   </TooltipTrigger>
-                  <TooltipContent side="top">Skills &amp; extensions</TooltipContent>
+                  <TooltipContent side="top">Agents &amp; models</TooltipContent>
                 </Tooltip>
               </SidebarMenuItem>
             </>

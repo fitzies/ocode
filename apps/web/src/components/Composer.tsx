@@ -1,3 +1,4 @@
+import { configuredModels, useModelAliases } from "@/lib/piAgentSettings";
 import type {
   ArtifactReference,
   CommandDescriptor,
@@ -129,7 +130,7 @@ export function updateComposerDraft(
 }
 
 export function selectAnvilModels(models: ModelDescriptor[]): ModelDescriptor[] {
-  return models.filter((model) => model.id.includes("5.6") || model.name.includes("5.6"));
+  return models;
 }
 
 export function nextThinkingLevel(
@@ -463,7 +464,8 @@ export function Composer({
   const selectedCommand = commandPrompt.command;
   const displayPrompt = selectedSkill ? skillPrompt.text : commandPrompt.text;
   const hasPrompt = Boolean(displayPrompt.trim()) || Boolean(selectedSkill) || Boolean(selectedCommand) || readyAttachments.length > 0;
-  const visibleModels = useMemo(() => selectAnvilModels(models), [models]);
+  const modelAliases = useModelAliases();
+  const visibleModels = useMemo(() => configuredModels(models, modelAliases, modelId), [models, modelAliases, modelId]);
   const model = visibleModels.find((candidate) => candidate.id === modelId);
   const modelEntries = visibleModels.map((candidate) => ({
     key: candidate.id,

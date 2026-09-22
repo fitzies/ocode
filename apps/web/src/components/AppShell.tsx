@@ -56,6 +56,7 @@ import { InteractionPanel } from "./InteractionDialog";
 import { InternalSessionFooter } from "./InternalSessionFooter";
 import { FilePickerDialog } from "./FilePickerDialog";
 import { NewProjectDialog } from "./NewProjectDialog";
+import { PiAgentSettingsPage } from "./PiAgentSettingsPage";
 import { PiCatalogPage } from "./PiCatalogPage";
 import { ProjectGitAction } from "./ProjectGitAction";
 import { RecentlySettledDialog } from "./RecentlySettledDialog";
@@ -661,7 +662,9 @@ function AppShellContent() {
       : activePage === "usage"
         ? "Usage · ocode"
         : activePage === "pi"
-          ? "Skills & extensions · ocode"
+          ? pathname === "/pi"
+            ? "Agents & models · ocode"
+            : "Skills & extensions · ocode"
           : activeSession?.title
           ? `${activeSession.title} · ocode`
           : "ocode";
@@ -876,7 +879,7 @@ function AppShellContent() {
         ) : activePage === "usage" ? (
           <UsagePage />
         ) : activePage === "pi" ? (
-          <PiCatalogPage />
+          pathname === "/pi" ? <PiAgentSettingsPage /> : <PiCatalogPage />
         ) : (
         <WorkspaceSurfaceProvider projectId={activeProject?.id ?? null}>
           <LiveProjectResourceAutoOpen />

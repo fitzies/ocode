@@ -282,18 +282,14 @@ describe("nextThinkingLevel", () => {
 });
 
 describe("selectAnvilModels", () => {
-  it("preserves all 5.6 models with Pi's names and ordering", () => {
-    const selected = selectAnvilModels([
+  it("passes Pi models through unchanged; saved-alias filtering lives in configuredModels", () => {
+    const models = [
       model("openai-codex/gpt-5.4", "GPT-5.4"),
       model("openai-codex/gpt-5.6", "GPT-5.6"),
       model("openai-codex/gpt-5.6-high", "GPT-5.6 High"),
       model("custom/latest", "Custom 5.6"),
-    ]);
+    ];
 
-    expect(selected.map(({ id, name }) => ({ id, name }))).toEqual([
-      { id: "openai-codex/gpt-5.6", name: "GPT-5.6" },
-      { id: "openai-codex/gpt-5.6-high", name: "GPT-5.6 High" },
-      { id: "custom/latest", name: "Custom 5.6" },
-    ]);
+    expect(selectAnvilModels(models)).toEqual(models);
   });
 });

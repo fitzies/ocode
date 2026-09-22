@@ -9,15 +9,16 @@ import {
   type AnvilEvent,
   type SubagentRole,
   type SubagentRun,
+  type ThinkingLevel,
 } from "@anvil/protocol";
 
 import { ForgeEventService } from "../events/eventService.ts";
 import { ForgeDatabase } from "../store/database.ts";
 import { subagentCompletionHeading } from "./completionMessage.ts";
-import { buildSubagentPrompt } from "./roleCatalog.ts";
+import { buildSubagentPrompt, configuredRole } from "./roleCatalog.ts";
 
 interface SubagentSessionRuntime {
-  createSubagentSession(input: { sessionId: string; parentSessionId: string; title: string }): void;
+  createSubagentSession(input: { sessionId: string; parentSessionId: string; title: string; modelId?: string; thinkingLevel?: ThinkingLevel }): void;
   sendSubagentPrompt(runId: string, childSessionId: string, prompt: string): Promise<AnvilCommandResponse>;
   cancelSubagentSession(runId: string, childSessionId: string): Promise<AnvilCommandResponse>;
   deliverSubagentCompletion(deliveryId: string, parentSessionId: string, content: string): Promise<AnvilCommandResponse>;
@@ -223,6 +224,7 @@ export class SubagentCoordinator {
         sessionId: run.childSessionId,
         parentSessionId: run.parentSessionId,
         title: `Subagent: ${run.taskPreview}`,
+        ...configuredRole(run.role),
       });
       if (this.cancelling.has(run.id)) {
         this.finish(run.id, "cancelled");

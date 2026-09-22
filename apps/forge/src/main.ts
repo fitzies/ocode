@@ -8,6 +8,7 @@ import { loadForgeConfig } from "./config.ts";
 import { DesktopUpdateStore } from "./desktop/desktopUpdateStore.ts";
 import { ForgeEventService } from "./events/eventService.ts";
 import { ForgeHttpServer } from "./http/server.ts";
+import { PiAgentSettingsService } from "./pi/piAgentSettingsService.ts";
 import { PiCatalogService } from "./pi/piCatalogService.ts";
 import { PiCommitMessageGenerator } from "./pi/commitMessageGenerator.ts";
 import { prepareGeneralProject } from "./projects/generalProject.ts";
@@ -99,6 +100,7 @@ async function main(): Promise<void> {
       terminals,
       usage,
       piCatalog,
+      piAgentSettings: new PiAgentSettingsService(),
       subagentApi,
       searchFiles: sessions.searchFiles,
       listGitHubRepositories: githubRepositories.list,

@@ -33,6 +33,8 @@ import type { SubagentInternalApi } from "../subagents/internalApi.ts";
 import { TerminalManager } from "../terminal/terminalManager.ts";
 import { UsageService } from "../usage/usageService.ts";
 import { resolveProjectFavicon } from "./projectFavicon.ts";
+import { PiAgentSettingsRoutes } from "./piAgentSettingsRoutes.ts";
+import { PiAgentSettingsService } from "../pi/piAgentSettingsService.ts";
 import { PiCatalogRoutes } from "./piCatalogRoutes.ts";
 import { ProjectFileRoutes } from "./projectFileRoutes.ts";
 import { ProjectGitRoutes } from "./projectGitRoutes.ts";
@@ -60,6 +62,7 @@ export interface ForgeHttpServerOptions {
   terminals?: TerminalManager;
   usage?: UsageService;
   piCatalog?: PiCatalogService;
+  piAgentSettings?: PiAgentSettingsService;
   subagentApi?: SubagentInternalApi;
   instanceId?: string;
   ownerLogin?: string;
@@ -115,6 +118,7 @@ export class ForgeHttpServer {
   private readonly instanceId: string;
   private readonly projectFileRoutes?: ProjectFileRoutes;
   private readonly projectGitRoutes?: ProjectGitRoutes;
+  private readonly piAgentSettingsRoutes?: PiAgentSettingsRoutes;
   private readonly piCatalogRoutes?: PiCatalogRoutes;
   private readonly terminalChannel?: TerminalWebSocketChannel;
 
@@ -130,6 +134,7 @@ export class ForgeHttpServer {
       });
     });
     if (options.projectFiles) this.projectFileRoutes = new ProjectFileRoutes(options.projectFiles);
+    if (options.piAgentSettings) this.piAgentSettingsRoutes = new PiAgentSettingsRoutes(options.piAgentSettings);
     if (options.piCatalog) this.piCatalogRoutes = new PiCatalogRoutes(options.piCatalog);
     if (options.projectGit) {
       this.projectGitRoutes = new ProjectGitRoutes(options.projectGit, (projectId, sessionId) => {
@@ -236,6 +241,7 @@ export class ForgeHttpServer {
       await this.updateProjectsRoot(request, response);
       return;
     }
+    if (this.piAgentSettingsRoutes && await this.piAgentSettingsRoutes.handle(request, response, url)) return;
     if (this.piCatalogRoutes && await this.piCatalogRoutes.handle(request, response, url)) return;
     if (this.projectFileRoutes && await this.projectFileRoutes.handle(request, response, url)) return;
     if (this.projectGitRoutes && await this.projectGitRoutes.handle(request, response, url)) return;

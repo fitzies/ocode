@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { FixtureAnvilClient, type AnvilClientSnapshot } from "../lib/anvilClient";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, singleMainProjectId, sortProjectsMainFirst } from "./Sidebar";
 
 function renderSnapshot(
   snapshot: AnvilClientSnapshot,
@@ -85,7 +85,7 @@ describe("Sidebar thread ordering", () => {
 
     expect(workspaceMarkup).toContain('aria-label="Settings"');
     expect(workspaceMarkup).toContain('aria-label="Usage"');
-    expect(workspaceMarkup).toContain('aria-label="Skills and extensions"');
+    expect(workspaceMarkup).toContain('aria-label="Agents and models"');
     expect(workspaceMarkup).toContain('aria-label="Codex usage limits"');
     expect(workspaceMarkup).not.toContain('aria-label="Hide sidebar"');
     expect(settingsMarkup).toContain(">Back</span>");
@@ -201,6 +201,67 @@ describe("Sidebar thread ordering", () => {
 
     const after = renderSidebar(client);
     expect(after.indexOf(targetTitle)).toBeLessThan(after.indexOf(previousFirstTitle));
+  });
+
+  it("lists main checkouts before worktrees for new threads", () => {
+    const sorted = sortProjectsMainFirst([
+      { id: "wt", name: "Worktree checkout", path: "/home/oli/code/ocode-wt", workspaceKind: "worktree" as const },
+      { id: "other", name: "Plain folder", path: "/home/oli/code/other" },
+      { id: "main", name: "Main checkout", path: "/home/oli/code/ocode", workspaceKind: "main" as const },
+    ]);
+
+    expect(sorted.map((project) => project.id)).toEqual(["main", "wt", "other"]);
+  });
+
+  it("remembers the settled accordion state across reloads", () => {
+    const client = new FixtureAnvilClient();
+    const base = client.getSnapshot();
+    const target = base.sessions[0]!;
+    const snapshot = {
+      ...base,
+      sessions: base.sessions.map((session) => session.id === target.id
+        ? { ...session, title: "settled thread", settled: true }
+        : session),
+    };
+    const store = new Map<string, string>();
+    const mediaQuery = { matches: false, addEventListener: () => undefined, removeEventListener: () => undefined };
+    (globalThis as Record<string, unknown>).window = {
+      localStorage: {
+        getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+        setItem: (key: string, value: string) => {
+          store.set(key, value);
+        },
+      },
+      matchMedia: () => mediaQuery,
+    };
+    try {
+      store.set("ocode.sidebar.settled-open", "false");
+      const closed = renderSnapshot(snapshot);
+      expect(closed).toContain('data-state="closed"');
+      expect(closed).not.toContain("Settled thread");
+
+      store.set("ocode.sidebar.settled-open", "true");
+      const open = renderSnapshot(snapshot);
+      expect(open).toContain('data-state="open"');
+      expect(open).toContain("Settled thread");
+    } finally {
+      delete (globalThis as Record<string, unknown>).window;
+    }
+  });
+
+  it("resolves a single main checkout for the new-thread default", () => {
+    expect(singleMainProjectId([])).toBeUndefined();
+    expect(singleMainProjectId([
+      { id: "wt", workspaceKind: "worktree" },
+    ])).toBeUndefined();
+    expect(singleMainProjectId([
+      { id: "wt", workspaceKind: "worktree" },
+      { id: "main", workspaceKind: "main" },
+    ])).toBe("main");
+    expect(singleMainProjectId([
+      { id: "a", workspaceKind: "main" },
+      { id: "b", workspaceKind: "main" },
+    ])).toBeUndefined();
   });
 
   it.each(["completed", "failed", "cancelled"] as const)(

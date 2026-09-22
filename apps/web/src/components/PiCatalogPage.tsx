@@ -511,6 +511,7 @@ export function PiCatalogPage() {
           <SidebarTrigger className="menu-trigger" aria-label="Toggle sidebar" />
           <div className="session-heading"><h1>Skills &amp; extensions</h1></div>
         </div>
+        <Button variant="ghost" onClick={() => void navigate({ to: "/pi" })}>Agents &amp; models</Button>
       </header>
 
       {resourceId ? (
